@@ -8,6 +8,13 @@ import '../core/native_vpn_bridge.dart';
 import '../core/vless_reality_profile.dart';
 import '../models/vpn_models.dart';
 
+class SubscriptionFetchResult {
+  const SubscriptionFetchResult({required this.content, this.info});
+
+  final String content;
+  final SubscriptionInfo? info;
+}
+
 class AppController extends ChangeNotifier {
   AppController(this.bridge);
 
@@ -42,6 +49,13 @@ class AppController extends ChangeNotifier {
     return profiles.isEmpty ? null : profiles.first;
   }
 
+  ProxyGroup? get globalProxyGroup {
+    for (final group in proxyGroups) {
+      if (group.name == 'GLOBAL') return group;
+    }
+    return null;
+  }
+
   Future<void> initialize() async {
     _snapshotSubscription = bridge.snapshots.listen(
       _handleSnapshot,
@@ -60,7 +74,11 @@ class AppController extends ChangeNotifier {
       settings = values[2] as VpnSettings;
       core = values[3] as Map<Object?, Object?>;
       networkInfo = values[4] as NetworkInfo;
-      if (snapshot.isConnected) _beginConnectedRefresh();
+      if (snapshot.isConnected) {
+        _beginConnectedRefresh();
+      } else if (settings.mode == OutboundMode.global) {
+        await loadProxyGroups();
+      }
     } catch (error) {
       message = '초기화하지 못했습니다: $error';
     } finally {
@@ -125,17 +143,24 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<String?> validateProfile(String content) => bridge.validateProfile(content);
+  Future<String?> validateProfile(String content) =>
+      bridge.validateProfile(content);
 
   Future<void> saveProfile({
     String? id,
     required String name,
     String? sourceUrl,
     required String content,
+    SubscriptionInfo? subscriptionInfo,
   }) async {
-    final parsed = VlessRealityProfile.parse(content);
-    final effectiveName = name.trim().isEmpty ? parsed.name : name.trim();
-    final generatedConfig = parsed.toMihomoYaml(profileName: effectiveName);
+    final parsed = VlessRealityProfile.parseMany(content);
+    final effectiveName = name.trim().isEmpty
+        ? (parsed.length == 1 ? parsed.single.name : 'VLESS REALITY')
+        : name.trim();
+    final generatedConfig = VlessRealityProfile.profilesToMihomoYaml(
+      parsed,
+      profileName: effectiveName,
+    );
     final validationError = await validateProfile(generatedConfig);
     if (validationError != null && validationError.isNotEmpty) {
       throw FormatException(validationError);
@@ -145,8 +170,12 @@ class AppController extends ChangeNotifier {
       name: effectiveName,
       sourceUrl: sourceUrl?.trim(),
       content: generatedConfig,
+      subscriptionInfo: subscriptionInfo,
     );
     await reloadProfiles();
+    if (!snapshot.isConnected && settings.mode == OutboundMode.global) {
+      await loadProxyGroups();
+    }
     if (snapshot.isConnected && snapshot.profileId == saved.id) {
       await bridge.startVpn(saved.id);
     }
@@ -157,12 +186,17 @@ class AppController extends ChangeNotifier {
     await reloadProfiles();
     if (snapshot.isConnected && snapshot.profileId != id) {
       await bridge.startVpn(id);
+    } else if (!snapshot.isConnected && settings.mode == OutboundMode.global) {
+      await loadProxyGroups();
     }
   }
 
   Future<void> deleteProfile(String id) async {
     await bridge.deleteProfile(id);
     await reloadProfiles();
+    if (!snapshot.isConnected && settings.mode == OutboundMode.global) {
+      await loadProxyGroups();
+    }
   }
 
   Future<ImportedProfile?> pickProfileFile() => bridge.pickProfileFile();
@@ -177,10 +211,11 @@ class AppController extends ChangeNotifier {
 
   Future<String> readProfileLink(VpnProfile profile) async {
     final config = await bridge.readProfile(profile.id);
-    return VlessRealityProfile.linkFromStoredConfig(config) ??
-        (throw const FormatException(
-          '이전 Mihomo YAML 프로필입니다. VLESS + REALITY 링크로 새 프로필을 추가해 주세요.',
-        ));
+    final links = VlessRealityProfile.linksFromStoredConfig(config);
+    if (links.isNotEmpty) return links.join('\n');
+    throw const FormatException(
+      '이전 Mihomo YAML 프로필입니다. VLESS + REALITY 링크로 새 프로필을 추가해 주세요.',
+    );
   }
 
   String _safeFileName(String value) {
@@ -188,7 +223,12 @@ class AppController extends ChangeNotifier {
     return cleaned.trim().isEmpty ? 'profile' : cleaned.trim();
   }
 
-  Future<String> fetchSubscription(String source) async {
+  Future<String> fetchSubscription(String source) async =>
+      (await fetchSubscriptionDetails(source)).content;
+
+  Future<SubscriptionFetchResult> fetchSubscriptionDetails(
+    String source,
+  ) async {
     final uri = Uri.tryParse(source);
     if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
       throw const FormatException('HTTPS 구독 주소를 입력해 주세요.');
@@ -201,7 +241,10 @@ class AppController extends ChangeNotifier {
       for (var redirects = 0; ; redirects++) {
         final request = await client.getUrl(current);
         request.followRedirects = false;
-        request.headers.set(HttpHeaders.userAgentHeader, 'Proxima/1.0 Mihomo');
+        request.headers.set(
+          HttpHeaders.userAgentHeader,
+          'v2rayN/6.45 Proxima/1.0',
+        );
         response = await request.close().timeout(const Duration(seconds: 20));
         if (!response.isRedirect) break;
         final location = response.headers.value(HttpHeaders.locationHeader);
@@ -218,6 +261,7 @@ class AppController extends ChangeNotifier {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('서버 응답 ${response.statusCode}', uri: current);
       }
+      final info = _subscriptionInfo(response.headers);
       final chunks = <int>[];
       await for (final chunk in response) {
         chunks.addAll(chunk);
@@ -225,7 +269,7 @@ class AppController extends ChangeNotifier {
           throw const FormatException('프로필은 8MB보다 작아야 합니다.');
         }
       }
-      return utf8.decode(chunks);
+      return SubscriptionFetchResult(content: utf8.decode(chunks), info: info);
     } finally {
       client.close(force: true);
     }
@@ -234,14 +278,16 @@ class AppController extends ChangeNotifier {
   Future<void> refreshProfile(VpnProfile profile) async {
     final source = profile.sourceUrl;
     if (source == null || source.isEmpty) return;
-    final content = VlessRealityProfile.linkFromSubscription(
-      await fetchSubscription(source),
-    );
+    final subscription = await fetchSubscriptionDetails(source);
+    final content = VlessRealityProfile.linksFromSubscription(
+      subscription.content,
+    ).join('\n');
     await saveProfile(
       id: profile.id,
       name: profile.name,
       sourceUrl: source,
       content: content,
+      subscriptionInfo: subscription.info ?? const SubscriptionInfo(),
     );
   }
 
@@ -254,7 +300,10 @@ class AppController extends ChangeNotifier {
   Future<void> setMode(OutboundMode mode) async {
     final previous = settings;
     await updateSettings(settings.copyWith(mode: mode));
-    if (!snapshot.isConnected) return;
+    if (!snapshot.isConnected) {
+      await loadProxyGroups();
+      return;
+    }
     try {
       ensureCoreSuccess(
         await bridge.invokeCore(
@@ -262,6 +311,7 @@ class AppController extends ChangeNotifier {
           jsonEncode({'mode': mode.wireName}),
         ),
       );
+      await loadProxyGroups();
     } catch (_) {
       settings = previous;
       await bridge.saveSettings(previous);
@@ -271,11 +321,18 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> loadProxyGroups() async {
-    if (!snapshot.isConnected || loadingProxies) return;
+    if (loadingProxies) return;
     loadingProxies = true;
     notifyListeners();
     try {
-      proxyGroups = parseProxyGroups(await bridge.invokeCore('getProxies'));
+      if (snapshot.isConnected) {
+        proxyGroups = parseProxyGroups(
+          await bridge.invokeCore('getProxies'),
+          mode: settings.mode,
+        );
+      } else {
+        proxyGroups = await _offlineProxyGroups();
+      }
     } catch (error) {
       message = '노드 목록을 불러오지 못했습니다: $error';
     } finally {
@@ -285,13 +342,134 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> selectProxy(String group, String proxy) async {
-    ensureCoreSuccess(
-      await bridge.invokeCore(
-        'changeProxy',
-        jsonEncode({'group-name': group, 'proxy-name': proxy}),
-      ),
+    if (snapshot.isConnected) {
+      ensureCoreSuccess(
+        await bridge.invokeCore(
+          'changeProxy',
+          jsonEncode({'group-name': group, 'proxy-name': proxy}),
+        ),
+      );
+      await loadProxyGroups();
+      return;
+    }
+    final profile = activeProfile;
+    if (settings.mode != OutboundMode.global || group != 'GLOBAL') {
+      throw StateError('연결 전에는 전역 모드의 노드만 선택할 수 있습니다.');
+    }
+    if (profile == null) throw StateError('먼저 프로필을 추가해 주세요.');
+    final global = globalProxyGroup;
+    if (global == null || !global.proxies.contains(proxy)) {
+      throw StateError('선택할 수 없는 노드입니다.');
+    }
+    await bridge.saveProxySelection(
+      profileId: profile.id,
+      group: group,
+      proxy: proxy,
     );
-    await loadProxyGroups();
+    proxyGroups = proxyGroups
+        .map(
+          (item) => item.name == group
+              ? ProxyGroup(
+                  name: item.name,
+                  type: item.type,
+                  selected: proxy,
+                  proxies: item.proxies,
+                )
+              : item,
+        )
+        .toList(growable: false);
+    notifyListeners();
+  }
+
+  Future<List<ProxyGroup>> _offlineProxyGroups() async {
+    if (settings.mode != OutboundMode.global) return const [];
+    final profile = activeProfile;
+    if (profile == null) return const [];
+    final content = await bridge.readProfile(profile.id);
+    final nodes = VlessRealityProfile.nodeNamesFromStoredConfig(
+      content,
+      profileName: profile.name,
+    );
+    if (nodes.isEmpty) return const [];
+    final selected = (await bridge.loadProxySelections(profile.id))['GLOBAL'];
+    return [
+      ProxyGroup(
+        name: 'GLOBAL',
+        type: 'Selector',
+        selected: selected != null && nodes.contains(selected)
+            ? selected
+            : nodes.first,
+        proxies: nodes,
+      ),
+    ];
+  }
+
+  SubscriptionInfo? _subscriptionInfo(HttpHeaders headers) {
+    final values = <String, List<String>>{};
+    headers.forEach((name, items) => values[name.toLowerCase()] = items);
+    String? firstHeader(Iterable<String> names) {
+      for (final name in names) {
+        final entries = values[name];
+        final value = entries == null || entries.isEmpty ? null : entries.first;
+        if (value != null && value.trim().isNotEmpty) return value.trim();
+      }
+      return null;
+    }
+
+    String? userInfo;
+    for (final entry in values.entries) {
+      final name = entry.key;
+      if (name == 'subscription-userinfo' ||
+          (name.endsWith('-subscription-userinfo') && name.length > 22)) {
+        userInfo = entry.value.isEmpty ? null : entry.value.first;
+        break;
+      }
+    }
+    final plan = _decodeSubscriptionTitle(
+      firstHeader([
+        'subscription-plan',
+        'x-subscription-plan',
+        'profile-title',
+        'subscription-title',
+        'x-subscription-title',
+      ]),
+    );
+    if (userInfo == null && plan == null) return null;
+    int number(String key) {
+      final match = RegExp(
+        '(?:^|[;,\\s])$key\\s*=\\s*(\\d+)',
+        caseSensitive: false,
+      ).firstMatch(userInfo ?? '');
+      return int.tryParse(match?.group(1) ?? '') ?? 0;
+    }
+
+    final expire = number('expire');
+    return SubscriptionInfo(
+      upload: number('upload'),
+      download: number('download'),
+      total: number('total'),
+      expire: expire > 0
+          ? DateTime.fromMillisecondsSinceEpoch(expire * 1000)
+          : null,
+      planName: plan,
+    );
+  }
+
+  String? _decodeSubscriptionTitle(String? value) {
+    if (value == null || value.isEmpty) return null;
+    final title = value.startsWith('base64:') ? value.substring(7) : value;
+    if (value.startsWith('base64:')) {
+      try {
+        return utf8.decode(base64.decode(base64.normalize(title))).trim();
+      } on FormatException {
+        return null;
+      }
+    }
+    try {
+      return Uri.decodeComponent(title).trim();
+    } on FormatException {
+      return title.trim();
+    }
   }
 
   Future<int?> testDelay(String proxy) async {

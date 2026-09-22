@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../screens/connections_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/profiles_screen.dart';
 import '../screens/proxies_screen.dart';
 import '../screens/settings_screen.dart';
+import '../screens/subscription_screen.dart';
 import '../state/app_controller.dart';
 
 class ProximaShell extends StatefulWidget {
@@ -26,14 +26,9 @@ class _ProximaShellState extends State<ProximaShell> {
       label: '홈',
     ),
     NavigationDestination(
-      icon: Icon(Icons.alt_route_outlined),
-      selectedIcon: Icon(Icons.alt_route_rounded),
-      label: '노드',
-    ),
-    NavigationDestination(
-      icon: Icon(Icons.swap_horiz_outlined),
-      selectedIcon: Icon(Icons.swap_horiz_rounded),
-      label: '연결',
+      icon: Icon(Icons.data_usage_outlined),
+      selectedIcon: Icon(Icons.data_usage_rounded),
+      label: '구독',
     ),
     NavigationDestination(
       icon: Icon(Icons.description_outlined),
@@ -49,9 +44,7 @@ class _ProximaShellState extends State<ProximaShell> {
 
   void _select(int index) {
     setState(() => _index = index);
-    if (index == 1) widget.controller.loadProxyGroups();
-    if (index == 2) widget.controller.loadConnections();
-    if (index == 4) {
+    if (index == 3) {
       widget.controller.refreshNetworkInfo();
       widget.controller.loadProviders();
     }
@@ -65,10 +58,17 @@ class _ProximaShellState extends State<ProximaShell> {
         final pages = [
           HomeScreen(
             controller: widget.controller,
-            openProfiles: () => _select(3),
+            openProfiles: () => _select(2),
+            openProxies: () {
+              widget.controller.loadProxyGroups();
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ProxiesScreen(controller: widget.controller),
+                ),
+              );
+            },
           ),
-          ProxiesScreen(controller: widget.controller),
-          ConnectionsScreen(controller: widget.controller),
+          SubscriptionScreen(controller: widget.controller),
           ProfilesScreen(controller: widget.controller),
           SettingsScreen(controller: widget.controller),
         ];

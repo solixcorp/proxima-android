@@ -7,7 +7,9 @@ Proxima는 VLESS + REALITY 링크에 집중한 Android VPN 클라이언트입니
 ## 제공 기능
 
 - VLESS + REALITY 공유 링크 추가, 편집, 검증
-- 단일 VLESS + REALITY 링크를 제공하는 HTTPS 구독 가져오기
+- VLESS + REALITY 링크 목록을 제공하는 HTTPS 구독 가져오기
+- VPN 연결 전에도 가능한 전역 모드의 단일 노드 선택과 규칙 기반 라우팅
+- 구독 응답의 `subscription-userinfo` 기반 사용량·남은 트래픽·만료일 및 플랜명 표시
 - 링크를 앱 내부 실행용 Mihomo 설정으로 자동 변환
 - Android VPN 권한 요청과 포그라운드 `VpnService` 연결 제어
 - Android 빠른 설정 타일에서 최근 프로필 즉시 연결·해제
@@ -50,8 +52,10 @@ flutter build apk --debug
 ## 프로필 주의사항
 
 - `vless://` 형식이며 `security=reality`, `encryption=none`, REALITY `pbk`가 포함된 링크만 사용할 수 있습니다.
+- 여러 VLESS + REALITY 링크는 줄바꿈으로 입력할 수 있으며, 하나의 프로필 안에서 여러 노드로 변환됩니다.
 - TCP(raw), WebSocket, gRPC 전송 방식을 지원합니다. WebSocket에는 `path`, gRPC에는 `serviceName`이 필요합니다.
 - 링크는 앱 내부에서 실행용 Mihomo YAML로 변환되어 저장됩니다. 원본 링크도 앱 샌드박스의 메타데이터에 함께 보관되므로 편집·내보내기 시 다시 사용할 수 있습니다.
+- 구독 요청은 VLESS URI 목록을 받는 클라이언트 User-Agent로 전송합니다. Mihomo 전용 구독에 섞일 수 있는 mieru 같은 비지원 노드는 앱에 가져오지 않습니다.
 - Android TUN은 앱이 생성하므로 저장된 `tun.enable` 값은 실행 사본에서 항상 `false`로 정규화됩니다.
 - Android 앱 권한으로는 프로세스 소켓 테이블을 읽을 수 없으므로 `find-process-mode: off`로 프로세스 기반 Mihomo 매칭을 사용하지 않습니다.
 - 구독 URL은 자격 증명을 포함할 수 있으므로 화면에는 호스트명만 표시하고 로그에는 URL을 남기지 않습니다.

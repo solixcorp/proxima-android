@@ -13,9 +13,16 @@ abstract interface class VpnBridge {
     required String name,
     String? sourceUrl,
     required String content,
+    SubscriptionInfo? subscriptionInfo,
   });
   Future<void> deleteProfile(String id);
   Future<void> selectProfile(String id);
+  Future<Map<String, String>> loadProxySelections(String profileId);
+  Future<void> saveProxySelection({
+    required String profileId,
+    required String group,
+    required String proxy,
+  });
   Future<String?> validateProfile(String content);
   Future<bool> requestVpnPermission();
   Future<void> startVpn(String profileId);
@@ -67,10 +74,17 @@ class MethodChannelVpnBridge implements VpnBridge {
     required String name,
     String? sourceUrl,
     required String content,
+    SubscriptionInfo? subscriptionInfo,
   }) async {
     final value = await _methods.invokeMapMethod<Object?, Object?>(
       'saveProfile',
-      {'id': id, 'name': name, 'sourceUrl': sourceUrl, 'content': content},
+      {
+        'id': id,
+        'name': name,
+        'sourceUrl': sourceUrl,
+        'content': content,
+        'subscriptionInfo': subscriptionInfo?.toMap(),
+      },
     );
     return VpnProfile.fromMap(value!);
   }
@@ -82,6 +96,28 @@ class MethodChannelVpnBridge implements VpnBridge {
   @override
   Future<void> selectProfile(String id) =>
       _methods.invokeMethod<void>('selectProfile', {'id': id});
+
+  @override
+  Future<Map<String, String>> loadProxySelections(String profileId) async {
+    final values = await _methods.invokeMapMethod<Object?, Object?>(
+      'loadProxySelections',
+      {'profileId': profileId},
+    );
+    return (values ?? const {}).map(
+      (key, value) => MapEntry(key.toString(), value.toString()),
+    );
+  }
+
+  @override
+  Future<void> saveProxySelection({
+    required String profileId,
+    required String group,
+    required String proxy,
+  }) => _methods.invokeMethod<void>('saveProxySelection', {
+    'profileId': profileId,
+    'group': group,
+    'proxy': proxy,
+  });
 
   @override
   Future<String?> validateProfile(String content) =>

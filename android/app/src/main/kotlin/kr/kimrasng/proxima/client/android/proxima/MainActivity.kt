@@ -57,6 +57,9 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                             name = requiredString(call, "name"),
                             sourceUrl = call.argument("sourceUrl"),
                             content = content,
+                            subscriptionInfo = call.argument<Map<*, *>>("subscriptionInfo")?.let(
+                                StoredSubscriptionInfo::fromMap,
+                            ),
                         ),
                     )
                 }
@@ -71,6 +74,19 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 }
                 "selectProfile" -> {
                     profiles.select(requiredString(call, "id"))
+                    result.success(null)
+                }
+                "loadProxySelections" -> result.success(
+                    settings.selectedProxies(requiredString(call, "profileId")),
+                )
+                "saveProxySelection" -> {
+                    val profileId = requiredString(call, "profileId")
+                    require(profiles.profile(profileId) != null) { "Profile not found" }
+                    settings.saveSelectedProxy(
+                        profileId = profileId,
+                        group = requiredString(call, "group"),
+                        proxy = requiredString(call, "proxy"),
+                    )
                     result.success(null)
                 }
                 "validateProfile" -> validateProfile(requiredString(call, "content"), result)
@@ -163,7 +179,23 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private fun invokeCore(method: String, data: String, result: MethodChannel.Result) {
         MihomoCore.ensureLoaded(this)
         require(VpnRuntime.snapshot()["state"] == "connected") { "VPN is not connected" }
-        MihomoCore.invoke(method, data) { payload -> runOnUiThread { result.success(payload) } }
+        MihomoCore.invoke(method, data) { payload ->
+            if (method == "changeProxy") saveSelectedProxy(data, payload)
+            runOnUiThread { result.success(payload) }
+        }
+    }
+
+    private fun saveSelectedProxy(data: String, payload: String) {
+        runCatching {
+            if (JSONObject(payload).optInt("code", -1) != 0) return
+            val profileId = VpnRuntime.snapshot()["profileId"] as? String ?: return
+            val selection = JSONObject(data)
+            settings.saveSelectedProxy(
+                profileId = profileId,
+                group = selection.optString("group-name"),
+                proxy = selection.optString("proxy-name"),
+            )
+        }
     }
 
     private fun pickProfileFile(result: MethodChannel.Result) {

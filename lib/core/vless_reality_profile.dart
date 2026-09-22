@@ -77,7 +77,7 @@ class VlessRealityProfile {
       throw const FormatException('gRPC VLESS 링크에는 serviceName이 필요합니다.');
     }
 
-    final fragment = uri.fragment.trim();
+    final fragment = _decodeFragment(uri.fragment.trim());
     final serverName = query('sni');
     return VlessRealityProfile(
       sourceLink: uri.toString(),
@@ -113,10 +113,20 @@ class VlessRealityProfile {
   final String? serviceName;
 
   String toMihomoYaml({required String profileName}) {
-    final nodeName = profileName.trim().isEmpty ? name : profileName.trim();
-    final node = _yaml(nodeName);
+    return profilesToMihomoYaml([this], profileName: profileName);
+  }
+
+  static String profilesToMihomoYaml(
+    List<VlessRealityProfile> profiles, {
+    required String profileName,
+  }) {
+    if (profiles.isEmpty) {
+      throw const FormatException('VLESS 링크를 입력해 주세요.');
+    }
+    final nodeNames = _uniqueNodeNames(profiles, profileName: profileName);
     final lines = <String>[
-      '# proxima-vless-reality-link: ${base64UrlEncode(utf8.encode(sourceLink)).replaceAll('=', '')}',
+      for (final profile in profiles)
+        '# proxima-vless-reality-link: ${_encodeLink(profile.sourceLink)}',
       'mixed-port: 7890',
       'allow-lan: false',
       'mode: rule',
@@ -139,36 +149,19 @@ class VlessRealityProfile {
       '    - 8.8.8.8',
       '',
       'proxies:',
-      '  - name: $node',
-      '    type: vless',
-      '    server: ${_yaml(server)}',
-      '    port: $port',
-      '    uuid: ${_yaml(uuid)}',
-      '    udp: true',
-      '    tls: true',
-      '    servername: ${_yaml(serverName)}',
-      '    client-fingerprint: ${_yaml(fingerprint)}',
-      '    network: $network',
-      '    reality-opts:',
-      '      public-key: ${_yaml(publicKey)}',
-      if (shortId.isNotEmpty) '      short-id: ${_yaml(shortId)}',
-      if (flow.isNotEmpty) '    flow: ${_yaml(flow)}',
-      if (network == 'ws') ...[
-        '    ws-opts:',
-        '      path: ${_yaml(path!)}',
-        if (host != null) '      headers:',
-        if (host != null) '        Host: ${_yaml(host!)}',
+      for (var index = 0; index < profiles.length; index++) ...[
+        ...profiles[index]._proxyYaml(nodeNames[index]),
+        '',
       ],
-      if (network == 'grpc') ...[
-        '    grpc-opts:',
-        '      grpc-service-name: ${_yaml(serviceName!)}',
-      ],
-      '',
       'proxy-groups:',
       '  - name: PROXY',
       '    type: select',
       '    proxies:',
-      '      - $node',
+      for (final node in nodeNames) '      - ${_yaml(node)}',
+      '  - name: GLOBAL',
+      '    type: select',
+      '    proxies:',
+      for (final node in nodeNames) '      - ${_yaml(node)}',
       '',
       'rules:',
       '  - MATCH,PROXY',
@@ -177,22 +170,58 @@ class VlessRealityProfile {
     return lines.join('\n');
   }
 
+  List<String> _proxyYaml(String nodeName) => [
+    '  - name: ${_yaml(nodeName)}',
+    '    type: vless',
+    '    server: ${_yaml(server)}',
+    '    port: $port',
+    '    uuid: ${_yaml(uuid)}',
+    '    udp: true',
+    '    tls: true',
+    '    servername: ${_yaml(serverName)}',
+    '    client-fingerprint: ${_yaml(fingerprint)}',
+    '    network: $network',
+    '    reality-opts:',
+    '      public-key: ${_yaml(publicKey)}',
+    if (shortId.isNotEmpty) '      short-id: ${_yaml(shortId)}',
+    if (flow.isNotEmpty) '    flow: ${_yaml(flow)}',
+    if (network == 'ws') ...[
+      '    ws-opts:',
+      '      path: ${_yaml(path!)}',
+      if (host != null) '      headers:',
+      if (host != null) '        Host: ${_yaml(host!)}',
+    ],
+    if (network == 'grpc') ...[
+      '    grpc-opts:',
+      '      grpc-service-name: ${_yaml(serviceName!)}',
+    ],
+  ];
+
   static String? linkFromStoredConfig(String content) {
+    final links = linksFromStoredConfig(content);
+    return links.isEmpty ? null : links.first;
+  }
+
+  static List<String> linksFromStoredConfig(String content) {
     final match = RegExp(
       r'^# proxima-vless-reality-link: ([A-Za-z0-9_-]+)\s*$',
       multiLine: true,
-    ).firstMatch(content);
-    if (match == null) return null;
-    try {
-      final encoded = match.group(1)!;
-      final padded = encoded.padRight((encoded.length + 3) ~/ 4 * 4, '=');
-      return utf8.decode(base64Url.decode(padded));
-    } on FormatException {
-      return null;
-    }
+    ).allMatches(content);
+    return match
+        .map((item) => _decodeLink(item.group(1)!))
+        .whereType<String>()
+        .toList(growable: false);
   }
 
   static String linkFromSubscription(String value) {
+    final links = linksFromSubscription(value);
+    if (links.length != 1) {
+      throw const FormatException('한 프로필에는 VLESS REALITY 링크 하나만 사용할 수 있습니다.');
+    }
+    return links.single;
+  }
+
+  static List<String> linksFromSubscription(String value) {
     final directLinks = _vlessLines(value);
     final decodedLinks = directLinks.isNotEmpty
         ? directLinks
@@ -200,10 +229,22 @@ class VlessRealityProfile {
     if (decodedLinks.isEmpty) {
       throw const FormatException('구독에서 VLESS 링크를 찾지 못했습니다.');
     }
-    if (decodedLinks.length != 1) {
-      throw const FormatException('한 프로필에는 VLESS REALITY 링크 하나만 사용할 수 있습니다.');
-    }
-    return decodedLinks.single;
+    return decodedLinks;
+  }
+
+  static List<VlessRealityProfile> parseMany(String value) =>
+      linksFromSubscription(value)
+          .map(VlessRealityProfile.parse)
+          .toList(growable: false);
+
+  static List<String> nodeNamesFromStoredConfig(
+    String content, {
+    required String profileName,
+  }) {
+    final profiles = linksFromStoredConfig(content)
+        .map(VlessRealityProfile.parse)
+        .toList(growable: false);
+    return _uniqueNodeNames(profiles, profileName: profileName);
   }
 
   static List<String> _vlessLines(String value) => value
@@ -219,11 +260,59 @@ class VlessRealityProfile {
       final padded = compact.padRight((compact.length + 3) ~/ 4 * 4, '=');
       return utf8.decode(base64Url.decode(padded));
     } on FormatException {
-      return '';
+      try {
+        return utf8.decode(base64.decode(base64.normalize(compact)));
+      } on FormatException {
+        return '';
+      }
+    }
+  }
+
+  static List<String> _uniqueNodeNames(
+    List<VlessRealityProfile> profiles, {
+    required String profileName,
+  }) {
+    if (profiles.length == 1) {
+      final singleName = profileName.trim().isEmpty
+          ? profiles.single.name
+          : profileName.trim();
+      return [singleName];
+    }
+    final counts = <String, int>{};
+    return profiles
+        .map((profile) {
+          final base = profile.name.trim().isEmpty
+              ? profile.server
+              : profile.name;
+          final next = (counts[base] ?? 0) + 1;
+          counts[base] = next;
+          return next == 1 ? base : '$base $next';
+        })
+        .toList(growable: false);
+  }
+
+  static String _encodeLink(String value) =>
+      base64UrlEncode(utf8.encode(value)).replaceAll('=', '');
+
+  static String? _decodeLink(String encoded) {
+    try {
+      final padded = encoded.padRight((encoded.length + 3) ~/ 4 * 4, '=');
+      return utf8.decode(base64Url.decode(padded));
+    } on FormatException {
+      return null;
     }
   }
 
   static String _yaml(String value) => jsonEncode(value);
+
+  static String _decodeFragment(String value) {
+    if (value.isEmpty) return value;
+    try {
+      return Uri.decodeComponent(value);
+    } on FormatException {
+      return value;
+    }
+  }
 
   static final _uuid = RegExp(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',

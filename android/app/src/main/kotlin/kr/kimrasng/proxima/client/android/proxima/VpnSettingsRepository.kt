@@ -1,6 +1,7 @@
 package kr.kimrasng.proxima.client.android.proxima
 
 import android.content.Context
+import org.json.JSONObject
 
 data class NativeVpnSettings(
     val stack: String,
@@ -30,6 +31,26 @@ class VpnSettingsRepository(context: Context) {
             .putString("mode", mode?.takeIf { it in ALLOWED_MODES } ?: current.mode)
             .apply()
     }
+
+    fun selectedProxies(profileId: String): Map<String, String> {
+        val json = runCatching {
+            JSONObject(preferences.getString(selectedProxiesKey(profileId), "{}") ?: "{}")
+        }.getOrElse { JSONObject() }
+        return buildMap {
+            for (key in json.keys()) {
+                val value = json.optString(key)
+                if (key.isNotBlank() && value.isNotBlank()) put(key, value)
+            }
+        }
+    }
+
+    fun saveSelectedProxy(profileId: String, group: String, proxy: String) {
+        if (profileId.isBlank() || group.isBlank() || proxy.isBlank()) return
+        val selected = JSONObject(selectedProxies(profileId)).put(group, proxy)
+        preferences.edit().putString(selectedProxiesKey(profileId), selected.toString()).apply()
+    }
+
+    private fun selectedProxiesKey(profileId: String) = "selected_proxies_$profileId"
 
     companion object {
         private val ALLOWED_STACKS = setOf("system", "gvisor", "mixed")

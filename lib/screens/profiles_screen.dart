@@ -4,6 +4,9 @@ import '../core/vless_reality_profile.dart';
 import '../models/vpn_models.dart';
 import '../state/app_controller.dart';
 import '../widgets/app_page.dart';
+import 'proxima_web_screen.dart';
+
+enum _ProfileEntryMode { url, link, edit }
 
 class ProfilesScreen extends StatelessWidget {
   const ProfilesScreen({super.key, required this.controller});
@@ -15,6 +18,7 @@ class ProfilesScreen extends StatelessWidget {
     VpnProfile? profile,
     String? initialName,
     String? initialContent,
+    _ProfileEntryMode entryMode = _ProfileEntryMode.edit,
   }) async {
     String content;
     try {
@@ -38,6 +42,7 @@ class ProfilesScreen extends StatelessWidget {
         profile: profile,
         initialName: initialName,
         initialContent: content,
+        entryMode: entryMode,
       ),
     );
   }
@@ -50,6 +55,7 @@ class ProfilesScreen extends StatelessWidget {
           context,
           initialName: imported.name,
           initialContent: imported.content,
+          entryMode: _ProfileEntryMode.link,
         );
       }
     } catch (error) {
@@ -58,6 +64,61 @@ class ProfilesScreen extends StatelessWidget {
             .showSnackBar(SnackBar(content: Text('$error')));
       }
     }
+  }
+
+  Future<void> _showAddOptions(BuildContext context) {
+    return showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.link_rounded),
+              title: const Text('URL'),
+              subtitle: const Text('HTTPS 구독 주소에서 노드를 가져옵니다.'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _openEditor(context, entryMode: _ProfileEntryMode.url);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.vpn_key_outlined),
+              title: const Text('VLESS + REALITY 링크'),
+              subtitle: const Text('공유 링크 또는 여러 링크를 붙여넣습니다.'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _openEditor(context, entryMode: _ProfileEntryMode.link);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.file_open_outlined),
+              title: const Text('파일'),
+              subtitle: const Text('저장된 VLESS 링크 파일을 가져옵니다.'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _import(context);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.language_rounded),
+              title: const Text('Proxima'),
+              subtitle: const Text('solix.kr을 앱 안에서 엽니다.'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const ProximaWebScreen(),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _delete(BuildContext context, VpnProfile profile) async {
@@ -125,15 +186,8 @@ class ProfilesScreen extends StatelessWidget {
       title: '프로필',
       subtitle: 'VLESS + REALITY 링크와 HTTPS 구독을 관리합니다.',
       onRefresh: controller.reloadProfiles,
-      actions: [
-        IconButton(
-          tooltip: '파일 가져오기',
-          onPressed: () => _import(context),
-          icon: const Icon(Icons.file_open_outlined),
-        ),
-      ],
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openEditor(context),
+        onPressed: () => _showAddOptions(context),
         icon: const Icon(Icons.add_rounded),
         label: const Text('추가'),
       ),
@@ -163,9 +217,7 @@ class ProfilesScreen extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     subtitle: Text(
-                      profile.isActive
-                          ? '${controller.snapshot.isConnected ? '사용 중' : '선택됨'} · ${profile.sourceLabel}'
-                          : profile.sourceLabel,
+                      _subtitle(profile, controller.snapshot.isConnected),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -212,12 +264,22 @@ class ProfilesScreen extends StatelessWidget {
             ],
     );
   }
+
+  String _subtitle(VpnProfile profile, bool connected) {
+    final state = profile.isActive ? (connected ? '사용 중' : '선택됨') : null;
+    final traffic = profile.subscriptionInfo;
+    final usage = traffic?.hasTraffic == true
+        ? '남음 ${formatBytes(traffic!.remaining)}'
+        : null;
+    return [state, profile.sourceLabel, usage].whereType<String>().join(' · ');
+  }
 }
 
 class _ProfileEditor extends StatefulWidget {
   const _ProfileEditor({
     required this.controller,
     required this.initialContent,
+    required this.entryMode,
     this.initialName,
     this.profile,
   });
@@ -226,6 +288,7 @@ class _ProfileEditor extends StatefulWidget {
   final VpnProfile? profile;
   final String? initialName;
   final String initialContent;
+  final _ProfileEntryMode entryMode;
 
   @override
   State<_ProfileEditor> createState() => _ProfileEditorState();
@@ -263,10 +326,15 @@ class _ProfileEditorState extends State<_ProfileEditor> {
     });
     try {
       var content = _yaml.text.trim();
+      SubscriptionInfo? subscriptionInfo;
       if (content.isEmpty && _url.text.trim().isNotEmpty) {
-        content = VlessRealityProfile.linkFromSubscription(
-          await widget.controller.fetchSubscription(_url.text.trim()),
+        final subscription = await widget.controller.fetchSubscriptionDetails(
+          _url.text.trim(),
         );
+        content = VlessRealityProfile.linksFromSubscription(
+          subscription.content,
+        ).join('\n');
+        subscriptionInfo = subscription.info ?? const SubscriptionInfo();
       }
       if (content.isEmpty) {
         throw const FormatException('VLESS 링크 또는 구독 주소가 필요합니다.');
@@ -276,6 +344,7 @@ class _ProfileEditorState extends State<_ProfileEditor> {
         name: _name.text,
         sourceUrl: _url.text.isEmpty ? null : _url.text,
         content: content,
+        subscriptionInfo: subscriptionInfo,
       );
       if (mounted) Navigator.pop(context);
     } catch (error) {
@@ -315,32 +384,39 @@ class _ProfileEditorState extends State<_ProfileEditor> {
               ),
             ),
             const SizedBox(height: 12),
-            TextField(
-              controller: _url,
-              keyboardType: TextInputType.url,
-              autocorrect: false,
-              decoration: const InputDecoration(
-                labelText: 'HTTPS 구독 주소 (선택)',
-                prefixIcon: Icon(Icons.link_rounded),
+            if (widget.entryMode != _ProfileEntryMode.link) ...[
+              TextField(
+                controller: _url,
+                keyboardType: TextInputType.url,
+                autocorrect: false,
+                decoration: InputDecoration(
+                  labelText: widget.entryMode == _ProfileEntryMode.url
+                      ? 'HTTPS 구독 주소'
+                      : 'HTTPS 구독 주소 (선택)',
+                  prefixIcon: const Icon(Icons.link_rounded),
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _yaml,
-              minLines: 9,
-              maxLines: 16,
-              autocorrect: false,
-              style: const TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
-                height: 1.35,
+              const SizedBox(height: 12),
+            ],
+            if (widget.entryMode != _ProfileEntryMode.url)
+              TextField(
+                controller: _yaml,
+                minLines: 9,
+                maxLines: 16,
+                autocorrect: false,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  height: 1.35,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'VLESS + REALITY 링크 목록',
+                  hintText:
+                      'vless://uuid@server:443?...&security=reality...\n'
+                      '여러 노드는 줄바꿈으로 붙여넣을 수 있습니다.',
+                  alignLabelWithHint: true,
+                ),
               ),
-              decoration: const InputDecoration(
-                labelText: 'VLESS + REALITY 링크',
-                hintText: 'vless://uuid@server:443?...&security=reality...',
-                alignLabelWithHint: true,
-              ),
-            ),
             if (_error case final error?) ...[
               const SizedBox(height: 12),
               Text(

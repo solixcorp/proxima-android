@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:collection';
 
 enum VpnConnectionState {
   disconnected,
@@ -85,6 +86,7 @@ class VpnProfile {
     required this.updatedAt,
     required this.isActive,
     this.sourceUrl,
+    this.subscriptionInfo,
   });
 
   factory VpnProfile.fromMap(Map<Object?, Object?> map) {
@@ -92,6 +94,11 @@ class VpnProfile {
       id: map['id']! as String,
       name: map['name']! as String,
       sourceUrl: map['sourceUrl'] as String?,
+      subscriptionInfo: map['subscriptionInfo'] is Map
+          ? SubscriptionInfo.fromMap(
+              (map['subscriptionInfo'] as Map).cast<Object?, Object?>(),
+            )
+          : null,
       updatedAt: DateTime.fromMillisecondsSinceEpoch(
         _integer(map['updatedAt']),
       ),
@@ -102,6 +109,7 @@ class VpnProfile {
   final String id;
   final String name;
   final String? sourceUrl;
+  final SubscriptionInfo? subscriptionInfo;
   final DateTime updatedAt;
   final bool isActive;
 
@@ -111,6 +119,56 @@ class VpnProfile {
     final uri = Uri.tryParse(source);
     return uri?.host.isNotEmpty == true ? uri!.host : '구독 프로필';
   }
+}
+
+class SubscriptionInfo {
+  const SubscriptionInfo({
+    this.upload = 0,
+    this.download = 0,
+    this.total = 0,
+    this.expire,
+    this.planName,
+  });
+
+  factory SubscriptionInfo.fromMap(Map<Object?, Object?> map) {
+    final expireSeconds = _integer(map['expire']);
+    return SubscriptionInfo(
+      upload: _integer(map['upload']),
+      download: _integer(map['download']),
+      total: _integer(map['total']),
+      expire: expireSeconds > 0
+          ? DateTime.fromMillisecondsSinceEpoch(expireSeconds * 1000)
+          : null,
+      planName: map['planName']?.toString().trim().isEmpty == true
+          ? null
+          : map['planName']?.toString().trim(),
+    );
+  }
+
+  final int upload;
+  final int download;
+  final int total;
+  final DateTime? expire;
+  final String? planName;
+
+  int get used => upload + download;
+  int get remaining => total > used ? total - used : 0;
+  bool get hasTraffic => total > 0;
+  bool get hasDetails => hasTraffic || expire != null || planName != null;
+
+  Map<String, Object> toMap() => {
+    'upload': upload,
+    'download': download,
+    'total': total,
+    'expire': (expire?.millisecondsSinceEpoch ?? 0) ~/ 1000,
+    'planName': planName ?? '',
+  };
+}
+
+String formatSubscriptionExpiry(DateTime value) {
+  final local = value.toLocal();
+  String two(int number) => number.toString().padLeft(2, '0');
+  return '${local.year}.${two(local.month)}.${two(local.day)}';
 }
 
 class ImportedProfile {
@@ -181,6 +239,15 @@ class ProxyGroup {
   final String type;
   final String selected;
   final List<String> proxies;
+}
+
+String displayProxyName(String value) {
+  if (!value.contains('%')) return value;
+  try {
+    return Uri.decodeComponent(value);
+  } on FormatException {
+    return value;
+  }
 }
 
 class ActiveConnection {
@@ -368,17 +435,24 @@ class NetworkInfo {
   final bool validated;
 }
 
-List<ProxyGroup> parseProxyGroups(String actionResult) {
+List<ProxyGroup> parseProxyGroups(
+  String actionResult, {
+  OutboundMode mode = OutboundMode.rule,
+}) {
   final decoded = _corePayload(actionResult);
   final proxies = _stringMap(decoded)['proxies'];
   if (proxies is! Map) return const [];
 
   final groups = <ProxyGroup>[];
+  final nodeNames = <String>[];
   for (final entry in proxies.entries) {
     final value = entry.value;
     if (value is! Map) continue;
     final group = value.map((key, item) => MapEntry(key.toString(), item));
     final all = group['all'];
+    if (all is! List && _isProxyNode(group)) {
+      nodeNames.add(entry.key.toString());
+    }
     if (all is! List || all.isEmpty) continue;
     groups.add(
       ProxyGroup(
@@ -389,8 +463,50 @@ List<ProxyGroup> parseProxyGroups(String actionResult) {
       ),
     );
   }
-  groups.sort((a, b) => a.name.compareTo(b.name));
-  return groups;
+
+  if (mode == OutboundMode.direct) return const [];
+
+  if (mode == OutboundMode.global && nodeNames.isNotEmpty) {
+    final uniqueNodes = LinkedHashSet<String>.of(nodeNames).toList();
+    final existingIndex = groups.indexWhere((group) => group.name == 'GLOBAL');
+    final existing = existingIndex >= 0 ? groups[existingIndex] : null;
+    final selected = existing?.selected;
+    final globalGroup = ProxyGroup(
+      name: 'GLOBAL',
+      type: existing?.type ?? 'Selector',
+      selected: selected != null && uniqueNodes.contains(selected)
+          ? selected
+          : uniqueNodes.first,
+      proxies: uniqueNodes,
+    );
+    return [globalGroup];
+  }
+
+  if (mode == OutboundMode.global) {
+    return groups.where((group) => group.name == 'GLOBAL').toList();
+  }
+
+  final ruleGroups = groups
+      .where((group) => group.name != 'GLOBAL')
+      .toList(growable: false);
+  ruleGroups.sort((a, b) => a.name.compareTo(b.name));
+  return ruleGroups;
+}
+
+bool _isProxyNode(Map<String, Object?> proxy) {
+  final type = proxy['type']?.toString().toLowerCase();
+  if (type == null || type.isEmpty) return false;
+  return !{
+    'selector',
+    'urltest',
+    'loadbalance',
+    'fallback',
+    'relay',
+    'direct',
+    'reject',
+    'compatible',
+    'pass',
+  }.contains(type);
 }
 
 ConnectionOverview parseConnections(String actionResult) {

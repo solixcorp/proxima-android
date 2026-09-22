@@ -20,26 +20,45 @@ class ProxiesScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mode = controller.settings.mode;
     return AppPage(
-      title: '노드',
-      subtitle: '정책 그룹별 경로를 선택하고 지연 시간을 확인합니다.',
+      title: switch (mode) {
+        OutboundMode.global => '전역 노드',
+        OutboundMode.rule => '규칙별 노드',
+        OutboundMode.direct => '직접 연결',
+      },
+      subtitle: switch (mode) {
+        OutboundMode.global => '모든 트래픽에 사용할 노드 하나를 선택합니다.',
+        OutboundMode.rule => '각 규칙의 정책 그룹이 사용할 노드를 선택합니다.',
+        OutboundMode.direct => '프록시 노드를 거치지 않고 바로 통신합니다.',
+      },
       onRefresh: controller.loadProxyGroups,
       actions: [
         IconButton(
           tooltip: '새로고침',
           onPressed:
-              controller.snapshot.isConnected && !controller.loadingProxies
+              !controller.loadingProxies &&
+                  (controller.snapshot.isConnected ||
+                      mode == OutboundMode.global)
               ? controller.loadProxyGroups
               : null,
           icon: const Icon(Icons.refresh_rounded),
         ),
       ],
-      children: !controller.snapshot.isConnected
+      children: !controller.snapshot.isConnected && mode != OutboundMode.global
           ? const [
               PageEmptyState(
                 icon: Icons.alt_route_rounded,
                 title: 'VPN이 연결되지 않았습니다',
                 message: 'VPN을 연결하면 프로필의 정책 그룹과 노드를 변경할 수 있습니다.',
+              ),
+            ]
+          : mode == OutboundMode.direct
+          ? const [
+              PageEmptyState(
+                icon: Icons.arrow_forward_rounded,
+                title: '직접 연결 모드입니다',
+                message: '전역 또는 규칙 모드를 선택하면 사용할 노드를 지정할 수 있습니다.',
               ),
             ]
           : controller.loadingProxies && controller.proxyGroups.isEmpty
@@ -50,11 +69,15 @@ class ProxiesScreen extends StatelessWidget {
               ),
             ]
           : controller.proxyGroups.isEmpty
-          ? const [
+          ? [
               PageEmptyState(
                 icon: Icons.layers_clear_outlined,
-                title: '정책 그룹이 없습니다',
-                message: '프로필의 proxy-groups 설정을 확인해 주세요.',
+                title: mode == OutboundMode.global
+                    ? '선택할 전역 노드가 없습니다'
+                    : '규칙용 정책 그룹이 없습니다',
+                message: mode == OutboundMode.global
+                    ? '프로필에 사용할 수 있는 노드가 있는지 확인해 주세요.'
+                    : '프로필의 rules 및 proxy-groups 설정을 확인해 주세요.',
               ),
             ]
           : [
@@ -74,7 +97,7 @@ class ProxiesScreen extends StatelessWidget {
                     ),
                     title: Text(group.name),
                     subtitle: Text(
-                      group.selected,
+                      displayProxyName(group.selected),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -158,6 +181,7 @@ class _ProxyPickerState extends State<_ProxyPicker> {
 
   @override
   Widget build(BuildContext context) {
+    final connected = widget.controller.snapshot.isConnected;
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.72,
@@ -176,7 +200,7 @@ class _ProxyPickerState extends State<_ProxyPicker> {
                   ),
                 ),
                 TextButton.icon(
-                  onPressed: _testingAll ? null : _testAll,
+                  onPressed: !connected || _testingAll ? null : _testAll,
                   icon: _testingAll
                       ? const SizedBox.square(
                           dimension: 16,
@@ -209,7 +233,7 @@ class _ProxyPickerState extends State<_ProxyPicker> {
                     value: proxy,
                     enabled: !working && !_testingAll,
                     title: Text(
-                      proxy,
+                      displayProxyName(proxy),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -223,7 +247,9 @@ class _ProxyPickerState extends State<_ProxyPicker> {
                           )
                         : IconButton(
                             tooltip: '지연 시간 측정',
-                            onPressed: _testingAll ? null : () => _test(proxy),
+                            onPressed: !connected || _testingAll
+                                ? null
+                                : () => _test(proxy),
                             icon: const Icon(Icons.network_ping_rounded),
                           ),
                     selected: selected,

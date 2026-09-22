@@ -9,10 +9,12 @@ class HomeScreen extends StatelessWidget {
     super.key,
     required this.controller,
     required this.openProfiles,
+    required this.openProxies,
   });
 
   final AppController controller;
   final VoidCallback openProfiles;
+  final VoidCallback openProxies;
 
   String _status(VpnConnectionState state) => switch (state) {
     VpnConnectionState.disconnected => '연결되지 않음',
@@ -166,6 +168,36 @@ class HomeScreen extends StatelessWidget {
             onTap: openProfiles,
           ),
         ),
+        if (controller.settings.mode == OutboundMode.global) ...[
+          const SectionHeader('선택된 노드'),
+          Card(
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 20,
+                vertical: 8,
+              ),
+              leading: const Icon(Icons.public_rounded),
+              title: Text(
+                controller.globalProxyGroup == null
+                    ? '노드를 선택해 주세요'
+                    : displayProxyName(controller.globalProxyGroup!.selected),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                snapshot.isConnected
+                    ? '모든 트래픽에 사용할 전역 노드'
+                    : controller.globalProxyGroup == null
+                    ? '노드 정보를 불러오는 중입니다.'
+                    : 'VPN 연결 전에 선택한 전역 노드',
+              ),
+              trailing: controller.globalProxyGroup != null
+                  ? const Icon(Icons.chevron_right_rounded)
+                  : null,
+              onTap: controller.globalProxyGroup == null ? null : openProxies,
+            ),
+          ),
+        ],
         const SectionHeader('트래픽'),
         Row(
           children: [

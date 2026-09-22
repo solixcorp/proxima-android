@@ -29,19 +29,79 @@ void main() {
 
   test('parses selectable proxy groups from a core response', () {
     const response =
-        '{"code":0,"data":"{\\"proxies\\":{\\"GLOBAL\\":{\\"type\\":\\"Selector\\",\\"now\\":\\"DIRECT\\",\\"all\\":[\\"DIRECT\\",\\"Node A\\"]},\\"DIRECT\\":{\\"type\\":\\"Direct\\"}}}"}';
+        '{"code":0,"data":"{\\"proxies\\":{\\"GLOBAL\\":{\\"type\\":\\"Selector\\",\\"now\\":\\"Node A\\",\\"all\\":[\\"Node A\\"]},\\"PROXY\\":{\\"type\\":\\"Selector\\",\\"now\\":\\"Node A\\",\\"all\\":[\\"Node A\\"]},\\"Node A\\":{\\"type\\":\\"Vless\\"}}}"}';
 
     final groups = parseProxyGroups(response);
 
     expect(groups, hasLength(1));
-    expect(groups.single.name, 'GLOBAL');
-    expect(groups.single.selected, 'DIRECT');
-    expect(groups.single.proxies, ['DIRECT', 'Node A']);
+    expect(groups.single.name, 'PROXY');
+    expect(groups.single.selected, 'Node A');
+    expect(groups.single.proxies, ['Node A']);
+  });
+
+  test('shows every proxy node in global mode', () {
+    const response =
+        '{"code":0,"data":"{\\"proxies\\":{\\"GLOBAL\\":{\\"type\\":\\"Selector\\",\\"now\\":\\"Node B\\",\\"all\\":[\\"Node A\\"]},\\"Node A\\":{\\"type\\":\\"Vless\\"},\\"Node B\\":{\\"type\\":\\"Vless\\"},\\"DIRECT\\":{\\"type\\":\\"Direct\\"}}}"}';
+
+    final groups = parseProxyGroups(response, mode: OutboundMode.global);
+
+    expect(groups.first.name, 'GLOBAL');
+    expect(groups.first.selected, 'Node B');
+    expect(groups.first.proxies, ['Node A', 'Node B']);
+  });
+
+  test('does not expose proxy groups in direct mode', () {
+    const response =
+        '{"code":0,"data":"{\\"proxies\\":{\\"PROXY\\":{\\"type\\":\\"Selector\\",\\"now\\":\\"Node A\\",\\"all\\":[\\"Node A\\"]}}}"}';
+
+    final groups = parseProxyGroups(response, mode: OutboundMode.direct);
+
+    expect(groups, isEmpty);
+  });
+
+  test('selects a global node before connecting', () async {
+    const first =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge-a.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=tcp#Tokyo';
+    const second =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge-b.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=tcp#Seoul';
+    final bridge = _FakeBridge()
+      ..profileContent = VlessRealityProfile.profilesToMihomoYaml(
+        VlessRealityProfile.parseMany('$first\n$second'),
+        profileName: 'VLESS REALITY',
+      );
+    final controller = AppController(bridge);
+    await controller.initialize();
+    await controller.setMode(OutboundMode.global);
+
+    expect(controller.globalProxyGroup?.proxies, ['Tokyo', 'Seoul']);
+    await controller.selectProxy('GLOBAL', 'Seoul');
+
+    expect(controller.globalProxyGroup?.selected, 'Seoul');
+    expect(bridge.selections['GLOBAL'], 'Seoul');
   });
 
   test('formats traffic values', () {
     expect(formatBytes(1536, perSecond: true), '1.5 KB/s');
     expect(formatBytes(1024 * 1024), '1.0 MB');
+  });
+
+  test('calculates subscription traffic remaining and expiry', () {
+    final info = SubscriptionInfo.fromMap({
+      'upload': 100,
+      'download': 300,
+      'total': 1000,
+      'expire': 1_800_000_000,
+      'planName': 'Pro',
+    });
+
+    expect(info.used, 400);
+    expect(info.remaining, 600);
+    expect(info.planName, 'Pro');
+    expect(info.expire, isNotNull);
+  });
+
+  test('decodes URL-encoded proxy names for display', () {
+    expect(displayProxyName('%F0%9F%87%AF%F0%9F%87%B5%20Tokyo'), '🇯🇵 Tokyo');
   });
 
   test('converts a VLESS REALITY link into a mihomo profile', () {
@@ -61,6 +121,33 @@ void main() {
     expect(config, contains('find-process-mode: off'));
     expect(config, contains('MATCH,PROXY'));
     expect(VlessRealityProfile.linkFromStoredConfig(config), link);
+  });
+
+  test('decodes an encoded VLESS node name', () {
+    const link =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=tcp#%F0%9F%87%B0%F0%9F%87%B7%20%EC%84%9C%EC%9A%B8';
+
+    expect(VlessRealityProfile.parse(link).name, '🇰🇷 서울');
+  });
+
+  test('converts a VLESS subscription list into multiple proxy nodes', () {
+    const first =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge-a.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&sid=1a2b3c4d&type=tcp#Tokyo';
+    const second =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge-b.example.com:8443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&sid=4d3c2b1a&type=tcp#Seoul';
+    final encoded = base64.encode(utf8.encode('$first\n$second'));
+
+    final profiles = VlessRealityProfile.parseMany(encoded);
+    final config = VlessRealityProfile.profilesToMihomoYaml(
+      profiles,
+      profileName: 'Airport',
+    );
+
+    expect(profiles, hasLength(2));
+    expect(config, contains('name: "Tokyo"'));
+    expect(config, contains('name: "Seoul"'));
+    expect(config, contains('name: GLOBAL'));
+    expect(VlessRealityProfile.linksFromStoredConfig(config), [first, second]);
   });
 
   test('rejects non-REALITY VLESS links', () {
@@ -120,6 +207,8 @@ class _FakeBridge implements VpnBridge {
     updatedAt: DateTime.fromMillisecondsSinceEpoch(0),
     isActive: true,
   );
+  String profileContent = '';
+  final selections = <String, String>{};
 
   @override
   Stream<VpnSnapshot> get snapshots => const Stream.empty();
@@ -160,10 +249,14 @@ class _FakeBridge implements VpnBridge {
   Future<VpnSettings> loadSettings() async => const VpnSettings();
 
   @override
+  Future<Map<String, String>> loadProxySelections(String profileId) async =>
+      Map.of(selections);
+
+  @override
   Future<ImportedProfile?> pickProfileFile() async => null;
 
   @override
-  Future<String> readProfile(String id) async => '';
+  Future<String> readProfile(String id) async => profileContent;
 
   @override
   Future<bool> requestVpnPermission() async => true;
@@ -177,10 +270,20 @@ class _FakeBridge implements VpnBridge {
     required String name,
     String? sourceUrl,
     required String content,
+    SubscriptionInfo? subscriptionInfo,
   }) async => profile;
 
   @override
   Future<void> saveSettings(VpnSettings settings) async {}
+
+  @override
+  Future<void> saveProxySelection({
+    required String profileId,
+    required String group,
+    required String proxy,
+  }) async {
+    selections[group] = proxy;
+  }
 
   @override
   Future<void> selectProfile(String id) async {}

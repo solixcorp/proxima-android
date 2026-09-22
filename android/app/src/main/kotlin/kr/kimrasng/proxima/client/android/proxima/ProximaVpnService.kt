@@ -103,7 +103,8 @@ class ProximaVpnService : AndroidVpnService() {
         val init = JSONObject()
             .put("home-dir", home.absolutePath)
             .put("version", Build.VERSION.SDK_INT)
-        val setup = JSONObject().put("selected-map", JSONObject())
+        val selected = VpnSettingsRepository(this).selectedProxies(profile.id)
+        val setup = JSONObject().put("selected-map", JSONObject(selected))
         Clash.quickSetup(init.toString(), setup.toString()) { error ->
             worker.execute {
                 if (token != generation.get() || stopping) return@execute

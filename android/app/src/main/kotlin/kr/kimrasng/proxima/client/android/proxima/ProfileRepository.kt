@@ -11,7 +11,42 @@ data class StoredProfile(
     val name: String,
     val sourceUrl: String?,
     val updatedAt: Long,
+    val subscriptionInfo: StoredSubscriptionInfo? = null,
 )
+
+data class StoredSubscriptionInfo(
+    val upload: Long = 0,
+    val download: Long = 0,
+    val total: Long = 0,
+    val expire: Long = 0,
+    val planName: String? = null,
+) {
+    fun asMap(): Map<String, Any> = mapOf(
+        "upload" to upload,
+        "download" to download,
+        "total" to total,
+        "expire" to expire,
+        "planName" to (planName ?: ""),
+    )
+
+    companion object {
+        fun fromMap(value: Map<*, *>): StoredSubscriptionInfo = StoredSubscriptionInfo(
+            upload = (value["upload"] as? Number)?.toLong()?.coerceAtLeast(0) ?: 0,
+            download = (value["download"] as? Number)?.toLong()?.coerceAtLeast(0) ?: 0,
+            total = (value["total"] as? Number)?.toLong()?.coerceAtLeast(0) ?: 0,
+            expire = (value["expire"] as? Number)?.toLong()?.coerceAtLeast(0) ?: 0,
+            planName = value["planName"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.take(120),
+        )
+
+        fun fromJson(value: JSONObject): StoredSubscriptionInfo = StoredSubscriptionInfo(
+            upload = value.optLong("upload").coerceAtLeast(0),
+            download = value.optLong("download").coerceAtLeast(0),
+            total = value.optLong("total").coerceAtLeast(0),
+            expire = value.optLong("expire").coerceAtLeast(0),
+            planName = value.optString("planName").trim().takeIf { it.isNotEmpty() }?.take(120),
+        )
+    }
+}
 
 class ProfileRepository(context: Context) {
     private val appContext = context.applicationContext
@@ -28,6 +63,7 @@ class ProfileRepository(context: Context) {
                 "sourceUrl" to profile.sourceUrl,
                 "updatedAt" to profile.updatedAt,
                 "isActive" to (profile.id == active),
+                "subscriptionInfo" to profile.subscriptionInfo?.asMap(),
             )
         }
     }
@@ -45,7 +81,13 @@ class ProfileRepository(context: Context) {
     }
 
     @Synchronized
-    fun save(id: String?, name: String, sourceUrl: String?, content: String): Map<String, Any?> {
+    fun save(
+        id: String?,
+        name: String,
+        sourceUrl: String?,
+        content: String,
+        subscriptionInfo: StoredSubscriptionInfo? = null,
+    ): Map<String, Any?> {
         require(name.isNotBlank()) { "Profile name is required" }
         require(content.isNotBlank()) { "Profile content is required" }
         require(content.toByteArray(Charsets.UTF_8).size <= MAX_PROFILE_BYTES) { "Profile is larger than 8 MB" }
@@ -58,6 +100,7 @@ class ProfileRepository(context: Context) {
             name = name.trim().take(80),
             sourceUrl = sourceUrl?.trim()?.takeIf { it.isNotEmpty() },
             updatedAt = System.currentTimeMillis(),
+            subscriptionInfo = subscriptionInfo ?: existing.takeIf { it >= 0 }?.let { profiles[it].subscriptionInfo },
         )
         writeAtomically(profileFile(profileId), content)
         if (existing >= 0) profiles[existing] = next else profiles.add(0, next)
@@ -105,6 +148,7 @@ class ProfileRepository(context: Context) {
                         name = item.optString("name", "Profile"),
                         sourceUrl = item.optString("sourceUrl").takeIf { it.isNotEmpty() },
                         updatedAt = item.optLong("updatedAt"),
+                        subscriptionInfo = item.optJSONObject("subscriptionInfo")?.let(StoredSubscriptionInfo::fromJson),
                     ),
                 )
             }
@@ -119,7 +163,10 @@ class ProfileRepository(context: Context) {
                     .put("id", profile.id)
                     .put("name", profile.name)
                     .put("sourceUrl", profile.sourceUrl ?: "")
-                    .put("updatedAt", profile.updatedAt),
+                    .put("updatedAt", profile.updatedAt)
+                    .apply {
+                        profile.subscriptionInfo?.let { put("subscriptionInfo", JSONObject(it.asMap())) }
+                    },
             )
         }
         preferences.edit().putString(KEY_METADATA, array.toString()).apply()
