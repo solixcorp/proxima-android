@@ -104,7 +104,7 @@ class ProxiesScreen extends StatelessWidget {
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text('${group.proxies.length}'),
+                        ListTileValueText('${group.proxies.length}'),
                         const SizedBox(width: 4),
                         const Icon(Icons.chevron_right_rounded),
                       ],

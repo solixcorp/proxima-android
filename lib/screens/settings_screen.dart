@@ -62,7 +62,9 @@ class SettingsScreen extends StatelessWidget {
                 leading: const Icon(Icons.wifi_rounded),
                 title: Text(network.transport),
                 subtitle: Text(network.validated ? '인터넷 연결 확인됨' : '인터넷 연결 미확인'),
-                trailing: network.metered ? const Text('종량제') : null,
+                trailing: network.metered
+                    ? const ListTileValueText('종량제')
+                    : null,
               ),
               const Divider(height: 1, indent: 56),
               ListTile(
@@ -230,10 +232,10 @@ class SettingsScreen extends StatelessWidget {
               const Divider(height: 1, indent: 56),
               ListTile(
                 leading: const Icon(Icons.info_outline_rounded),
-                title: const Text('Mihomo Core'),
+                title: const Text('Xray Core'),
                 subtitle: Text(
                   controller.core['loaded'] == true
-                      ? 'v${controller.core['coreVersion'] ?? '1.19.28'} · Bridge ABI ${controller.core['bridgeAbi'] ?? 3}'
+                      ? 'v${formatCoreVersion(controller.core['coreVersion'])} · ${controller.core['bridgeAbi'] ?? 'libXray-v3'}'
                       : '코어를 불러올 수 없음',
                 ),
               ),
@@ -246,7 +248,7 @@ class SettingsScreen extends StatelessWidget {
                   context: context,
                   applicationName: 'Proxima',
                   applicationVersion: '1.0.0',
-                  applicationLegalese: 'mihomo 기반 GPL-3.0 구성 요소 포함',
+                  applicationLegalese: 'Xray-core MPL-2.0 및 libXray MIT 구성 요소 포함',
                 ),
               ),
             ],

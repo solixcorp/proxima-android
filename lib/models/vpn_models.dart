@@ -537,6 +537,18 @@ PublicIpInfo parsePublicIp(String actionResult) {
 int parseCoreInteger(String actionResult) =>
     _integer(_corePayload(actionResult));
 
+String formatCoreVersion(Object? value) {
+  if (value == null) return 'unknown';
+  final raw = value is Map && value['version'] != null
+      ? value['version'].toString()
+      : value.toString();
+  final version = RegExp(r'\d+(?:\.\d+)+(?:[-+][0-9A-Za-z.-]+)?')
+      .firstMatch(raw);
+  if (version != null) return version.group(0)!;
+  final fallback = raw.trim().replaceFirst(RegExp(r'^[vV*\s]+'), '');
+  return fallback.isEmpty ? 'unknown' : fallback;
+}
+
 dynamic _corePayload(String actionResult) {
   final envelope = jsonDecode(actionResult) as Map<String, dynamic>;
   if (envelope['code'] != 0) {

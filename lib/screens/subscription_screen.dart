@@ -172,7 +172,7 @@ class _InfoRow extends StatelessWidget {
       leading: Icon(icon),
       title: Text(label),
       subtitle: detail == null ? null : Text(detail!),
-      trailing: Text(value),
+      trailing: ListTileValueText(value),
     );
   }
 }

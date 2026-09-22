@@ -191,49 +191,6 @@ class ProfileRepository(context: Context) {
     }
 }
 
-object ProfileNormalizer {
-    fun forAndroidVpn(content: String): String {
-        val lines = content.replace("\r\n", "\n").split("\n").toMutableList()
-        val tunIndex = lines.indexOfFirst { line ->
-            line.isNotBlank() && !line.startsWith(" ") && !line.startsWith("\t") &&
-                line.substringBefore('#').trim() == "tun:"
-        }
-        if (tunIndex < 0) {
-            lines.addAll(listOf("", "tun:", "  enable: false"))
-        } else {
-            var end = tunIndex + 1
-            while (end < lines.size) {
-                val line = lines[end]
-                if (line.isNotBlank() && !line.startsWith(" ") && !line.startsWith("\t") && !line.trimStart().startsWith("#")) break
-                end++
-            }
-            val enableIndex = (tunIndex + 1 until end).firstOrNull { index ->
-                lines[index].substringBefore('#').trim().startsWith("enable:")
-            }
-            if (enableIndex == null) {
-                lines.add(tunIndex + 1, "  enable: false")
-            } else {
-                val indent = lines[enableIndex].takeWhile { it == ' ' || it == '\t' }
-                lines[enableIndex] = "${indent}enable: false"
-            }
-        }
-        forceFindProcessOff(lines)
-        return lines.joinToString("\n").trimEnd() + "\n"
-    }
-
-    private fun forceFindProcessOff(lines: MutableList<String>) {
-        val settingIndex = lines.indexOfFirst { line ->
-            line.isNotBlank() && !line.startsWith(" ") && !line.startsWith("\t") &&
-                line.substringBefore('#').trim().startsWith("find-process-mode:")
-        }
-        if (settingIndex < 0) {
-            lines.addAll(listOf("", "find-process-mode: off"))
-        } else {
-            lines[settingIndex] = "find-process-mode: off"
-        }
-    }
-}
-
 object VlessRealityConfig {
     private const val METADATA_PREFIX = "# proxima-vless-reality-link:"
 

@@ -114,7 +114,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 )
                 "getNetworkInfo" -> result.success(networkInfo())
                 "requestQuickSettingsTile" -> requestQuickSettingsTile(result)
-                "coreInfo" -> result.success(MihomoCore.info(this))
+                "coreInfo" -> result.success(XrayCore.info(this))
                 "coreAction" -> invokeCore(
                     method = requiredString(call, "method"),
                     data = call.argument<String>("data") ?: "",
@@ -129,22 +129,11 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
     private fun validateProfile(content: String, result: MethodChannel.Result) {
         require(content.toByteArray(Charsets.UTF_8).size <= MAX_PROFILE_BYTES) { "프로필은 8MB보다 작아야 합니다." }
-        MihomoCore.ensureLoaded(this)
-        val validationFile = File(cacheDir, "validate-${UUID.randomUUID()}.yaml")
-        validationFile.writeText(ProfileNormalizer.forAndroidVpn(content), Charsets.UTF_8)
-        MihomoCore.invoke("validateConfig", validationFile.absolutePath) { payload ->
-            validationFile.delete()
-            runOnUiThread {
-                runCatching {
-                    val response = JSONObject(payload)
-                    val data = response.opt("data")?.toString().orEmpty()
-                    if (response.optInt("code") == 0) result.success(data.ifEmpty { null })
-                    else result.success(data.ifEmpty { "프로필을 검증하지 못했습니다." })
-                }.onFailure { error ->
-                    result.error("validation_error", error.message, null)
-                }
-            }
-        }
+        val temporary = StoredProfile("00000000-0000-4000-8000-000000000000", "검증", null, 0)
+        runCatching {
+            XrayCore.validate(XrayConfig.build(temporary, content, NativeVpnSettings("mixed", true, 1400, "rule")))
+        }.onSuccess { result.success(null) }
+            .onFailure { result.success(it.message ?: "프로필을 검증하지 못했습니다.") }
     }
 
     private fun requestVpnPermission(result: MethodChannel.Result) {
@@ -177,17 +166,17 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     }
 
     private fun invokeCore(method: String, data: String, result: MethodChannel.Result) {
-        MihomoCore.ensureLoaded(this)
         require(VpnRuntime.snapshot()["state"] == "connected") { "VPN is not connected" }
-        MihomoCore.invoke(method, data) { payload ->
-            if (method == "changeProxy") saveSelectedProxy(data, payload)
-            runOnUiThread { result.success(payload) }
-        }
+        runCatching {
+            if (method == "changeProxy") saveSelectedProxy(data, "")
+            // The Flutter UI keeps selector state. Xray applies a new selection
+            // on the next connection, so it never exposes Mihomo's control API.
+            JSONObject().put("code", 0).put("data", JSONObject()).toString()
+        }.onSuccess(result::success).onFailure { result.error("core_action_error", it.message, null) }
     }
 
     private fun saveSelectedProxy(data: String, payload: String) {
         runCatching {
-            if (JSONObject(payload).optInt("code", -1) != 0) return
             val profileId = VpnRuntime.snapshot()["profileId"] as? String ?: return
             val selection = JSONObject(data)
             settings.saveSelectedProxy(

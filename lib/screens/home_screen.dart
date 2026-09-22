@@ -225,13 +225,13 @@ class HomeScreen extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.schedule_outlined),
                 title: const Text('연결 시간'),
-                trailing: Text(_uptime()),
+                trailing: ListTileValueText(_uptime()),
               ),
               const Divider(height: 1, indent: 56),
               ListTile(
                 leading: const Icon(Icons.swap_horiz_rounded),
                 title: const Text('활성 연결'),
-                trailing: Text(
+                trailing: ListTileValueText(
                   '${controller.connectionOverview.connections.length}',
                 ),
               ),
@@ -239,7 +239,7 @@ class HomeScreen extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.data_usage_outlined),
                 title: const Text('이번 연결'),
-                trailing: Text(
+                trailing: ListTileValueText(
                   '↑ ${formatBytes(snapshot.totalUpload)}  ↓ ${formatBytes(snapshot.totalDownload)}',
                 ),
               ),

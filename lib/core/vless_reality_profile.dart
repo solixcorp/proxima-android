@@ -3,7 +3,7 @@ import 'dart:convert';
 /// A single VLESS share link using REALITY transport settings.
 ///
 /// Proxima deliberately accepts a narrow link format.  This keeps every saved
-/// profile compatible with the bundled mihomo core instead of accepting a
+/// profile compatible with the bundled Xray core instead of accepting a
 /// broader link and failing later while connecting.
 class VlessRealityProfile {
   const VlessRealityProfile({
@@ -231,6 +231,11 @@ class VlessRealityProfile {
     }
     return decodedLinks;
   }
+
+  /// Accepts either plain VLESS URI lines or Base64/Base64URL-wrapped links.
+  /// QR providers commonly wrap even a single URI this way.
+  static String normalizeLinkInput(String value) =>
+      linksFromSubscription(value).join('\n');
 
   static List<VlessRealityProfile> parseMany(String value) =>
       linksFromSubscription(value)

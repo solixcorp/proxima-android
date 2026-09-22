@@ -85,6 +85,13 @@ void main() {
     expect(formatBytes(1024 * 1024), '1.0 MB');
   });
 
+  test('formats Xray version payloads', () {
+    expect(formatCoreVersion('{"version":"*26.9.9"}'), '26.9.9');
+    expect(formatCoreVersion({'version': '*26.9.9'}), '26.9.9');
+    expect(formatCoreVersion('v26.9.9'), '26.9.9');
+    expect(formatCoreVersion(null), 'unknown');
+  });
+
   test('calculates subscription traffic remaining and expiry', () {
     final info = SubscriptionInfo.fromMap({
       'upload': 100,
@@ -148,6 +155,14 @@ void main() {
     expect(config, contains('name: "Seoul"'));
     expect(config, contains('name: GLOBAL'));
     expect(VlessRealityProfile.linksFromStoredConfig(config), [first, second]);
+  });
+
+  test('normalizes a Base64URL-wrapped single VLESS link', () {
+    const link =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=tcp#Tokyo';
+    final encoded = base64UrlEncode(utf8.encode(link)).replaceAll('=', '');
+
+    expect(VlessRealityProfile.normalizeLinkInput(encoded), link);
   });
 
   test('rejects non-REALITY VLESS links', () {

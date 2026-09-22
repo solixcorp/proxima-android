@@ -23,12 +23,6 @@ android {
         versionName = flutter.versionName
     }
 
-    packaging {
-        // libmihomo loads libclash.so from applicationInfo.nativeLibraryDir.
-        // Keep JNI libraries extracted instead of loading them directly from the APK.
-        jniLibs.useLegacyPackaging = true
-    }
-
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("debug")
@@ -37,7 +31,8 @@ android {
 }
 
 dependencies {
-    implementation(files("libs/libmihomo-android-v0.3.1.aar"))
+    // XTLS/libXray v26.9.9, built from Xray-core v26.9.9.
+    implementation(files("libs/libxray-android-v26.9.9.aar"))
 }
 
 kotlin {

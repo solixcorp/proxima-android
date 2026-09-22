@@ -5,6 +5,7 @@ import '../models/vpn_models.dart';
 import '../state/app_controller.dart';
 import '../widgets/app_page.dart';
 import 'proxima_web_screen.dart';
+import 'qr_scanner_screen.dart';
 
 enum _ProfileEntryMode { url, link, edit }
 
@@ -66,6 +67,18 @@ class ProfilesScreen extends StatelessWidget {
     }
   }
 
+  Future<void> _scanQr(BuildContext context) async {
+    final link = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const QrScannerScreen()),
+    );
+    if (link == null || !context.mounted) return;
+    await _openEditor(
+      context,
+      initialContent: link,
+      entryMode: _ProfileEntryMode.link,
+    );
+  }
+
   Future<void> _showAddOptions(BuildContext context) {
     return showModalBottomSheet<void>(
       context: context,
@@ -91,6 +104,15 @@ class ProfilesScreen extends StatelessWidget {
               onTap: () {
                 Navigator.pop(sheetContext);
                 _openEditor(context, entryMode: _ProfileEntryMode.link);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.qr_code_scanner_rounded),
+              title: const Text('QR 코드 스캔'),
+              subtitle: const Text('카메라로 VLESS + REALITY 링크를 읽습니다.'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _scanQr(context);
               },
             ),
             ListTile(

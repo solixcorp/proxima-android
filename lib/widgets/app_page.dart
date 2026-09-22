@@ -160,6 +160,21 @@ class SectionHeader extends StatelessWidget {
   }
 }
 
+class ListTileValueText extends StatelessWidget {
+  const ListTileValueText(this.value, {super.key});
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      value,
+      textAlign: TextAlign.end,
+      style: Theme.of(context).textTheme.bodyLarge,
+    );
+  }
+}
+
 class PageEmptyState extends StatelessWidget {
   const PageEmptyState({
     super.key,
