@@ -296,6 +296,43 @@ class VlessRealityProfile {
           .map(VlessRealityProfile.parse)
           .toList(growable: false);
 
+  /// Finds a human-facing provider name without treating a transport label
+  /// such as "VLESS REALITY" or a single country/node suffix as a profile
+  /// name. Providers commonly put their branding in the VLESS fragment
+  /// (`#Provider | Japan 01`), while subscriptions expose it in their host.
+  static String suggestedProfileName(
+    String input, {
+    String? sourceUrl,
+    String? fallbackName,
+  }) {
+    final fromSource = _providerFromHost(sourceUrl);
+    if (fromSource != null) return fromSource;
+
+    final profiles = parseMany(input);
+    final fromLabels = _providerFromLabels(
+      profiles.map((profile) => profile.name),
+    );
+    if (fromLabels != null) return fromLabels;
+
+    final fromFileName = _cleanProviderLabel(
+      _withoutExtension(fallbackName ?? ''),
+    );
+    if (fromFileName != null) return fromFileName;
+
+    return _providerFromHost(profiles.first.server) ?? 'VLESS REALITY';
+  }
+
+  static bool isAutomaticProfileName(String value) {
+    final normalized = value.trim().toLowerCase().replaceAll(
+      RegExp(r'[\s._|·:/\\-]+'),
+      ' ',
+    );
+    return normalized.isEmpty ||
+        normalized == 'vless' ||
+        normalized == 'vless reality' ||
+        normalized.startsWith('vless reality ');
+  }
+
   static List<String> nodeNamesFromStoredConfig(
     String content, {
     required String profileName,
@@ -325,6 +362,111 @@ class VlessRealityProfile {
         return '';
       }
     }
+  }
+
+  static String? _providerFromLabels(Iterable<String> labels) {
+    final values = labels
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty && !isAutomaticProfileName(value))
+        .toList(growable: false);
+    if (values.isEmpty) return null;
+    if (values.length == 1) return _cleanProviderLabel(values.single);
+
+    final parts = values
+        .map((value) => value.split(RegExp(r'[\s|·:/\\_-]+')))
+        .toList(growable: false);
+    final common = <String>[];
+    for (var index = 0; ; index++) {
+      final candidate = parts.first.length > index ? parts.first[index] : null;
+      if (candidate == null || candidate.isEmpty) break;
+      if (parts
+          .skip(1)
+          .any(
+            (other) =>
+                other.length <= index ||
+                other[index].toLowerCase() != candidate.toLowerCase(),
+          )) {
+        break;
+      }
+      common.add(candidate);
+    }
+    return _cleanProviderLabel(common.join(' '));
+  }
+
+  static String? _cleanProviderLabel(String value) {
+    var label = value.trim();
+    if (label.isEmpty || isAutomaticProfileName(label)) return null;
+    label = label
+        .replaceFirst(
+          RegExp(
+            r'^(?:(?:vless|reality|vmess|trojan|ss|ssr)(?:[\s._|·:/\\-]+|$))',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .trim();
+    final parts = label
+        .split(RegExp(r'[\s|·:/\\_-]+'))
+        .where((part) => part.isNotEmpty)
+        .toList(growable: false);
+    final provider = parts
+        .takeWhile((part) => !_isNodeOrRegionToken(part))
+        .join(' ')
+        .trim();
+    if (provider.isEmpty || isAutomaticProfileName(provider)) return null;
+    return provider.length > 80 ? provider.substring(0, 80) : provider;
+  }
+
+  static bool _isNodeOrRegionToken(String value) {
+    final token = value.toLowerCase();
+    return RegExp(r'^\d+$').hasMatch(token) ||
+        RegExp(
+          r'^(?:jp|kr|us|usa|uk|hk|tw|sg|de|fr|cn|japan|korea|korean|japanese|america|usa|hongkong|taiwan|singapore|germany|france|일본|한국|미국|홍콩|대만|싱가포르|독일|프랑스|중국)\d*$',
+        ).hasMatch(token);
+  }
+
+  static String? _providerFromHost(String? source) {
+    final host = Uri.tryParse(source ?? '')?.host.toLowerCase();
+    if (host == null || host.isEmpty) return null;
+    final labels = host.split('.');
+    if (labels.length < 2) return _cleanProviderLabel(host);
+    const ignored = {
+      'www',
+      'my',
+      'sub',
+      'subscribe',
+      'subscription',
+      'api',
+      'cdn',
+      'edge',
+      'proxy',
+      'vpn',
+      'vless',
+      'com',
+      'net',
+      'org',
+      'io',
+      'co',
+      'kr',
+      'jp',
+      'us',
+      'uk',
+      'cn',
+      'de',
+      'fr',
+    };
+    String? candidate;
+    for (final label in labels.take(labels.length - 1)) {
+      if (!ignored.contains(label)) candidate = label;
+    }
+    return candidate == null ? null : _cleanProviderLabel(candidate);
+  }
+
+  static String _withoutExtension(String value) {
+    final slash = value.lastIndexOf(RegExp(r'[/\\]'));
+    final file = slash >= 0 ? value.substring(slash + 1) : value;
+    final dot = file.lastIndexOf('.');
+    return dot > 0 ? file.substring(0, dot) : file;
   }
 
   static List<String> _uniqueNodeNames(

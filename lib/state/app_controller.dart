@@ -179,10 +179,17 @@ class AppController extends ChangeNotifier {
     if (snapshot.isBusy) {
       throw StateError('연결 상태가 바뀐 뒤 프로필을 저장해 주세요.');
     }
-    final parsed = VlessRealityProfile.parseMany(content);
-    final effectiveName = name.trim().isEmpty
-        ? (parsed.length == 1 ? parsed.single.name : 'VLESS REALITY')
-        : name.trim();
+    VlessRealityProfile.parseMany(content);
+    final requestedName = name.trim();
+    final effectiveName =
+        requestedName.isEmpty ||
+            VlessRealityProfile.isAutomaticProfileName(requestedName)
+        ? VlessRealityProfile.suggestedProfileName(
+            content,
+            sourceUrl: sourceUrl,
+            fallbackName: requestedName,
+          )
+        : requestedName;
     final generatedConfig = VlessRealityProfile.attachSubscriptionSource(
       VlessRealityProfile.storedConfigFromInput(
         content,

@@ -85,7 +85,7 @@
             android:layout_height="wrap_content"
             android:text="↓ 0 B/s"
             android:textColor="@color/widget_text_primary"
-            android:textSize="15sp"
+            android:textSize="17sp"
             android:textStyle="bold" />
     </LinearLayout>
 

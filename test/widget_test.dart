@@ -440,6 +440,25 @@ void main() {
     expect(displayProxyName('%F0%9F%87%AF%F0%9F%87%B5%20Tokyo'), '🇯🇵 Tokyo');
   });
 
+  test('derives a provider profile name from VLESS labels and subscription URL', () {
+    const proximaJapan =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=tcp#VLESS%20Proxima%20%7C%20Japan%2001';
+    const proximaUs =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge-us.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=tcp#VLESS%20Proxima%20%7C%20US%2001';
+
+    expect(
+      VlessRealityProfile.suggestedProfileName('$proximaJapan\n$proximaUs'),
+      'Proxima',
+    );
+    expect(
+      VlessRealityProfile.suggestedProfileName(
+        proximaJapan,
+        sourceUrl: 'https://my.ssonenetwork.com/subscribe',
+      ),
+      'ssonenetwork',
+    );
+  });
+
   test('converts a VLESS REALITY link into a mihomo profile', () {
     const link =
         'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&sid=1a2b3c4d&flow=xtls-rprx-vision&type=tcp#Tokyo';

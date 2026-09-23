@@ -29,9 +29,39 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.1'
+          flutter-version: '3.47.5'
           channel: 'stable'
           cache: true
+
+      - name: Prepare release version
+        id: release_version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          BUILD_NAME="${TAG_VERSION%%+*}"
+
+          if [[ "$TAG_VERSION" == *"+"* ]]; then
+            BUILD_NUMBER="${TAG_VERSION#*+}"
+            PUBSPEC_VERSION="$TAG_VERSION"
+          else
+            BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+            PUBSPEC_VERSION="${BUILD_NAME}+${BUILD_NUMBER}"
+          fi
+
+          if [[ ! "$BUILD_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Tag must look like v1.2.3 or v1.2.3+4. Got: ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
+          if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "Build number must be numeric. Got: ${BUILD_NUMBER}" >&2
+            exit 1
+          fi
+
+          sed -i "s/^version: .*/version: ${PUBSPEC_VERSION}/" pubspec.yaml
+
+          echo "BUILD_NAME=$BUILD_NAME" >> "$GITHUB_OUTPUT"
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "PUBSPEC_VERSION=$PUBSPEC_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Get dependencies
         run: flutter pub get
@@ -40,18 +70,7 @@ jobs:
         run: flutter analyze
 
       - name: Test
-        run: >-
-          flutter test
-          test/api_client_test.dart
-          test/controller_test.dart
-          test/push_notification_service_test.dart
-          test/widget_test.dart
-
-      - name: Extract version from tag
-        id: get_version
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        run: flutter test
 
       - name: Validate release credentials
         env:
@@ -73,10 +92,10 @@ jobs:
       - name: Build APK
         run: |
           flutter build apk --release \
-            --build-name=${{ steps.get_version.outputs.VERSION }} \
-            --build-number=${{ github.run_number }} \
+            --build-name=${{ steps.release_version.outputs.BUILD_NAME }} \
+            --build-number=${{ steps.release_version.outputs.BUILD_NUMBER }} \
             --target-platform android-arm,android-arm64,android-x64
-          mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/${{ github.event.repository.name }}-v${{ steps.get_version.outputs.VERSION }}.apk
+          mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/${{ github.event.repository.name }}-v${{ steps.release_version.outputs.BUILD_NAME }}.apk
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
@@ -85,9 +104,9 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: build/app/outputs/flutter-apk/${{ github.event.repository.name }}-v${{ steps.get_version.outputs.VERSION }}.apk
+          files: build/app/outputs/flutter-apk/${{ github.event.repository.name }}-v${{ steps.release_version.outputs.BUILD_NAME }}.apk
           name: Release ${{ github.ref_name }}
-          tag_name: ${{ github.ref }}
+          tag_name: ${{ github.ref_name }}
           draft: false
           prerelease: false
         env:
