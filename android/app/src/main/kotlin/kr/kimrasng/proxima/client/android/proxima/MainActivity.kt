@@ -421,19 +421,26 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
     private fun requestQuickSettingsTile(result: MethodChannel.Result) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            result.success(false)
+            result.success("unsupported")
             return
         }
         val manager = getSystemService(StatusBarManager::class.java)
         manager.requestAddTileService(
             ComponentName(this, ProximaTileService::class.java),
-            getString(applicationInfo.labelRes),
+            getString(R.string.quick_settings_tile_label),
             Icon.createWithResource(this, R.drawable.ic_stat_proxima),
             mainExecutor,
         ) { status ->
             result.success(
-                status == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED ||
-                    status == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED,
+                when (status) {
+                    StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED -> "added"
+                    StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED -> "already_added"
+                    StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED -> "not_added"
+                    StatusBarManager.TILE_ADD_REQUEST_ERROR_REQUEST_IN_PROGRESS -> "request_in_progress"
+                    StatusBarManager.TILE_ADD_REQUEST_ERROR_APP_NOT_IN_FOREGROUND -> "not_foreground"
+                    StatusBarManager.TILE_ADD_REQUEST_ERROR_BAD_COMPONENT -> "invalid_service"
+                    else -> "unavailable"
+                },
             )
         }
     }

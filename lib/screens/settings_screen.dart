@@ -10,17 +10,25 @@ class SettingsScreen extends StatelessWidget {
   final AppController controller;
 
   Future<void> _requestTile(BuildContext context) async {
-    final added = await controller.requestQuickSettingsTile();
+    late String message;
+    try {
+      final status = await controller.requestQuickSettingsTile();
+      message = switch (status) {
+        'added' => '빠른 설정에 Proxima 타일을 추가했습니다.',
+        'already_added' => '타일이 이미 빠른 설정에 추가돼 있습니다.',
+        'not_added' => '타일 추가가 취소되었거나 Android가 요청을 거절했습니다.',
+        'request_in_progress' => '타일 추가 요청이 이미 진행 중입니다.',
+        'not_foreground' => '타일 추가를 위해서 앱을 연 상태로 다시 시도해 주세요.',
+        'invalid_service' => '타일 서비스를 준비하지 못했습니다. 앱을 다시 시작한 뒤 시도해 주세요.',
+        'unsupported' => 'Android 13 이상에서만 앱에서 타일 추가 창을 표시할 수 있습니다.',
+        _ => '빠른 설정 타일을 추가하지 못했습니다.',
+      };
+    } catch (_) {
+      message = '빠른 설정 타일 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.';
+    }
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            added
-                ? '빠른 설정에 Proxima 타일을 추가했습니다.'
-                : '빠른 설정 편집 화면에서 Proxima 타일을 직접 추가해 주세요.',
-          ),
-        ),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
     }
   }
 

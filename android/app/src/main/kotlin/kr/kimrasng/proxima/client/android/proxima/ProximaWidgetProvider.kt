@@ -108,6 +108,7 @@ class ProximaWidgetProvider : AppWidgetProvider() {
                 val state = snapshot["state"]?.toString() ?: "disconnected"
                 val profileName = snapshot["profileName"]?.toString()
                     ?: ProfileRepository(context).active()?.name
+                views.setTextViewText(R.id.widget_title, profileName ?: "Proxima VPN")
                 val activeNode = snapshot["activeNode"]?.toString()
                 // A widget can be refreshed before the process recreates the
                 // in-memory snapshot. Fall back to persisted settings so a
@@ -177,7 +178,6 @@ class ProximaWidgetProvider : AppWidgetProvider() {
                             views.setViewVisibility(R.id.widget_traffic_layout, android.view.View.VISIBLE)
                             views.setViewVisibility(R.id.widget_traffic_down, android.view.View.GONE)
                             views.setTextViewText(R.id.widget_node, "VPN 연결 중")
-                            views.setTextViewText(R.id.widget_uptime, profileName ?: "프로필 준비 중")
                             views.setTextViewText(R.id.widget_traffic_up, "안전한 연결을 준비하고 있습니다")
                             views.setTextViewText(R.id.widget_button, "연결하는 중…")
                             views.setInt(

@@ -754,7 +754,8 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<bool> requestQuickSettingsTile() => bridge.requestQuickSettingsTile();
+  Future<String> requestQuickSettingsTile() =>
+      bridge.requestQuickSettingsTile();
   Future<bool> requestPinAppWidget() => bridge.requestPinAppWidget();
 
   void clearMessage() {

@@ -694,7 +694,7 @@ class _FakeBridge implements VpnBridge {
   Future<bool> requestVpnPermission() async => true;
 
   @override
-  Future<bool> requestQuickSettingsTile() async => true;
+  Future<String> requestQuickSettingsTile() async => 'added';
 
   @override
   Future<bool> requestPinAppWidget() async => true;

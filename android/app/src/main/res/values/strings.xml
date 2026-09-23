@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Proxima</string>
+    <string name="quick_settings_tile_label">Proxima VPN</string>
+    <string name="app_widget_label">Proxima VPN 위젯</string>
+</resources>
