@@ -80,6 +80,6 @@ object XrayConnectionLog {
         "proxima-direct" -> "DIRECT"
         "proxima-block" -> "BLOCK"
         "proxima-auto" -> "AUTO"
-        else -> value
+        else -> value.replace(Regex("^proxima-node-\\d+-"), "")
     }
 }

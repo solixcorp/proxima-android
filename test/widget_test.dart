@@ -576,6 +576,123 @@ rules:
     ]);
   });
 
+  test('prefers a rule-bearing Clash subscription over a VLESS response', () async {
+    const link =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=tcp#Tokyo';
+    const yaml = '''
+proxies:
+  - {name: Tokyo, type: vless, server: edge.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000, reality-opts: {public-key: abcdefghijklmnopqrstuvwxzy0123456789ABCD}}
+proxy-groups:
+  - {name: PROXY, type: select, proxies: [Tokyo]}
+rules:
+  - DOMAIN-SUFFIX,example.com,Tokyo
+  - MATCH,PROXY
+''';
+    final requestedAgents = <String>[];
+    final result = await AppController.fetchPreferredSubscription((
+      agent,
+    ) async {
+      requestedAgents.add(agent);
+      return SubscriptionFetchResult(
+        content: agent == 'clash.meta' ? link : yaml,
+      );
+    });
+
+    expect(requestedAgents, ['clash.meta', 'ClashForAndroid']);
+    expect(result.content, yaml);
+    expect(
+      VlessRealityProfile.hasCurrentRoutingMetadata(
+        VlessRealityProfile.storedConfigFromInput(
+          result.content,
+          profileName: 'Airport',
+        ),
+      ),
+      isTrue,
+    );
+  });
+
+  test('retains usable VLESS links if the alternate format fails', () async {
+    const link =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=tcp#Tokyo';
+    final result = await AppController.fetchPreferredSubscription((
+      agent,
+    ) async {
+      if (agent == 'ClashForAndroid') {
+        throw const FormatException('unsupported');
+      }
+      return const SubscriptionFetchResult(content: link);
+    });
+    expect(result.content, link);
+  });
+
+  test('tries another client identity after an HTTP rejection', () async {
+    const link =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=tcp#Tokyo';
+    final requestedAgents = <String>[];
+    final result = await AppController.fetchPreferredSubscription((
+      agent,
+    ) async {
+      requestedAgents.add(agent);
+      if (agent == 'clash.meta') throw const FormatException('rejected');
+      return const SubscriptionFetchResult(content: link);
+    });
+    expect(requestedAgents, ['clash.meta', 'ClashForAndroid']);
+    expect(result.content, link);
+  });
+
+  test('keeps the selected policy for a compound Clash rule', () {
+    const yaml = '''
+proxies:
+  - {name: Tokyo, type: vless, server: tokyo.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000, reality-opts: {public-key: abcdefghijklmnopqrstuvwxzy0123456789ABCD}}
+  - {name: Seoul, type: vless, server: seoul.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000, reality-opts: {public-key: abcdefghijklmnopqrstuvwxzy0123456789ABCD}}
+proxy-groups:
+  - {name: Korea, type: select, proxies: [Seoul]}
+rules:
+  - AND,((DOMAIN-SUFFIX,example.com),(NETWORK,TCP),(DST-PORT,443)),Korea
+  - MATCH,Tokyo
+''';
+    final config = VlessRealityProfile.storedConfigFromInput(
+      yaml,
+      profileName: 'Airport',
+    );
+    final encoded = config
+        .split('\n')
+        .first
+        .substring(VlessRealityProfile.routingMetadataPrefix.length)
+        .trim();
+    final routing = jsonDecode(
+      utf8.decode(
+        base64Url.decode(encoded.padRight((encoded.length + 3) ~/ 4 * 4, '=')),
+      ),
+    ) as Map<String, dynamic>;
+    final rule = (routing['rules'] as List).first as Map<String, dynamic>;
+    expect(rule['policy'], 'Korea');
+    expect(rule['candidates'], ['Seoul']);
+  });
+
+  test('preserves destination rules alongside plain VLESS links', () {
+    const link =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=tcp#Tokyo';
+    const input = '$link\nDOMAIN-SUFFIX,example.com,Tokyo\nMATCH,DIRECT';
+    final config = VlessRealityProfile.storedConfigFromInput(
+      input,
+      profileName: 'Tokyo',
+    );
+    expect(VlessRealityProfile.hasCurrentRoutingMetadata(config), isTrue);
+    expect(
+      VlessRealityProfile.inlineRulesFromStoredConfig(config),
+      'DOMAIN-SUFFIX,example.com,Tokyo\nMATCH,DIRECT',
+    );
+    expect(VlessRealityProfile.linksFromStoredConfig(config), [link]);
+    expect(
+      () => VlessRealityProfile.storedConfigFromInput(
+        '$link\nDOMAIN-SUFFIX,example.com,Missing',
+        profileName: 'Tokyo',
+      ),
+      throwsFormatException,
+    );
+  });
+
   test('normalizes a Base64URL-wrapped single VLESS link', () {
     const link =
         'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=tcp#Tokyo';

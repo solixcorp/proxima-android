@@ -214,7 +214,7 @@ class HomeScreen extends StatelessWidget {
             child: ListTile(
               leading: Icon(Icons.rule_rounded),
               title: Text('규칙에 따라 자동 선택'),
-              subtitle: Text('규칙 모드에서는 특정 노드를 직접 선택할 수 없습니다.'),
+              subtitle: Text('Clash 구독 또는 링크 목록에 입력한 규칙으로 경로를 선택합니다. 규칙이 없으면 기본 노드를 사용합니다.'),
             ),
           ),
         ],

@@ -30,7 +30,8 @@ object XrayConfig {
     ): XrayRuntimeConfig {
         val sourceLinks = links(content)
         val names = uniqueNodeNames(sourceLinks, profile.name)
-        val nodes = convertedNodes(sourceLinks, names)
+        val tags = names.indices.map { index -> "proxima-node-$index-${names[index]}" }
+        val nodes = convertedNodes(sourceLinks, tags)
         val selected = VpnSettingsRepositoryHolder.selected(profile.id)
         val requestedName = when (settings.mode) {
             "global" -> selected["GLOBAL"]
@@ -38,7 +39,7 @@ object XrayConfig {
             else -> null
         }
         val activeIndex = names.indexOf(requestedName).takeIf { it >= 0 } ?: 0
-        val activeTag = names[activeIndex]
+        val activeTag = tags[activeIndex]
         val directTag = "proxima-direct"
         val blockTag = "proxima-block"
         val storedRouting = routing(content)
@@ -51,7 +52,7 @@ object XrayConfig {
         }
         val rules = JSONArray()
         val policyBalancers = if (useSubscriptionRules) {
-            policyBalancers(storedRouting.rules, names)
+            policyBalancers(storedRouting.rules, names, tags)
         } else emptyMap()
         // Many VLESS servers do not relay UDP DNS. Sending Android's resolver
         // packets through such a node leaves the VPN established but makes
@@ -67,7 +68,7 @@ object XrayConfig {
         )
         if (useSubscriptionRules) {
             storedRouting.rules.forEach { storedRule ->
-                convertRule(storedRule, directTag, blockTag, policyBalancers)?.let(rules::put)
+                convertRule(storedRule, directTag, blockTag, activeTag, policyBalancers)?.let(rules::put)
             }
         } else {
             rules.put(
@@ -85,7 +86,8 @@ object XrayConfig {
             val balancers = JSONArray().put(
                 JSONObject()
                     .put("tag", AUTO_BALANCER_TAG)
-                    .put("selector", JSONArray(names))
+                    .put("selector", JSONArray(tags))
+                    .put("fallbackTag", activeTag)
                     .put("strategy", JSONObject().put("type", "leastPing")),
             )
             policyBalancers.forEach { (_, value) ->
@@ -93,6 +95,10 @@ object XrayConfig {
                     JSONObject()
                         .put("tag", value.first)
                         .put("selector", JSONArray(value.second))
+                        .put(
+                            "fallbackTag",
+                            activeTag.takeIf(value.second::contains) ?: value.second.first(),
+                        )
                         .put("strategy", JSONObject().put("type", "leastPing")),
                 )
             }
@@ -114,7 +120,7 @@ object XrayConfig {
             config.put(
                 "observatory",
                 JSONObject()
-                    .put("subjectSelector", JSONArray(names))
+                    .put("subjectSelector", JSONArray(tags))
                     .put("probeURL", storedRouting.testUrl)
                     .put("probeInterval", "10m")
                     .put("enableConcurrency", true),
@@ -173,7 +179,7 @@ object XrayConfig {
                 JSONObject()
                     .put("type", "field")
                     .put("inboundTag", JSONArray().put(tag))
-                    .put("outboundTag", name),
+                    .put("outboundTag", tags[index]),
             )
         }
         if (useSubscriptionRules) {
@@ -192,7 +198,7 @@ object XrayConfig {
         if (inbounds.length() > 0) config.put("inbounds", inbounds)
         return XrayRuntimeConfig(
             json = config,
-            activeNode = activeTag.takeUnless { settings.mode == "direct" || useSubscriptionRules },
+            activeNode = names[activeIndex].takeUnless { settings.mode == "direct" || useSubscriptionRules },
             probePorts = probePorts.filterKeys { it in names || (useSubscriptionRules && it == RULE_PROBE_KEY) },
         )
     }
@@ -307,6 +313,7 @@ object XrayConfig {
         source: JSONObject,
         directTag: String,
         blockTag: String,
+        activeTag: String,
         policyBalancers: Map<String, Pair<String, List<String>>>,
     ): JSONObject? {
         val target = source.optString("target")
@@ -348,10 +355,17 @@ object XrayConfig {
         when (target) {
             "direct" -> rule.put("outboundTag", directTag)
             "block" -> rule.put("outboundTag", blockTag)
-            "proxy" -> rule.put(
-                "balancerTag",
-                policyBalancers[source.optString("policy")]?.first ?: AUTO_BALANCER_TAG,
-            )
+            "proxy" -> {
+                val policy = policyBalancers[source.optString("policy")]
+                // A successful global selection is a better default than a
+                // latency probe that may choose a node unable to carry app
+                // traffic. Keep restricted policy pools when it is excluded.
+                if (policy == null || activeTag in policy.second) {
+                    rule.put("outboundTag", activeTag)
+                } else {
+                    rule.put("balancerTag", policy.first)
+                }
+            }
         }
         return rule
     }
@@ -359,6 +373,7 @@ object XrayConfig {
     private fun policyBalancers(
         rules: List<JSONObject>,
         names: List<String>,
+        tags: List<String>,
     ): Map<String, Pair<String, List<String>>> {
         val result = linkedMapOf<String, Pair<String, List<String>>>()
         rules.forEach { rule ->
@@ -385,7 +400,8 @@ object XrayConfig {
                     .orEmpty()
             }
             if (selected.isEmpty()) return@forEach
-            result[policy] = "proxima-policy-${result.size}" to selected
+            result[policy] = "proxima-policy-${result.size}" to
+                selected.map { name -> tags[names.indexOf(name)] }
         }
         return result
     }

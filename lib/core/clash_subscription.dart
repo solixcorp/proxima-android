@@ -22,6 +22,62 @@ class ClashSubscriptionConversion {
 class ClashSubscriptionParser {
   const ClashSubscriptionParser._();
 
+  /// Optional Clash-style rules placed after a plain VLESS link list.
+  /// A share link only describes a server, so destination rules must be
+  /// supplied separately when the subscription is not Clash YAML.
+  static Map<String, Object?>? rulesForLinks(
+    String source,
+    List<String> nodeNames,
+  ) {
+    final lines = source.split(RegExp(r'\r?\n')).map((line) => line.trim());
+    final ruleLines = lines
+        .where(
+          (line) => RegExp(
+            r'^(?:AND|DOMAIN|DOMAIN-SUFFIX|DOMAIN-KEYWORD|IP-CIDR|IP-CIDR6|GEOIP|GEOSITE|MATCH),',
+            caseSensitive: false,
+          ).hasMatch(line),
+        )
+        .toList(growable: false);
+    if (ruleLines.isEmpty) return null;
+    String resolveTarget(String value) {
+      final target = value.trim();
+      if (target.toUpperCase() == 'DIRECT') return 'direct';
+      if (target.toUpperCase() == 'REJECT' ||
+          target.toUpperCase() == 'REJECT-DROP') {
+        return 'block';
+      }
+      if (target == 'PROXY' || nodeNames.contains(target)) return 'proxy';
+      throw FormatException('규칙의 노드 "$target"를 찾을 수 없습니다.');
+    }
+
+    List<String> resolveCandidates(String value) {
+      final target = value.trim();
+      if (target == 'PROXY') return nodeNames;
+      return nodeNames.contains(target) ? [target] : const [];
+    }
+
+    final rules = <Map<String, Object?>>[];
+    for (final line in ruleLines) {
+      final rule = _parseRule(line, resolveTarget, resolveCandidates);
+      if (rule == null) throw FormatException('지원하지 않는 규칙: $line');
+      rules.add(rule);
+    }
+    if (!rules.any((rule) => rule['match'] == true)) {
+      rules.add({
+        'match': true,
+        'target': 'proxy',
+        'policy': 'PROXY',
+        'candidates': nodeNames,
+      });
+    }
+    return {
+      'version': 2,
+      'source': 'vless-links',
+      'autoTestUrl': 'https://www.gstatic.com/generate_204',
+      'rules': rules,
+    };
+  }
+
   static ClashSubscriptionConversion? tryParse(String source) {
     if (!source.contains('proxies:') || !source.contains('proxy-groups:')) {
       return null;
@@ -178,17 +234,23 @@ class ClashSubscriptionParser {
   ) {
     final rule = source.trim();
     if (rule.isEmpty) return null;
-    if (rule.startsWith('AND,')) {
+    if (rule.toUpperCase().startsWith('AND,')) {
       final match = RegExp(
         r'^AND,\(\(DOMAIN-(SUFFIX|KEYWORD),([^\)]+)\),\(NETWORK,(TCP|UDP)\),\(DST-PORT,([^\)]+)\)\),(.+)$',
         caseSensitive: false,
       ).firstMatch(rule);
       if (match == null) return null;
+      final target = resolveTarget(match.group(5)!);
       return {
         'domain': [_domainValue('DOMAIN-${match.group(1)!}', match.group(2)!)],
         'network': match.group(3)!.toLowerCase(),
         'port': match.group(4)!.trim(),
-        'target': resolveTarget(match.group(5)!),
+        'target': target,
+        if (target == 'proxy') ...{
+          'policy': match.group(5)!.trim(),
+          if (resolveCandidates(match.group(5)!).isNotEmpty)
+            'candidates': resolveCandidates(match.group(5)!),
+        },
       };
     }
 

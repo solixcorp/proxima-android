@@ -477,7 +477,9 @@ class _ProfileEditorState extends State<_ProfileEditor> {
                   labelText: 'VLESS + REALITY 링크 목록',
                   hintText:
                       'vless://uuid@server:443?...&security=reality...\n'
-                      '여러 노드는 줄바꿈으로 붙여넣을 수 있습니다.',
+                      '여러 노드는 줄바꿈으로 붙여넣을 수 있습니다.\n'
+                      '선택: DOMAIN-SUFFIX,example.com,노드 이름\n'
+                      '선택: IP-CIDR,203.0.113.0/24,노드 이름',
                   alignLabelWithHint: true,
                 ),
               ),

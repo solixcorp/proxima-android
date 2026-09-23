@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../core/native_vpn_bridge.dart';
+import '../core/clash_subscription.dart';
 import '../core/vless_reality_profile.dart';
 import '../models/vpn_models.dart';
 
@@ -254,7 +255,13 @@ class AppController extends ChangeNotifier {
   Future<String> readProfileLink(VpnProfile profile) async {
     final config = await bridge.readProfile(profile.id);
     final links = VlessRealityProfile.linksFromStoredConfig(config);
-    if (links.isNotEmpty) return links.join('\n');
+    if (links.isNotEmpty) {
+      final rules = VlessRealityProfile.inlineRulesFromStoredConfig(config);
+      return [
+        links.join('\n'),
+        if (rules != null && rules.isNotEmpty) rules,
+      ].join('\n');
+    }
     throw const FormatException(
       '이전 Mihomo YAML 프로필입니다. VLESS + REALITY 링크로 새 프로필을 추가해 주세요.',
     );
@@ -325,43 +332,86 @@ class AppController extends ChangeNotifier {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 15);
     try {
-      var current = uri;
-      late HttpClientResponse response;
-      for (var redirects = 0; ; redirects++) {
-        final request = await client.getUrl(current);
-        request.followRedirects = false;
-        request.headers.set(
-          HttpHeaders.userAgentHeader,
-          'Clash.Meta Proxima/1.0',
-        );
-        response = await request.close().timeout(const Duration(seconds: 20));
-        if (!response.isRedirect) break;
-        final location = response.headers.value(HttpHeaders.locationHeader);
-        await response.drain<void>();
-        if (location == null || redirects >= 5) {
-          throw HttpException('구독 주소의 리디렉션이 너무 많습니다.', uri: current);
-        }
-        final redirected = current.resolve(location);
-        if (redirected.scheme != 'https' || redirected.host.isEmpty) {
-          throw const FormatException('HTTPS가 아닌 주소로 이동할 수 없습니다.');
-        }
-        current = redirected;
-      }
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException('서버 응답 ${response.statusCode}', uri: current);
-      }
-      final info = _subscriptionInfo(response.headers);
-      final chunks = <int>[];
-      await for (final chunk in response) {
-        chunks.addAll(chunk);
-        if (chunks.length > 8 * 1024 * 1024) {
-          throw const FormatException('프로필은 8MB보다 작아야 합니다.');
-        }
-      }
-      return SubscriptionFetchResult(content: utf8.decode(chunks), info: info);
+      return await fetchPreferredSubscription(
+        (userAgent) => _fetchSubscriptionWithUserAgent(client, uri, userAgent),
+      );
     } finally {
       client.close(force: true);
     }
+  }
+
+  static Future<SubscriptionFetchResult> fetchPreferredSubscription(
+    Future<SubscriptionFetchResult> Function(String userAgent) fetch,
+  ) async {
+    SubscriptionFetchResult? fallback;
+    Object? firstRequestError;
+    StackTrace? firstRequestStack;
+    for (final userAgent in const ['clash.meta', 'ClashForAndroid']) {
+      late final SubscriptionFetchResult result;
+      try {
+        result = await fetch(userAgent);
+      } catch (error, stack) {
+        firstRequestError ??= error;
+        firstRequestStack ??= stack;
+        continue;
+      }
+      try {
+        if (ClashSubscriptionParser.tryParse(result.content) != null) {
+          return result;
+        }
+        VlessRealityProfile.linksFromSubscription(result.content);
+        fallback ??= result;
+      } on FormatException {
+        // A second client identity may receive a usable VLESS or Clash format.
+      }
+    }
+    if (fallback != null) return fallback;
+    if (firstRequestError != null) {
+      Error.throwWithStackTrace(firstRequestError, firstRequestStack!);
+    }
+    throw const FormatException('구독에서 지원되는 VLESS 링크나 Clash YAML을 찾지 못했습니다.');
+  }
+
+  Future<SubscriptionFetchResult> _fetchSubscriptionWithUserAgent(
+    HttpClient client,
+    Uri uri,
+    String userAgent,
+  ) async {
+    var current = uri;
+    late HttpClientResponse response;
+    for (var redirects = 0; ; redirects++) {
+      final request = await client.getUrl(current);
+      request.followRedirects = false;
+      request.headers.set(HttpHeaders.userAgentHeader, userAgent);
+      request.headers.set(
+        HttpHeaders.acceptHeader,
+        'application/yaml, text/yaml, text/plain, */*',
+      );
+      response = await request.close().timeout(const Duration(seconds: 20));
+      if (!response.isRedirect) break;
+      final location = response.headers.value(HttpHeaders.locationHeader);
+      await response.drain<void>();
+      if (location == null || redirects >= 5) {
+        throw HttpException('구독 주소의 리디렉션이 너무 많습니다.', uri: current);
+      }
+      final redirected = current.resolve(location);
+      if (redirected.scheme != 'https' || redirected.host.isEmpty) {
+        throw const FormatException('HTTPS가 아닌 주소로 이동할 수 없습니다.');
+      }
+      current = redirected;
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException('서버 응답 ${response.statusCode}', uri: current);
+    }
+    final info = _subscriptionInfo(response.headers);
+    final chunks = <int>[];
+    await for (final chunk in response) {
+      chunks.addAll(chunk);
+      if (chunks.length > 8 * 1024 * 1024) {
+        throw const FormatException('프로필은 8MB보다 작아야 합니다.');
+      }
+    }
+    return SubscriptionFetchResult(content: utf8.decode(chunks), info: info);
   }
 
   Future<void> refreshProfile(VpnProfile profile) async {

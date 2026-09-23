@@ -9,6 +9,7 @@ import 'clash_subscription.dart';
 /// broader link and failing later while connecting.
 class VlessRealityProfile {
   static const routingMetadataPrefix = '# proxima-routing-rules:';
+  static const inlineRulesPrefix = '# proxima-inline-rules:';
   const VlessRealityProfile({
     required this.sourceLink,
     required this.name,
@@ -179,11 +180,50 @@ class VlessRealityProfile {
         .map(VlessRealityProfile.parse)
         .toList(growable: false);
     var config = profilesToMihomoYaml(profiles, profileName: profileName);
-    if (clash != null) {
-      final encoded = encodeRoutingMetadata(clash.routing);
+    final inlineRouting = clash == null
+        ? ClashSubscriptionParser.rulesForLinks(
+            input,
+            _uniqueNodeNames(profiles, profileName: profileName),
+          )
+        : null;
+    final routing = clash?.routing ?? inlineRouting;
+    if (routing != null) {
+      final encoded = encodeRoutingMetadata(routing);
       config = '$routingMetadataPrefix $encoded\n$config';
     }
+    if (inlineRouting != null) {
+      final lines = input
+          .split(RegExp(r'\r?\n'))
+          .map((line) => line.trim())
+          .where(
+            (line) => RegExp(
+              r'^(?:AND|DOMAIN|DOMAIN-SUFFIX|DOMAIN-KEYWORD|IP-CIDR|IP-CIDR6|GEOIP|GEOSITE|MATCH),',
+              caseSensitive: false,
+            ).hasMatch(line),
+          )
+          .join('\n');
+      final encoded = base64UrlEncode(utf8.encode(lines)).replaceAll('=', '');
+      config = '$inlineRulesPrefix $encoded\n$config';
+    }
     return config;
+  }
+
+  static String? inlineRulesFromStoredConfig(String content) {
+    final line = content
+        .split(RegExp(r'\r?\n'))
+        .map((line) => line.trim())
+        .firstWhere(
+          (line) => line.startsWith(inlineRulesPrefix),
+          orElse: () => '',
+        );
+    if (line.isEmpty) return null;
+    final encoded = line.substring(inlineRulesPrefix.length).trim();
+    try {
+      final padded = encoded.padRight((encoded.length + 3) ~/ 4 * 4, '=');
+      return utf8.decode(base64Url.decode(padded));
+    } on FormatException {
+      return null;
+    }
   }
 
   static bool hasRoutingMetadata(String content) =>

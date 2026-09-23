@@ -32,7 +32,7 @@ class ProxiesScreen extends StatelessWidget {
           },
           subtitle: switch (mode) {
             OutboundMode.global => '모든 트래픽에 사용할 노드 하나를 선택합니다.',
-            OutboundMode.rule => '규칙에 따라 경로가 자동으로 선택됩니다.',
+            OutboundMode.rule => '프로필에 저장된 목적지 규칙에 따라 경로를 선택합니다.',
             OutboundMode.direct => '프록시 노드를 거치지 않고 바로 통신합니다.',
           },
           onRefresh: controller.loadProxyGroups,
