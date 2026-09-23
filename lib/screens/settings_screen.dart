@@ -24,6 +24,21 @@ class SettingsScreen extends StatelessWidget {
     }
   }
 
+  Future<void> _requestPinWidget(BuildContext context) async {
+    final added = await controller.requestPinAppWidget();
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            added
+                ? '홈 화면에 Proxima 위젯을 추가했습니다.'
+                : '홈 화면의 위젯 메뉴에서 Proxima 위젯을 직접 추가해 주세요.',
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings = controller.settings;
@@ -131,6 +146,14 @@ class SettingsScreen extends StatelessWidget {
         Card(
           child: Column(
             children: [
+              ListTile(
+                leading: const Icon(Icons.widgets_outlined),
+                title: const Text('홈 화면 위젯'),
+                subtitle: const Text('홈 화면에 VPN 연결 토글 위젯을 추가합니다.'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => _requestPinWidget(context),
+              ),
+              const Divider(height: 1, indent: 56),
               ListTile(
                 leading: const Icon(Icons.dashboard_customize_outlined),
                 title: const Text('빠른 설정 타일'),

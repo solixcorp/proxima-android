@@ -14,6 +14,10 @@ data class XrayRuntimeConfig(
 /** Converts Proxima's VLESS+REALITY-only stored links to an Xray configuration. */
 object XrayConfig {
     private const val METADATA_PREFIX = "# proxima-vless-reality-link:"
+    private const val ROUTING_PREFIX = "# proxima-routing-rules:"
+    const val RULE_PROBE_KEY = "__PROXIMA_RULE__"
+    private const val RULE_PROBE_TAG = "proxima-rule-probe"
+    private const val AUTO_BALANCER_TAG = "proxima-auto"
 
     fun build(
         profile: StoredProfile,
@@ -36,10 +40,19 @@ object XrayConfig {
         val activeIndex = names.indexOf(requestedName).takeIf { it >= 0 } ?: 0
         val activeTag = names[activeIndex]
         val directTag = "proxima-direct"
+        val blockTag = "proxima-block"
+        val storedRouting = routing(content)
+        val useSubscriptionRules = settings.mode == "rule" && storedRouting != null
         val outbounds = JSONArray()
         for (index in 0 until nodes.length()) outbounds.put(nodes.getJSONObject(index))
         outbounds.put(JSONObject().put("tag", directTag).put("protocol", "freedom"))
+        if (useSubscriptionRules) {
+            outbounds.put(JSONObject().put("tag", blockTag).put("protocol", "blackhole"))
+        }
         val rules = JSONArray()
+        val policyBalancers = if (useSubscriptionRules) {
+            policyBalancers(storedRouting.rules, names)
+        } else emptyMap()
         // Many VLESS servers do not relay UDP DNS. Sending Android's resolver
         // packets through such a node leaves the VPN established but makes
         // every hostname fail. Resolve DNS through the protected underlying
@@ -52,13 +65,42 @@ object XrayConfig {
                 .put("port", "53")
                 .put("outboundTag", directTag),
         )
-        rules.put(
-            JSONObject()
-                .put("type", "field")
-                .put("inboundTag", JSONArray().put("proxima-tun"))
-                .put("outboundTag", if (settings.mode == "direct") directTag else activeTag),
-        )
+        if (useSubscriptionRules) {
+            storedRouting.rules.forEach { storedRule ->
+                convertRule(storedRule, directTag, blockTag, policyBalancers)?.let(rules::put)
+            }
+        } else {
+            rules.put(
+                JSONObject()
+                    .put("type", "field")
+                    .put("inboundTag", JSONArray().put("proxima-tun"))
+                    .put("outboundTag", if (settings.mode == "direct") directTag else activeTag),
+            )
+        }
         val inbounds = JSONArray()
+        val routingConfig = JSONObject()
+            .put("domainStrategy", if (useSubscriptionRules) "IPIfNonMatch" else "AsIs")
+            .put("rules", rules)
+        if (useSubscriptionRules) {
+            val balancers = JSONArray().put(
+                JSONObject()
+                    .put("tag", AUTO_BALANCER_TAG)
+                    .put("selector", JSONArray(names))
+                    .put("strategy", JSONObject().put("type", "leastPing")),
+            )
+            policyBalancers.forEach { (_, value) ->
+                balancers.put(
+                    JSONObject()
+                        .put("tag", value.first)
+                        .put("selector", JSONArray(value.second))
+                        .put("strategy", JSONObject().put("type", "leastPing")),
+                )
+            }
+            routingConfig.put(
+                "balancers",
+                balancers,
+            )
+        }
         val config = JSONObject()
             .put(
                 "log",
@@ -67,7 +109,17 @@ object XrayConfig {
                 },
             )
             .put("outbounds", outbounds)
-            .put("routing", JSONObject().put("domainStrategy", "AsIs").put("rules", rules))
+            .put("routing", routingConfig)
+        if (useSubscriptionRules) {
+            config.put(
+                "observatory",
+                JSONObject()
+                    .put("subjectSelector", JSONArray(names))
+                    .put("probeURL", storedRouting.testUrl)
+                    .put("probeInterval", "10m")
+                    .put("enableConcurrency", true),
+            )
+        }
         if (metricsPort != null) {
             config
                 .put("metrics", JSONObject().put("listen", "127.0.0.1:$metricsPort"))
@@ -90,7 +142,19 @@ object XrayConfig {
                 JSONObject()
                     .put("tag", "proxima-tun")
                     .put("protocol", "tun")
-                    .put("settings", JSONObject().put("name", "proxima").put("mtu", settings.mtu)),
+                    .put("settings", JSONObject().put("name", "proxima").put("mtu", settings.mtu))
+                    // Android apps send the TUN inbound an IP address, not a
+                    // hostname. Without sniffing every DOMAIN-SUFFIX rule
+                    // misses and Xray falls through to one fastest node.
+                    // routeOnly preserves the original IP for the connection
+                    // while exposing TLS/HTTP/QUIC hostnames to routing.
+                    .put(
+                        "sniffing",
+                        JSONObject()
+                            .put("enabled", true)
+                            .put("destOverride", JSONArray().put("http").put("tls").put("quic"))
+                            .put("routeOnly", true),
+                    ),
             )
         }
         names.forEachIndexed { index, name ->
@@ -112,11 +176,24 @@ object XrayConfig {
                     .put("outboundTag", name),
             )
         }
+        if (useSubscriptionRules) {
+            probePorts[RULE_PROBE_KEY]?.let { port ->
+                require(port in 1..65535) { "Xray 규칙 검사 포트가 올바르지 않습니다." }
+                inbounds.put(
+                    JSONObject()
+                        .put("tag", RULE_PROBE_TAG)
+                        .put("listen", "127.0.0.1")
+                        .put("port", port)
+                        .put("protocol", "socks")
+                        .put("settings", JSONObject().put("auth", "noauth").put("udp", true)),
+                )
+            }
+        }
         if (inbounds.length() > 0) config.put("inbounds", inbounds)
         return XrayRuntimeConfig(
             json = config,
-            activeNode = activeTag.takeUnless { settings.mode == "direct" },
-            probePorts = probePorts.filterKeys(names::contains),
+            activeNode = activeTag.takeUnless { settings.mode == "direct" || useSubscriptionRules },
+            probePorts = probePorts.filterKeys { it in names || (useSubscriptionRules && it == RULE_PROBE_KEY) },
         )
     }
 
@@ -179,7 +256,7 @@ object XrayConfig {
             val padded = encoded.padEnd((encoded.length + 3) / 4 * 4, '=')
             String(Base64.decode(padded, Base64.URL_SAFE or Base64.NO_WRAP), Charsets.UTF_8)
         }.getOrNull()
-    }.toList()
+    }.filterNot(::isInformationLink).toList()
 
     // Set by the service immediately before construction; this keeps profile parsing pure.
     object VpnSettingsRepositoryHolder { var selected: (String) -> Map<String, String> = { emptyMap() } }
@@ -194,6 +271,164 @@ object XrayConfig {
             converted.getJSONObject(index).put("tag", names[index])
         }
         return converted
+    }
+
+    private data class StoredRouting(val rules: List<JSONObject>, val testUrl: String)
+
+    private fun routing(content: String): StoredRouting? {
+        val encoded = content.lineSequence().map { it.trim() }
+            .firstOrNull { it.startsWith(ROUTING_PREFIX) }
+            ?.removePrefix(ROUTING_PREFIX)?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: return null
+        return runCatching {
+            val padded = encoded.padEnd((encoded.length + 3) / 4 * 4, '=')
+            val root = JSONObject(
+                String(Base64.decode(padded, Base64.URL_SAFE or Base64.NO_WRAP), Charsets.UTF_8),
+            )
+            require(root.optInt("version") in 1..2) { "지원하지 않는 라우팅 메타데이터입니다." }
+            val sourceRules = root.optJSONArray("rules") ?: JSONArray()
+            val parsed = buildList {
+                for (index in 0 until sourceRules.length()) {
+                    sourceRules.optJSONObject(index)?.let(::add)
+                }
+            }
+            require(parsed.isNotEmpty()) { "구독 라우팅 규칙이 비어 있습니다." }
+            StoredRouting(
+                rules = parsed,
+                testUrl = root.optString("autoTestUrl")
+                    .takeIf { it.startsWith("https://") }
+                    ?: "https://www.gstatic.com/generate_204",
+            )
+        }.getOrElse { throw IllegalArgumentException("구독 라우팅 규칙을 읽지 못했습니다.", it) }
+    }
+
+    private fun convertRule(
+        source: JSONObject,
+        directTag: String,
+        blockTag: String,
+        policyBalancers: Map<String, Pair<String, List<String>>>,
+    ): JSONObject? {
+        val target = source.optString("target")
+        if (target !in setOf("direct", "block", "proxy")) return null
+        val rule = JSONObject()
+            .put("type", "field")
+            .put("inboundTag", JSONArray().put("proxima-tun").put(RULE_PROBE_TAG))
+        copyArray(source, rule, "domain")
+        copyArray(source, rule, "ip", transform = ::expandGeoIp)
+        source.optString("network").takeIf { it in setOf("tcp", "udp", "tcp,udp") }
+            ?.let { rule.put("network", it) }
+        source.optString("port").takeIf { it.matches(Regex("^[0-9,:-]+$")) }
+            ?.let { rule.put("port", it) }
+
+        // The AAR intentionally contains no external geosite/geoip data files.
+        // Keep private-network semantics locally and skip data-file-dependent
+        // entries. geolocation-!cn is followed by MATCH to the same proxy path.
+        val domains = rule.optJSONArray("domain")
+        if (domains != null) {
+            val normalized = JSONArray()
+            for (index in 0 until domains.length()) {
+                when (val value = domains.optString(index)) {
+                    "geosite:private" -> listOf(
+                        "domain:lan", "domain:local", "full:localhost", "domain:home.arpa",
+                    ).forEach(normalized::put)
+                    else -> if (!value.startsWith("geosite:")) normalized.put(value)
+                }
+            }
+            rule.put("domain", normalized)
+        }
+        val hasCondition = listOf("domain", "ip", "network", "port").any { key ->
+            when (val value = rule.opt(key)) {
+                is JSONArray -> value.length() > 0
+                is String -> value.isNotBlank()
+                else -> false
+            }
+        }
+        if (source.optBoolean("match", false).not() && !hasCondition) return null
+        when (target) {
+            "direct" -> rule.put("outboundTag", directTag)
+            "block" -> rule.put("outboundTag", blockTag)
+            "proxy" -> rule.put(
+                "balancerTag",
+                policyBalancers[source.optString("policy")]?.first ?: AUTO_BALANCER_TAG,
+            )
+        }
+        return rule
+    }
+
+    private fun policyBalancers(
+        rules: List<JSONObject>,
+        names: List<String>,
+    ): Map<String, Pair<String, List<String>>> {
+        val result = linkedMapOf<String, Pair<String, List<String>>>()
+        rules.forEach { rule ->
+            if (rule.optString("target") != "proxy") return@forEach
+            val policy = rule.optString("policy").trim()
+            if (policy.isEmpty() || policy in result) return@forEach
+            // Version 2 metadata carries the actual node candidates behind a
+            // Clash group. Prefer that set; the old policy-name country hint
+            // remains as a compatibility fallback for existing profiles.
+            val configuredCandidates = rule.optJSONArray("candidates")
+                ?.let { candidates ->
+                    buildList {
+                        for (index in 0 until candidates.length()) {
+                            candidates.optString(index)
+                                .takeIf(names::contains)
+                                ?.let(::add)
+                        }
+                    }.distinct()
+                }
+                .orEmpty()
+            val selected = configuredCandidates.ifEmpty {
+                countryMarker(policy)
+                    ?.let { marker -> names.filter { it.contains(marker, ignoreCase = true) } }
+                    .orEmpty()
+            }
+            if (selected.isEmpty()) return@forEach
+            result[policy] = "proxima-policy-${result.size}" to selected
+        }
+        return result
+    }
+
+    private fun countryMarker(policy: String): String? = when {
+        policy.contains("🧲 AI") || policy.equals("AI", ignoreCase = true) -> "美国"
+        policy.contains("日本媒体") -> "日本"
+        policy.contains("韩国媒体") -> "韩国"
+        policy.contains("巴哈姆特") || policy.contains("KKTV", ignoreCase = true) ||
+            policy.contains("B站港澳台") -> "台湾"
+        policy.contains("viuTV", ignoreCase = true) -> "香港"
+        policy.contains("B站东南亚") -> "新加坡"
+        else -> null
+    }
+
+    private fun copyArray(
+        source: JSONObject,
+        destination: JSONObject,
+        key: String,
+        transform: (String) -> List<String> = { listOf(it) },
+    ) {
+        val values = source.optJSONArray(key) ?: return
+        val copied = JSONArray()
+        for (index in 0 until values.length()) {
+            transform(values.optString(index)).filter(String::isNotBlank).forEach(copied::put)
+        }
+        if (copied.length() > 0) destination.put(key, copied)
+    }
+
+    private fun expandGeoIp(value: String): List<String> = when (value) {
+        "geoip:private", "geoip:lan" -> listOf(
+            "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+            "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4",
+            "::1/128", "fc00::/7", "fe80::/10",
+        )
+        else -> if (value.startsWith("geoip:")) emptyList() else listOf(value)
+    }
+
+    private fun isInformationLink(link: String): Boolean {
+        val name = runCatching { Uri.decode(Uri.parse(link).encodedFragment.orEmpty()) }
+            .getOrDefault("")
+        return name.contains("剩余流量") || name.contains("距离下次重置") ||
+            name.contains("套餐到期") || name.contains("hello-ssone.com", ignoreCase = true)
     }
 
     private fun uniqueNodeNames(sourceLinks: List<String>, profileName: String): List<String> {

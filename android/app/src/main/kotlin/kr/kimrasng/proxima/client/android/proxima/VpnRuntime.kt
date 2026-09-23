@@ -1,5 +1,6 @@
 package kr.kimrasng.proxima.client.android.proxima
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import java.util.concurrent.CopyOnWriteArraySet
@@ -37,6 +38,9 @@ object VpnRuntime {
     private val listeners = CopyOnWriteArraySet<(Map<String, Any?>) -> Unit>()
 
     @Volatile
+    private var appContext: Context? = null
+
+    @Volatile
     private var current = NativeVpnSnapshot()
 
     @Volatile
@@ -44,6 +48,10 @@ object VpnRuntime {
 
     @Volatile
     private var accessLogPath: String? = null
+
+    fun initialize(context: Context) {
+        appContext = context.applicationContext
+    }
 
     fun snapshot(): Map<String, Any?> = current.asMap()
 
@@ -150,6 +158,12 @@ object VpnRuntime {
     private fun publish(snapshot: NativeVpnSnapshot) {
         current = snapshot
         val value = snapshot.asMap()
-        mainHandler.post { listeners.forEach { listener -> listener(value) } }
+        mainHandler.post {
+            listeners.forEach { listener -> listener(value) }
+            val ctx = appContext
+            if (ctx != null) {
+                ProximaWidgetProvider.updateAllWidgets(ctx)
+            }
+        }
     }
 }

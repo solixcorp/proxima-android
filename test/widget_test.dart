@@ -496,6 +496,67 @@ void main() {
     expect(VlessRealityProfile.linksFromStoredConfig(config), [first, second]);
   });
 
+  test('converts Clash.Meta nodes and ordered rules into Xray metadata', () {
+    const yaml = '''
+proxies:
+  - {name: '剩余流量：10 GB', type: vless, server: info.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000, network: tcp, servername: cdn.example.com, client-fingerprint: chrome, reality-opts: {public-key: abcdefghijklmnopqrstuvwxzy0123456789ABCD, short-id: 1a2b}}
+  - {name: Tokyo, type: vless, server: tokyo.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000, network: tcp, servername: cdn.example.com, client-fingerprint: chrome, flow: xtls-rprx-vision, reality-opts: {public-key: abcdefghijklmnopqrstuvwxzy0123456789ABCD, short-id: 1a2b}}
+  - {name: Seoul, type: vless, server: seoul.example.com, port: 8443, uuid: 123e4567-e89b-42d3-a456-426614174000, network: tcp, servername: cdn.example.com, client-fingerprint: firefox, reality-opts: {public-key: abcdefghijklmnopqrstuvwxzy0123456789ABCD, short-id: 3c4d}}
+  - {name: Unsupported, type: mieru, server: direct.example.com, port: 443}
+proxy-groups:
+  - {name: Manual, type: select, proxies: [Auto, Tokyo, Seoul]}
+  - {name: Auto, type: url-test, proxies: [Tokyo, Seoul], url: 'https://cp.cloudflare.com/generate_204'}
+  - {name: Domestic, type: select, proxies: [DIRECT, Manual]}
+  - {name: Ads, type: select, proxies: [REJECT, DIRECT]}
+rules:
+  - DOMAIN-SUFFIX,example.ai,Manual
+  - AND,((DOMAIN-SUFFIX,example.ai),(NETWORK,UDP),(DST-PORT,443)),REJECT
+  - DOMAIN-SUFFIX,example.cn,Domestic
+  - DOMAIN-SUFFIX,ads.example,Ads
+  - MATCH,Manual
+''';
+
+    final config = VlessRealityProfile.storedConfigFromInput(
+      yaml,
+      profileName: 'Airport',
+    );
+    final links = VlessRealityProfile.linksFromStoredConfig(config);
+    expect(links, hasLength(2));
+    expect(links.first, contains('tokyo.example.com'));
+    expect(links.last, contains('seoul.example.com'));
+    expect(config, isNot(contains('info.example.com')));
+    expect(config, startsWith(VlessRealityProfile.routingMetadataPrefix));
+
+    final encoded = config
+        .split('\n')
+        .first
+        .substring(VlessRealityProfile.routingMetadataPrefix.length)
+        .trim();
+    final padded = encoded.padRight((encoded.length + 3) ~/ 4 * 4, '=');
+    final routing = jsonDecode(
+      utf8.decode(base64Url.decode(padded)),
+    ) as Map<String, dynamic>;
+    final rules = routing['rules'] as List<dynamic>;
+    expect(routing['version'], 2);
+    expect(routing['autoTestUrl'], 'https://cp.cloudflare.com/generate_204');
+    expect(rules, hasLength(5));
+    expect((rules[0] as Map<String, dynamic>)['target'], 'proxy');
+    expect((rules[0] as Map<String, dynamic>)['policy'], 'Manual');
+    expect((rules[0] as Map<String, dynamic>)['candidates'], [
+      'Tokyo',
+      'Seoul',
+    ]);
+    expect((rules[1] as Map<String, dynamic>)['network'], 'udp');
+    expect((rules[1] as Map<String, dynamic>)['target'], 'block');
+    expect((rules[2] as Map<String, dynamic>)['target'], 'direct');
+    expect((rules[3] as Map<String, dynamic>)['target'], 'block');
+    expect((rules[4] as Map<String, dynamic>)['match'], isTrue);
+    expect((rules[4] as Map<String, dynamic>)['candidates'], [
+      'Tokyo',
+      'Seoul',
+    ]);
+  });
+
   test('normalizes a Base64URL-wrapped single VLESS link', () {
     const link =
         'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=tcp#Tokyo';
@@ -615,6 +676,9 @@ class _FakeBridge implements VpnBridge {
 
   @override
   Future<bool> requestQuickSettingsTile() async => true;
+
+  @override
+  Future<bool> requestPinAppWidget() async => true;
 
   @override
   Future<VpnProfile> saveProfile({

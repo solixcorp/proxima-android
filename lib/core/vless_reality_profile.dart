@@ -1,11 +1,14 @@
 import 'dart:convert';
 
+import 'clash_subscription.dart';
+
 /// A single VLESS share link using REALITY transport settings.
 ///
 /// Proxima deliberately accepts a narrow link format.  This keeps every saved
 /// profile compatible with the bundled Xray core instead of accepting a
 /// broader link and failing later while connecting.
 class VlessRealityProfile {
+  static const routingMetadataPrefix = '# proxima-routing-rules:';
   const VlessRealityProfile({
     required this.sourceLink,
     required this.name,
@@ -164,6 +167,53 @@ class VlessRealityProfile {
     return lines.join('\n');
   }
 
+  /// Converts either a share-link list or a Clash.Meta subscription into the
+  /// app-owned profile format consumed by the Android Xray runtime.
+  static String storedConfigFromInput(
+    String input, {
+    required String profileName,
+  }) {
+    final clash = ClashSubscriptionParser.tryParse(input);
+    final sourceLinks = clash?.links ?? linksFromSubscription(input);
+    final profiles = sourceLinks
+        .map(VlessRealityProfile.parse)
+        .toList(growable: false);
+    var config = profilesToMihomoYaml(profiles, profileName: profileName);
+    if (clash != null) {
+      final encoded = encodeRoutingMetadata(clash.routing);
+      config = '$routingMetadataPrefix $encoded\n$config';
+    }
+    return config;
+  }
+
+  static bool hasRoutingMetadata(String content) =>
+      routingMetadataVersion(content) != null;
+
+  /// Version 2 preserves each Clash policy group's node candidates. Version 1
+  /// collapsed all non-regional policies into a single automatic pool.
+  static bool hasCurrentRoutingMetadata(String content) =>
+      (routingMetadataVersion(content) ?? 0) >= 2;
+
+  static int? routingMetadataVersion(String content) {
+    final metadataLine = content
+        .split(RegExp(r'\r?\n'))
+        .map((line) => line.trim())
+        .firstWhere(
+          (line) => line.startsWith(routingMetadataPrefix),
+          orElse: () => '',
+        );
+    if (metadataLine.isEmpty) return null;
+    final encoded = metadataLine.substring(routingMetadataPrefix.length).trim();
+    if (encoded.isEmpty) return null;
+    try {
+      final padded = encoded.padRight((encoded.length + 3) ~/ 4 * 4, '=');
+      final decoded = jsonDecode(utf8.decode(base64Url.decode(padded)));
+      return decoded is Map ? decoded['version'] as int? : null;
+    } on FormatException {
+      return null;
+    }
+  }
+
   List<String> _proxyYaml(String nodeName) => [
     '  - name: ${_yaml(nodeName)}',
     '    type: vless',
@@ -224,6 +274,8 @@ class VlessRealityProfile {
   }
 
   static List<String> linksFromSubscription(String value) {
+    final clash = ClashSubscriptionParser.tryParse(value);
+    if (clash != null) return clash.links;
     final directLinks = _vlessLines(value);
     final decodedLinks = directLinks.isNotEmpty
         ? directLinks

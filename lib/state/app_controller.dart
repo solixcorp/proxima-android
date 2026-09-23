@@ -144,8 +144,9 @@ class AppController extends ChangeNotifier {
         await bridge.stopVpn();
         return;
       }
-      final profile = activeProfile;
+      var profile = activeProfile;
       if (profile == null) throw StateError('먼저 프로필을 추가해 주세요.');
+      profile = await _refreshRuleSubscriptionIfNeeded(profile);
       final granted = await bridge.requestVpnPermission();
       if (!granted) throw StateError('VPN 권한이 필요합니다.');
       await bridge.startVpn(profile.id);
@@ -183,8 +184,8 @@ class AppController extends ChangeNotifier {
         ? (parsed.length == 1 ? parsed.single.name : 'VLESS REALITY')
         : name.trim();
     final generatedConfig = VlessRealityProfile.attachSubscriptionSource(
-      VlessRealityProfile.profilesToMihomoYaml(
-        parsed,
+      VlessRealityProfile.storedConfigFromInput(
+        content,
         profileName: effectiveName,
       ),
       sourceUrl,
@@ -301,7 +302,7 @@ class AppController extends ChangeNotifier {
       throw const FormatException('구독에서 VLESS + REALITY 노드를 찾지 못했습니다.');
     }
     return QrProfileResult(
-      content: links.join('\n'),
+      content: subscription.content,
       sourceUrl: payload,
       subscriptionInfo: subscription.info ?? const SubscriptionInfo(),
     );
@@ -324,7 +325,7 @@ class AppController extends ChangeNotifier {
         request.followRedirects = false;
         request.headers.set(
           HttpHeaders.userAgentHeader,
-          'v2rayN/6.45 Proxima/1.0',
+          'Clash.Meta Proxima/1.0',
         );
         response = await request.close().timeout(const Duration(seconds: 20));
         if (!response.isRedirect) break;
@@ -360,9 +361,9 @@ class AppController extends ChangeNotifier {
     final source = profile.sourceUrl;
     if (source == null || source.isEmpty) return;
     final subscription = await fetchSubscriptionDetails(source);
-    final content = VlessRealityProfile.linksFromSubscription(
-      subscription.content,
-    ).join('\n');
+    // Preserve Clash.Meta groups/rules. saveProfile normalizes them into the
+    // compact metadata consumed by the native Xray runtime.
+    final content = subscription.content;
     await saveProfile(
       id: profile.id,
       name: profile.name,
@@ -372,6 +373,27 @@ class AppController extends ChangeNotifier {
       // the last known quota instead of replacing it with an empty value.
       subscriptionInfo: subscription.info ?? profile.subscriptionInfo,
     );
+  }
+
+  Future<VpnProfile> _refreshRuleSubscriptionIfNeeded(
+    VpnProfile profile,
+  ) async {
+    if (!await _needsRuleSubscriptionRefresh(profile)) return profile;
+    try {
+      await refreshProfile(profile);
+    } catch (error) {
+      throw StateError('규칙 모드를 시작하려면 구독 업데이트가 필요합니다: $error');
+    }
+    return activeProfile ?? profile;
+  }
+
+  Future<bool> _needsRuleSubscriptionRefresh(VpnProfile profile) async {
+    if (settings.mode != OutboundMode.rule ||
+        profile.sourceUrl?.trim().isEmpty != false) {
+      return false;
+    }
+    final content = await bridge.readProfile(profile.id);
+    return !VlessRealityProfile.hasCurrentRoutingMetadata(content);
   }
 
   Future<void> updateSettings(VpnSettings next) async {
@@ -388,10 +410,23 @@ class AppController extends ChangeNotifier {
     final previous = settings;
     await updateSettings(settings.copyWith(mode: mode));
     if (!snapshot.isConnected) {
+      if (mode == OutboundMode.rule) {
+        final profile = activeProfile;
+        if (profile != null) await _refreshRuleSubscriptionIfNeeded(profile);
+      }
       await loadProxyGroups();
       return;
     }
     try {
+      if (mode == OutboundMode.rule) {
+        final profile = activeProfile;
+        if (profile != null && await _needsRuleSubscriptionRefresh(profile)) {
+          // refreshProfile restarts the active VPN using the mode already
+          // saved above, so avoid issuing a second restart below.
+          await refreshProfile(profile);
+          return;
+        }
+      }
       ensureCoreSuccess(
         await bridge.invokeCore(
           'updateConfig',
@@ -713,6 +748,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<bool> requestQuickSettingsTile() => bridge.requestQuickSettingsTile();
+  Future<bool> requestPinAppWidget() => bridge.requestPinAppWidget();
 
   void clearMessage() {
     message = null;

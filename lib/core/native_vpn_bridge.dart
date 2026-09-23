@@ -36,6 +36,7 @@ abstract interface class VpnBridge {
   });
   Future<NetworkInfo> getNetworkInfo();
   Future<bool> requestQuickSettingsTile();
+  Future<bool> requestPinAppWidget();
   Future<String> invokeCore(String method, [String data = '']);
   Future<Map<Object?, Object?>> coreInfo();
 }
@@ -178,6 +179,12 @@ class MethodChannelVpnBridge implements VpnBridge {
   @override
   Future<bool> requestQuickSettingsTile() async {
     return await _methods.invokeMethod<bool>('requestQuickSettingsTile') ??
+        false;
+  }
+
+  @override
+  Future<bool> requestPinAppWidget() async {
+    return await _methods.invokeMethod<bool>('requestPinAppWidget') ??
         false;
   }
 

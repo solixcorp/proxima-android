@@ -78,7 +78,7 @@ class ProximaVpnService : AndroidVpnService() {
         trafficTask?.cancel(false)
         trafficTask = null
         if (preserveSession) VpnRuntime.reconnecting(profile) else VpnRuntime.connecting(profile)
-        startForeground(NOTIFICATION_ID, notification("${profile.name} · 연결 중"))
+        startForeground(NOTIFICATION_ID, notification("Proxima VPN", "${profile.name} · 연결 중"))
         worker.execute {
             runCatching {
                 closeTunnel()
@@ -150,9 +150,15 @@ class ProximaVpnService : AndroidVpnService() {
         XrayConfig.VpnSettingsRepositoryHolder.selected = { id -> VpnSettingsRepository(this).selectedProxies(id) }
         XrayCore.configureVpn(socketController, dnsEndpoint(upstreamDns))
         val nodeNames = XrayConfig.nodeNames(profile, content)
-        val ports = XrayCore.freePorts(nodeNames.size + 1)
+        // Reserve a dedicated rule-mode SOCKS port as well as one per node.
+        // The former follows the translated subscription rules, while the
+        // latter always targets one concrete node for latency measurements.
+        val ports = XrayCore.freePorts(nodeNames.size + 2)
         val metricsPort = ports.first()
-        val probePorts = nodeNames.zip(ports.drop(1)).toMap()
+        val probePorts = buildMap {
+            putAll(nodeNames.zip(ports.drop(1).take(nodeNames.size)))
+            put(XrayConfig.RULE_PROBE_KEY, ports.last())
+        }
         val accessLog = File(filesDir, "xray-access.log").apply { writeText("") }
         val runtimeConfig = XrayConfig.build(
             profile = profile,
@@ -203,6 +209,7 @@ class ProximaVpnService : AndroidVpnService() {
                     totalUp = uploadOffset + counters.upload,
                     totalDown = downloadOffset + counters.download,
                 )
+                updateNotificationWithCurrentSnapshot()
             }
             samples++
             if (samples % 5 == 0 && !runCatching { XrayCore.isRunning() }.getOrDefault(false)) {
@@ -324,14 +331,70 @@ class ProximaVpnService : AndroidVpnService() {
             NotificationChannel(CHANNEL_ID, "VPN 연결", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
         )
     }
-    private fun updateNotification(text: String) { (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIFICATION_ID, notification(text)) }
-    private fun notification(text: String): Notification {
+    private fun updateNotification(text: String) {
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(
+            NOTIFICATION_ID,
+            notification("Proxima VPN", text)
+        )
+    }
+
+    private fun updateNotificationWithCurrentSnapshot() {
+        val snapshot = VpnRuntime.snapshot()
+        val state = snapshot["state"]?.toString()
+        if (state != "connected") return
+
+        val profileName = snapshot["profileName"]?.toString()
+        val activeNode = snapshot["activeNode"]?.toString()
+        val startedAt = (snapshot["startedAt"] as? Number)?.toLong() ?: 0L
+        val uploadSpeed = (snapshot["uploadSpeed"] as? Number)?.toLong() ?: 0L
+        val downloadSpeed = (snapshot["downloadSpeed"] as? Number)?.toLong() ?: 0L
+
+        val displayNode = when {
+            !activeNode.isNullOrEmpty() && !profileName.isNullOrEmpty() -> "$profileName · $activeNode"
+            !activeNode.isNullOrEmpty() -> activeNode
+            !profileName.isNullOrEmpty() -> profileName
+            else -> "VPN"
+        }
+
+        val title = "Proxima · $displayNode"
+        val text = "↑ ${formatBytes(uploadSpeed)}  ↓ ${formatBytes(downloadSpeed)}  ·  ⏱ ${formatUptime(startedAt)}"
+
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(
+            NOTIFICATION_ID,
+            notification(title, text)
+        )
+    }
+
+    private fun notification(title: String, text: String): Notification {
         val openIntent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val stopIntent = PendingIntent.getService(this, 1, Intent(this, ProximaVpnService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, CHANNEL_ID) else @Suppress("DEPRECATION") Notification.Builder(this)
-        return builder.setSmallIcon(R.drawable.ic_stat_proxima).setContentTitle("Proxima VPN").setContentText(text)
-            .setContentIntent(openIntent).setOngoing(true).setCategory(Notification.CATEGORY_SERVICE)
-            .addAction(Notification.Action.Builder(null, "연결 해제", stopIntent).build()).build()
+        return builder.setSmallIcon(R.drawable.ic_stat_proxima)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setContentIntent(openIntent)
+            .setOngoing(true)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .addAction(Notification.Action.Builder(null, "연결 해제", stopIntent).build())
+            .build()
+    }
+
+    private fun formatBytes(bytesPerSec: Long): String {
+        if (bytesPerSec <= 0) return "0 B/s"
+        val k = 1024.0
+        val sizes = arrayOf("B/s", "KB/s", "MB/s", "GB/s")
+        val i = (Math.log(bytesPerSec.toDouble()) / Math.log(k)).toInt().coerceIn(0, 3)
+        val value = bytesPerSec / Math.pow(k, i.toDouble())
+        return String.format(java.util.Locale.US, "%.1f %s", value, sizes[i])
+    }
+
+    private fun formatUptime(startedAt: Long): String {
+        if (startedAt <= 0) return "00:00:00"
+        val elapsedSec = ((System.currentTimeMillis() - startedAt) / 1000).coerceAtLeast(0)
+        val hours = elapsedSec / 3600
+        val minutes = (elapsedSec % 3600) / 60
+        val seconds = elapsedSec % 60
+        return String.format(java.util.Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
     }
     private fun readableError(error: Throwable): String = if (error is PackageManager.NameNotFoundException) "앱 정보를 확인하지 못했습니다." else error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
     private fun dnsEndpoint(address: String): String = if (':' in address) "[$address]:53" else "$address:53"

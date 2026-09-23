@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/vpn_models.dart';
@@ -16,17 +18,29 @@ class ConnectionsScreen extends StatefulWidget {
 class _ConnectionsScreenState extends State<ConnectionsScreen> {
   final _search = TextEditingController();
   String _network = 'ALL';
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     _search.addListener(_changed);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.controller.snapshot.isConnected) {
+        widget.controller.loadConnections(silent: true);
+      }
+    });
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted && widget.controller.snapshot.isConnected) {
+        widget.controller.loadConnections(silent: true);
+      }
+    });
   }
 
   void _changed() => setState(() {});
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _search
       ..removeListener(_changed)
       ..dispose();

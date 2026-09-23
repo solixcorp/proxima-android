@@ -57,11 +57,41 @@ class ProximaTileService : TileService() {
     private fun updateTile(snapshot: Map<String, Any?>) {
         val tile = qsTile ?: return
         val connected = snapshot["state"] == "connected"
+        val activeNode = snapshot["activeNode"]?.toString()
+        val activeMode = snapshot["activeMode"]?.toString()
+            ?: VpnSettingsRepository(this).load().mode
+        val profileName = snapshot["profileName"]?.toString()
+        val uploadSpeed = (snapshot["uploadSpeed"] as? Number)?.toLong() ?: 0L
+        val downloadSpeed = (snapshot["downloadSpeed"] as? Number)?.toLong() ?: 0L
+
         tile.state = if (connected) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.label = "Proxima"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            tile.subtitle = if (connected) snapshot["profileName"]?.toString() ?: "연결됨" else "연결 안 됨"
+            val displayNode = when (activeMode) {
+                "rule" -> "규칙 모드 · 자동 선택"
+                "direct" -> "직접 모드"
+                "global" -> activeNode?.let { "전역 모드 · $it" } ?: "전역 모드"
+                else -> activeNode ?: profileName ?: "연결됨"
+            }
+            tile.subtitle = if (connected) {
+                if (uploadSpeed > 0 || downloadSpeed > 0) {
+                    "$displayNode · ↑${formatSpeed(uploadSpeed)} ↓${formatSpeed(downloadSpeed)}"
+                } else {
+                    displayNode
+                }
+            } else {
+                "연결 안 됨"
+            }
         }
         tile.updateTile()
+    }
+
+    private fun formatSpeed(bytesPerSec: Long): String {
+        if (bytesPerSec <= 0) return "0B/s"
+        val k = 1024.0
+        val sizes = arrayOf("B/s", "KB/s", "MB/s", "GB/s")
+        val i = (Math.log(bytesPerSec.toDouble()) / Math.log(k)).toInt().coerceIn(0, 3)
+        val value = bytesPerSec / Math.pow(k, i.toDouble())
+        return String.format(java.util.Locale.US, "%.0f%s", value, sizes[i])
     }
 }

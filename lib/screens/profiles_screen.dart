@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../core/vless_reality_profile.dart';
 import '../models/vpn_models.dart';
 import '../state/app_controller.dart';
 import '../widgets/app_page.dart';
@@ -398,9 +397,7 @@ class _ProfileEditorState extends State<_ProfileEditor> {
         final subscription = await widget.controller.fetchSubscriptionDetails(
           _url.text.trim(),
         );
-        content = VlessRealityProfile.linksFromSubscription(
-          subscription.content,
-        ).join('\n');
+        content = subscription.content;
         subscriptionInfo = subscription.info ?? const SubscriptionInfo();
       }
       if (content.isEmpty) {

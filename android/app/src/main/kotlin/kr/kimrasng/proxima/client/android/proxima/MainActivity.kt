@@ -40,6 +40,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        VpnRuntime.initialize(this)
         profiles = ProfileRepository(this)
         settings = VpnSettingsRepository(this)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, METHOD_CHANNEL).setMethodCallHandler(this)
@@ -122,6 +123,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 )
                 "getNetworkInfo" -> result.success(networkInfo())
                 "requestQuickSettingsTile" -> requestQuickSettingsTile(result)
+                "requestPinAppWidget" -> requestPinAppWidget(result)
                 "coreInfo" -> result.success(XrayCore.info(this))
                 "coreAction" -> invokeCore(
                     method = requiredString(call, "method"),
@@ -243,7 +245,6 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 "connections",
                 XrayConnectionLog.recent(
                     path = VpnRuntime.accessLogPath(),
-                    route = runtime["activeNode"] as? String,
                 ),
             )
     }
@@ -261,9 +262,13 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     }
 
     private fun probeCurrentProxyIp(): JSONObject {
-        val node = VpnRuntime.snapshot()["activeNode"] as? String
+        val snapshot = VpnRuntime.snapshot()
+        val rulePort = if (snapshot["activeMode"] == "rule") {
+            VpnRuntime.probePort(XrayConfig.RULE_PROBE_KEY)
+        } else null
+        val port = rulePort ?: (snapshot["activeNode"] as? String)
+            ?.let(VpnRuntime::probePort)
             ?: error("직접 연결 모드에서는 프록시 IP를 확인할 수 없습니다.")
-        val port = VpnRuntime.probePort(node) ?: error("현재 노드의 Xray 검사 포트를 찾을 수 없습니다.")
         return XrayProbe.publicIp(port)
     }
 
@@ -431,6 +436,19 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     status == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED,
             )
         }
+    }
+
+    private fun requestPinAppWidget(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(android.appwidget.AppWidgetManager::class.java)
+            val provider = ComponentName(this, ProximaWidgetProvider::class.java)
+            if (manager != null && manager.isRequestPinAppWidgetSupported) {
+                val success = manager.requestPinAppWidget(provider, null, null)
+                result.success(success)
+                return
+            }
+        }
+        result.success(false)
     }
 
     @Deprecated("Deprecated in Android")
