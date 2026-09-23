@@ -33,17 +33,6 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
     super.dispose();
   }
 
-  Future<void> _close(String id) async {
-    try {
-      await widget.controller.closeConnection(id);
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$error')));
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
@@ -62,7 +51,7 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
     }).toList();
     return AppPage(
       title: '연결',
-      subtitle: '현재 열려 있는 연결과 적용된 규칙을 확인합니다.',
+      subtitle: 'Xray가 최근 관찰한 목적지와 현재 경로를 확인합니다.',
       onRefresh: controller.loadConnections,
       actions: [
         IconButton(
@@ -71,13 +60,6 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
               ? controller.loadConnections
               : null,
           icon: const Icon(Icons.refresh_rounded),
-        ),
-        PopupMenuButton<String>(
-          enabled: controller.connectionOverview.connections.isNotEmpty,
-          onSelected: (_) => controller.closeAllConnections(),
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 'close_all', child: Text('모든 연결 닫기')),
-          ],
         ),
       ],
       children: !controller.snapshot.isConnected
@@ -93,7 +75,7 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
                 children: [
                   Expanded(
                     child: _SummaryCard(
-                      label: '활성 연결',
+                      label: '최근 Xray 연결',
                       value:
                           '${controller.connectionOverview.connections.length}',
                     ),
@@ -144,14 +126,11 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
                 const PageEmptyState(
                   icon: Icons.check_circle_outline_rounded,
                   title: '표시할 연결이 없습니다',
-                  message: '필터를 변경하거나 앱에서 네트워크 요청을 시작해 보세요.',
+                  message: '앱에서 네트워크 요청을 시작한 뒤 새로고침해 보세요.',
                 )
               else
                 for (final connection in connections) ...[
-                  _ConnectionCard(
-                    connection: connection,
-                    onClose: () => _close(connection.id),
-                  ),
+                  _ConnectionCard(connection: connection),
                   const SizedBox(height: 10),
                 ],
             ],
@@ -189,10 +168,9 @@ class _SummaryCard extends StatelessWidget {
 }
 
 class _ConnectionCard extends StatelessWidget {
-  const _ConnectionCard({required this.connection, required this.onClose});
+  const _ConnectionCard({required this.connection});
 
   final ActiveConnection connection;
-  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -212,11 +190,6 @@ class _ConnectionCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
-                ),
-                IconButton(
-                  tooltip: '연결 닫기',
-                  onPressed: onClose,
-                  icon: const Icon(Icons.close_rounded),
                 ),
               ],
             ),

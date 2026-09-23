@@ -45,9 +45,6 @@ class VlessRealityProfile {
 
     String query(String key, {String fallback = ''}) =>
         uri.queryParameters[key]?.trim() ?? fallback;
-    if (query('encryption', fallback: 'none').toLowerCase() != 'none') {
-      throw const FormatException('VLESS encryption=none만 지원합니다.');
-    }
     if (query('security').toLowerCase() != 'reality') {
       throw const FormatException('VLESS + REALITY 링크만 지원합니다.');
     }
@@ -63,19 +60,16 @@ class VlessRealityProfile {
     final type = query('type', fallback: 'tcp').toLowerCase();
     final network = switch (type) {
       'tcp' || 'raw' => 'tcp',
-      'ws' => 'ws',
+      'xhttp' || 'splithttp' => 'xhttp',
       'grpc' => 'grpc',
-      _ => throw const FormatException('tcp, ws, grpc 전송 방식만 지원합니다.'),
+      'ws' || 'websocket' => throw const FormatException(
+        'REALITY는 WebSocket 전송을 지원하지 않습니다.',
+      ),
+      _ => throw const FormatException('RAW(TCP), XHTTP, gRPC 전송 방식만 지원합니다.'),
     };
     final path = query('path');
     final host = query('host');
     final serviceName = query('serviceName');
-    if (network == 'ws' && path.isEmpty) {
-      throw const FormatException('WebSocket VLESS 링크에는 path가 필요합니다.');
-    }
-    if (network == 'grpc' && serviceName.isEmpty) {
-      throw const FormatException('gRPC VLESS 링크에는 serviceName이 필요합니다.');
-    }
 
     final fragment = _decodeFragment(uri.fragment.trim());
     final serverName = query('sni');
@@ -185,13 +179,11 @@ class VlessRealityProfile {
     '      public-key: ${_yaml(publicKey)}',
     if (shortId.isNotEmpty) '      short-id: ${_yaml(shortId)}',
     if (flow.isNotEmpty) '    flow: ${_yaml(flow)}',
-    if (network == 'ws') ...[
-      '    ws-opts:',
+    if (network == 'xhttp' && path != null) ...[
+      '    xhttp-opts:',
       '      path: ${_yaml(path!)}',
-      if (host != null) '      headers:',
-      if (host != null) '        Host: ${_yaml(host!)}',
     ],
-    if (network == 'grpc') ...[
+    if (network == 'grpc' && serviceName != null) ...[
       '    grpc-opts:',
       '      grpc-service-name: ${_yaml(serviceName!)}',
     ],
@@ -200,6 +192,16 @@ class VlessRealityProfile {
   static String? linkFromStoredConfig(String content) {
     final links = linksFromStoredConfig(content);
     return links.isEmpty ? null : links.first;
+  }
+
+  /// Keep the refresh URL alongside the generated configuration as well as in
+  /// Android metadata. This lets a profile survive metadata migrations.
+  static String attachSubscriptionSource(String config, String? sourceUrl) {
+    final source = sourceUrl?.trim();
+    if (source == null || source.isEmpty) return config;
+    final bytes = utf8.encode(source);
+    final encoded = base64UrlEncode(bytes).replaceAll('=', '');
+    return '# proxima-subscription-url: $encoded\n$config';
   }
 
   static List<String> linksFromStoredConfig(String content) {
@@ -320,7 +322,7 @@ class VlessRealityProfile {
   }
 
   static final _uuid = RegExp(
-    r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
     caseSensitive: false,
   );
   static final _realityPublicKey = RegExp(r'^[A-Za-z0-9_-]{20,}$');

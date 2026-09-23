@@ -3,6 +3,7 @@ package kr.kimrasng.proxima.client.android.proxima
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Base64
 import java.io.File
 import java.util.UUID
 
@@ -146,7 +147,8 @@ class ProfileRepository(context: Context) {
                     StoredProfile(
                         id = id,
                         name = item.optString("name", "Profile"),
-                        sourceUrl = item.optString("sourceUrl").takeIf { it.isNotEmpty() },
+                        sourceUrl = item.optString("sourceUrl").takeIf { it.isNotEmpty() }
+                            ?: sourceFromStoredContent(profileFile(id)),
                         updatedAt = item.optLong("updatedAt"),
                         subscriptionInfo = item.optJSONObject("subscriptionInfo")?.let(StoredSubscriptionInfo::fromJson),
                     ),
@@ -170,6 +172,33 @@ class ProfileRepository(context: Context) {
             )
         }
         preferences.edit().putString(KEY_METADATA, array.toString()).apply()
+    }
+
+    /**
+     * Prior releases kept profile metadata separately from the generated
+     * configuration. Recover subscription addresses from the configuration so
+     * an upgrade does not turn an existing subscription into a local profile.
+     */
+    private fun sourceFromStoredContent(file: File): String? {
+        if (!file.isFile) return null
+        val content = runCatching { file.readText(Charsets.UTF_8) }.getOrNull() ?: return null
+        val encoded = Regex(
+            "^#\\s*proxima-subscription-url:\\s*([A-Za-z0-9_-]+)\\s*$",
+            RegexOption.MULTILINE,
+        ).find(content)?.groupValues?.getOrNull(1)
+        if (!encoded.isNullOrBlank()) {
+            val decoded = runCatching {
+                val padded = encoded.padEnd((encoded.length + 3) / 4 * 4, '=')
+                String(Base64.getUrlDecoder().decode(padded), Charsets.UTF_8)
+            }.getOrNull()
+            if (decoded?.startsWith("https://") == true) return decoded
+        }
+        // Mihomo profiles created by older releases may still include an HTTP
+        // provider URL. Only accept an explicit HTTPS value on a `url:` line.
+        return Regex(
+            "^\\s*url:\\s*['\\\"]?(https://[^\\s'\\\"]+)",
+            RegexOption.MULTILINE,
+        ).find(content)?.groupValues?.getOrNull(1)
     }
 
     private fun writeAtomically(destination: File, content: String) {

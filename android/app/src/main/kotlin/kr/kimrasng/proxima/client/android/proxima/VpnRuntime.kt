@@ -13,6 +13,8 @@ data class NativeVpnSnapshot(
     val downloadSpeed: Long = 0,
     val totalUpload: Long = 0,
     val totalDownload: Long = 0,
+    val activeNode: String? = null,
+    val activeMode: String? = null,
     val error: String? = null,
 ) {
     fun asMap(): Map<String, Any?> = mapOf(
@@ -24,6 +26,8 @@ data class NativeVpnSnapshot(
         "downloadSpeed" to downloadSpeed,
         "totalUpload" to totalUpload,
         "totalDownload" to totalDownload,
+        "activeNode" to activeNode,
+        "activeMode" to activeMode,
         "error" to error,
     )
 }
@@ -34,6 +38,12 @@ object VpnRuntime {
 
     @Volatile
     private var current = NativeVpnSnapshot()
+
+    @Volatile
+    private var probePorts: Map<String, Int> = emptyMap()
+
+    @Volatile
+    private var accessLogPath: String? = null
 
     fun snapshot(): Map<String, Any?> = current.asMap()
 
@@ -50,27 +60,80 @@ object VpnRuntime {
         NativeVpnSnapshot(state = "connecting", profileId = profile.id, profileName = profile.name),
     )
 
-    fun connected(profile: StoredProfile) = publish(
-        NativeVpnSnapshot(
-            state = "connected",
+    fun reconnecting(profile: StoredProfile) = publish(
+        current.copy(
+            state = "connecting",
             profileId = profile.id,
             profileName = profile.name,
-            startedAt = System.currentTimeMillis(),
+            uploadSpeed = 0,
+            downloadSpeed = 0,
+            error = null,
         ),
     )
 
+    fun connected(
+        profile: StoredProfile,
+        activeNode: String?,
+        activeMode: String,
+        preserveSession: Boolean = false,
+    ) = publish(
+        if (preserveSession && current.startedAt > 0) {
+            current.copy(
+                state = "connected",
+                profileId = profile.id,
+                profileName = profile.name,
+                uploadSpeed = 0,
+                downloadSpeed = 0,
+                activeNode = activeNode,
+                activeMode = activeMode,
+                error = null,
+            )
+        } else {
+            NativeVpnSnapshot(
+                state = "connected",
+                profileId = profile.id,
+                profileName = profile.name,
+                startedAt = System.currentTimeMillis(),
+                activeNode = activeNode,
+                activeMode = activeMode,
+            )
+        },
+    )
+
+    fun setProbePorts(value: Map<String, Int>) {
+        probePorts = value.toMap()
+    }
+
+    fun probePort(node: String): Int? = probePorts[node]
+
+    fun clearProbePorts() {
+        probePorts = emptyMap()
+    }
+
+    fun setAccessLogPath(path: String?) {
+        accessLogPath = path
+    }
+
+    fun accessLogPath(): String? = accessLogPath
+
     fun disconnecting() = publish(current.copy(state = "disconnecting", error = null))
 
-    fun disconnected() = publish(NativeVpnSnapshot())
+    fun disconnected() {
+        clearProbePorts()
+        setAccessLogPath(null)
+        publish(NativeVpnSnapshot())
+    }
 
-    fun failed(profile: StoredProfile?, message: String) = publish(
-        NativeVpnSnapshot(
+    fun failed(profile: StoredProfile?, message: String) {
+        clearProbePorts()
+        setAccessLogPath(null)
+        publish(NativeVpnSnapshot(
             state = "error",
             profileId = profile?.id,
             profileName = profile?.name,
             error = message,
-        ),
-    )
+        ))
+    }
 
     fun traffic(up: Long, down: Long, totalUp: Long, totalDown: Long) {
         if (current.state != "connected") return

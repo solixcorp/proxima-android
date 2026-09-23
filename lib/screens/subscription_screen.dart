@@ -30,11 +30,14 @@ class SubscriptionScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final profile = controller.activeProfile;
     final info = profile?.subscriptionInfo;
-    final canRefresh = profile?.sourceUrl?.isNotEmpty == true;
+    final hasSubscription = profile?.isSubscription == true;
+    final canRefresh =
+        profile?.sourceUrl?.trim().isNotEmpty == true &&
+        !controller.snapshot.isBusy;
     return AppPage(
       title: '구독',
       subtitle: '현재 프로필의 플랜과 사용량을 확인합니다.',
-      onRefresh: canRefresh
+      onRefresh: hasSubscription && canRefresh
           ? () => _refresh(context)
           : controller.reloadProfiles,
       actions: [
@@ -44,40 +47,99 @@ class SubscriptionScreen extends StatelessWidget {
           icon: const Icon(Icons.refresh_rounded),
         ),
       ],
-      children: profile == null
-          ? const [
-              PageEmptyState(
-                icon: Icons.data_usage_outlined,
-                title: '선택된 프로필이 없습니다',
-                message: '프로필 탭에서 VLESS + REALITY 구독을 추가해 주세요.',
+      children: [
+        _ConnectionStatusCard(controller: controller),
+        const SectionHeader('현재 프로필'),
+        if (profile == null)
+          const PageEmptyState(
+            icon: Icons.data_usage_outlined,
+            title: '선택된 프로필이 없습니다',
+            message: '프로필 탭에서 VLESS + REALITY 구독을 추가해 주세요.',
+          )
+        else ...[
+          _ProfileCard(profile: profile),
+          const SectionHeader('사용량'),
+          if (info == null || !info.hasDetails)
+            PageEmptyState(
+              icon: Icons.query_stats_outlined,
+              title: hasSubscription ? '구독 정보가 없습니다' : '사용량 정보가 없습니다',
+              message: hasSubscription
+                  ? canRefresh
+                        ? '업데이트를 눌러 구독 서버의 사용량 정보를 가져와 주세요.'
+                        : '이전 버전에서 가져온 구독입니다. 프로필 편집에서 HTTPS 구독 주소를 연결하면 업데이트할 수 있습니다.'
+                  : '이 VLESS 링크는 사용량 정보를 제공하지 않습니다.',
+              action: FilledButton.icon(
+                onPressed: canRefresh ? () => _refresh(context) : null,
+                icon: const Icon(Icons.refresh_rounded),
+                label: Text(hasSubscription ? '구독 업데이트' : '구독 주소 필요'),
               ),
-            ]
-          : !canRefresh
-          ? const [
-              PageEmptyState(
-                icon: Icons.link_off_outlined,
-                title: '구독 프로필이 아닙니다',
-                message: 'HTTPS 구독 주소로 추가한 프로필에서 사용량을 확인할 수 있습니다.',
-              ),
-            ]
-          : info == null || !info.hasDetails
-          ? [
-              PageEmptyState(
-                icon: Icons.query_stats_outlined,
-                title: '구독 정보가 없습니다',
-                message: '업데이트를 눌러 구독 서버의 사용량 정보를 가져와 주세요.',
-                action: FilledButton.icon(
-                  onPressed: () => _refresh(context),
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('구독 업데이트'),
-                ),
-              ),
-            ]
-          : [
-              _ProfileCard(profile: profile),
-              const SectionHeader('사용량'),
-              _UsageCard(info: info),
-            ],
+            )
+          else
+            _UsageCard(info: info),
+        ],
+      ],
+    );
+  }
+}
+
+class _ConnectionStatusCard extends StatelessWidget {
+  const _ConnectionStatusCard({required this.controller});
+
+  final AppController controller;
+
+  String get _connectionLabel => switch (controller.snapshot.state) {
+    VpnConnectionState.disconnected => '연결되지 않음',
+    VpnConnectionState.connecting => '연결 중',
+    VpnConnectionState.connected => 'VPN으로 보호됨',
+    VpnConnectionState.disconnecting => '연결 해제 중',
+    VpnConnectionState.error => '연결 오류',
+  };
+
+  String get _nodeLabel {
+    if (controller.settings.mode == OutboundMode.direct) return '직접 연결';
+    final active = controller.snapshot.activeNode;
+    if (controller.snapshot.isConnected &&
+        active != null &&
+        active.isNotEmpty) {
+      return displayProxyName(active);
+    }
+    final selected = controller.currentProxyGroup?.selected;
+    return selected == null ? '정보 없음' : displayProxyName(selected);
+  }
+
+  String get _modeLabel {
+    final activeMode = controller.snapshot.activeMode;
+    if (controller.snapshot.isConnected && activeMode != null) {
+      return OutboundMode.fromWire(activeMode).label;
+    }
+    return controller.settings.mode.label;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      key: const Key('subscription_status_card'),
+      child: Column(
+        children: [
+          _InfoRow(
+            icon: Icons.shield_outlined,
+            label: '연결 상태',
+            value: _connectionLabel,
+          ),
+          const Divider(height: 1, indent: 56),
+          _InfoRow(
+            icon: Icons.alt_route_rounded,
+            label: '작동 모드',
+            value: _modeLabel,
+          ),
+          const Divider(height: 1, indent: 56),
+          _InfoRow(
+            icon: Icons.public_rounded,
+            label: '선택 노드',
+            value: _nodeLabel,
+          ),
+        ],
+      ),
     );
   }
 }

@@ -43,6 +43,8 @@ class VpnSnapshot {
     this.downloadSpeed = 0,
     this.totalUpload = 0,
     this.totalDownload = 0,
+    this.activeNode,
+    this.activeMode,
     this.error,
   });
 
@@ -59,6 +61,8 @@ class VpnSnapshot {
       downloadSpeed: _integer(map['downloadSpeed']),
       totalUpload: _integer(map['totalUpload']),
       totalDownload: _integer(map['totalDownload']),
+      activeNode: map['activeNode'] as String?,
+      activeMode: map['activeMode'] as String?,
       error: map['error'] as String?,
     );
   }
@@ -71,6 +75,8 @@ class VpnSnapshot {
   final int downloadSpeed;
   final int totalUpload;
   final int totalDownload;
+  final String? activeNode;
+  final String? activeMode;
   final String? error;
 
   bool get isConnected => state == VpnConnectionState.connected;
@@ -113,9 +119,16 @@ class VpnProfile {
   final DateTime updatedAt;
   final bool isActive;
 
+  /// A legacy subscription can have quota metadata even when an older app
+  /// version did not preserve the refresh URL.  Do not mislabel it as local.
+  bool get isSubscription =>
+      sourceUrl?.trim().isNotEmpty == true || subscriptionInfo != null;
+
   String get sourceLabel {
     final source = sourceUrl;
-    if (source == null || source.isEmpty) return '로컬 프로필';
+    if (source == null || source.trim().isEmpty) {
+      return isSubscription ? '구독 프로필' : '로컬 프로필';
+    }
     final uri = Uri.tryParse(source);
     return uri?.host.isNotEmpty == true ? uri!.host : '구독 프로필';
   }
@@ -181,6 +194,18 @@ class ImportedProfile {
 
   final String name;
   final String content;
+}
+
+class QrProfileResult {
+  const QrProfileResult({
+    required this.content,
+    this.sourceUrl,
+    this.subscriptionInfo,
+  });
+
+  final String content;
+  final String? sourceUrl;
+  final SubscriptionInfo? subscriptionInfo;
 }
 
 class VpnSettings {

@@ -11,16 +11,19 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
+import android.os.Debug
 import android.provider.OpenableColumns
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.ByteArrayOutputStream
 import java.util.UUID
+import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
     private lateinit var profiles: ProfileRepository
@@ -30,6 +33,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private var importResult: MethodChannel.Result? = null
     private var exportResult: MethodChannel.Result? = null
     private var exportContent: String? = null
+    private val coreWorker = Executors.newSingleThreadExecutor()
     private val runtimeListener: (Map<String, Any?>) -> Unit = { value -> eventSink?.success(value) }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -66,7 +70,9 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 "deleteProfile" -> {
                     val id = requiredString(call, "id")
                     val state = VpnRuntime.snapshot()
-                    require(state["state"] != "connected" || state["profileId"] != id) {
+                    val inUse = state["profileId"] == id &&
+                        state["state"] in setOf("connecting", "connected", "disconnecting")
+                    require(!inUse) {
                         "연결 중인 프로필은 삭제할 수 없습니다."
                     }
                     profiles.delete(id)
@@ -129,9 +135,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
     private fun validateProfile(content: String, result: MethodChannel.Result) {
         require(content.toByteArray(Charsets.UTF_8).size <= MAX_PROFILE_BYTES) { "프로필은 8MB보다 작아야 합니다." }
-        val temporary = StoredProfile("00000000-0000-4000-8000-000000000000", "검증", null, 0)
         runCatching {
-            XrayCore.validate(XrayConfig.build(temporary, content, NativeVpnSettings("mixed", true, 1400, "rule")))
+            XrayConfig.validate(content)
         }.onSuccess { result.success(null) }
             .onFailure { result.success(it.message ?: "프로필을 검증하지 못했습니다.") }
     }
@@ -153,38 +158,159 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
     private fun startVpn(profileId: String, result: MethodChannel.Result) {
         require(VpnService.prepare(this) == null) { "VPN permission is required" }
-        require(profiles.profile(profileId) != null) { "Profile not found" }
+        val profile = profiles.profile(profileId) ?: error("Profile not found")
         require(VlessRealityConfig.isGeneratedProfile(profiles.readContent(profileId))) {
             "VLESS + REALITY 링크로 만든 프로필만 연결할 수 있습니다."
         }
         profiles.select(profileId)
+        val state = VpnRuntime.snapshot()
+        val preserveSession = state["state"] in setOf("connected", "connecting") &&
+            (state["startedAt"] as? Long ?: 0L) > 0L
+        if (preserveSession) VpnRuntime.reconnecting(profile) else VpnRuntime.connecting(profile)
         val intent = Intent(this, ProximaVpnService::class.java)
             .setAction(ProximaVpnService.ACTION_START)
             .putExtra(ProximaVpnService.EXTRA_PROFILE_ID, profileId)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+        }.onFailure {
+            VpnRuntime.failed(profile, it.message ?: "VPN을 시작하지 못했습니다.")
+        }.getOrThrow()
         result.success(null)
     }
 
     private fun invokeCore(method: String, data: String, result: MethodChannel.Result) {
         require(VpnRuntime.snapshot()["state"] == "connected") { "VPN is not connected" }
-        runCatching {
-            if (method == "changeProxy") saveSelectedProxy(data, "")
-            // The Flutter UI keeps selector state. Xray applies a new selection
-            // on the next connection, so it never exposes Mihomo's control API.
-            JSONObject().put("code", 0).put("data", JSONObject()).toString()
-        }.onSuccess(result::success).onFailure { result.error("core_action_error", it.message, null) }
+        val operation = {
+            val payload: Any = when (method) {
+                "getProxies" -> currentProxyState()
+                "changeProxy" -> {
+                    changeProxy(data)
+                    JSONObject()
+                }
+                "updateConfig" -> {
+                    restartCurrentVpn()
+                    JSONObject()
+                }
+                "getConnections" -> recentConnections()
+                "getMemory" -> Debug.getPss().toLong() * 1024L
+                "queryExternalProviders" -> subscriptionProviders()
+                "testDelay" -> testDelay(data)
+                "closeConnection", "closeAllConnections" -> error("Xray는 개별 연결 종료를 지원하지 않습니다.")
+                "updateExternalProvider" -> error("Xray 구독은 프로필 탭에서 업데이트합니다.")
+                "probeCurrentProxyIp" -> probeCurrentProxyIp()
+                else -> error("지원하지 않는 코어 작업입니다: $method")
+            }
+            JSONObject().put("code", 0).put("data", payload).toString()
+        }
+        if (method in setOf("testDelay", "probeCurrentProxyIp")) {
+            coreWorker.execute {
+                runCatching(operation)
+                    .onSuccess { payload -> runOnUiThread { result.success(payload) } }
+                    .onFailure { error -> runOnUiThread { result.error("core_action_error", error.message, null) } }
+            }
+        } else {
+            runCatching(operation)
+                .onSuccess(result::success)
+                .onFailure { error -> result.error("core_action_error", error.message, null) }
+        }
     }
 
-    private fun saveSelectedProxy(data: String, payload: String) {
-        runCatching {
-            val profileId = VpnRuntime.snapshot()["profileId"] as? String ?: return
-            val selection = JSONObject(data)
-            settings.saveSelectedProxy(
-                profileId = profileId,
-                group = selection.optString("group-name"),
-                proxy = selection.optString("proxy-name"),
+    private fun currentProfile(): StoredProfile {
+        val profileId = VpnRuntime.snapshot()["profileId"] as? String
+            ?: error("연결 중인 프로필을 찾을 수 없습니다.")
+        return profiles.profile(profileId) ?: error("연결 중인 프로필을 찾을 수 없습니다.")
+    }
+
+    private fun currentProxyState(): JSONObject {
+        val profile = currentProfile()
+        return XrayConfig.proxyState(
+            profile = profile,
+            content = profiles.readContent(profile.id),
+            selected = settings.selectedProxies(profile.id),
+            activeNode = VpnRuntime.snapshot()["activeNode"] as? String,
+            activeMode = VpnRuntime.snapshot()["activeMode"] as? String,
+        )
+    }
+
+    private fun recentConnections(): JSONObject {
+        val runtime = VpnRuntime.snapshot()
+        return JSONObject()
+            .put("uploadTotal", runtime["totalUpload"] ?: 0)
+            .put("downloadTotal", runtime["totalDownload"] ?: 0)
+            .put(
+                "connections",
+                XrayConnectionLog.recent(
+                    path = VpnRuntime.accessLogPath(),
+                    route = runtime["activeNode"] as? String,
+                ),
+            )
+    }
+
+    private fun testDelay(data: String): Int {
+        val request = JSONObject(data)
+        val node = request.optString("proxy-name").trim()
+        require(node.isNotEmpty()) { "검사할 노드를 선택해 주세요." }
+        val port = VpnRuntime.probePort(node) ?: error("이 노드는 현재 Xray 검사 준비가 되지 않았습니다.")
+        return XrayProbe.delay(
+            port = port,
+            target = request.optString("test-url", "https://www.gstatic.com/generate_204"),
+            timeoutMillis = request.optInt("timeout", 5_000),
+        )
+    }
+
+    private fun probeCurrentProxyIp(): JSONObject {
+        val node = VpnRuntime.snapshot()["activeNode"] as? String
+            ?: error("직접 연결 모드에서는 프록시 IP를 확인할 수 없습니다.")
+        val port = VpnRuntime.probePort(node) ?: error("현재 노드의 Xray 검사 포트를 찾을 수 없습니다.")
+        return XrayProbe.publicIp(port)
+    }
+
+    private fun subscriptionProviders(): JSONArray = JSONArray().apply {
+        profiles.list().forEach { item ->
+            val source = item["sourceUrl"]?.toString()?.takeIf { it.isNotBlank() } ?: return@forEach
+            val id = item["id"]?.toString() ?: return@forEach
+            val count = runCatching { XrayConfig.nodeNames(profiles.profile(id)!!, profiles.readContent(id)).size }.getOrDefault(0)
+            put(
+                JSONObject()
+                    .put("name", item["name"]?.toString().orEmpty())
+                    .put("type", "subscription")
+                    .put("vehicle-type", "http")
+                    .put("count", count)
+                    .put("path", source),
             )
         }
+    }
+
+    private fun changeProxy(data: String) {
+        val profile = currentProfile()
+        val selection = JSONObject(data)
+        val group = selection.optString("group-name")
+        val proxy = selection.optString("proxy-name")
+        require(group == "GLOBAL" || group == "PROXY") { "선택할 수 없는 정책 그룹입니다." }
+        require(proxy in XrayConfig.nodeNames(profile, profiles.readContent(profile.id))) {
+            "선택할 수 없는 노드입니다."
+        }
+        settings.saveSelectedProxy(profile.id, group, proxy)
+        restartVpn(profile.id)
+    }
+
+    private fun restartCurrentVpn() {
+        restartVpn(currentProfile().id)
+    }
+
+    private fun restartVpn(profileId: String) {
+        val profile = profiles.profile(profileId) ?: error("연결 중인 프로필을 찾을 수 없습니다.")
+        // Publish the transition before returning over MethodChannel so a
+        // second mode/node change cannot target the outgoing generation.
+        VpnRuntime.reconnecting(profile)
+        val intent = Intent(this, ProximaVpnService::class.java)
+            .setAction(ProximaVpnService.ACTION_START)
+            .putExtra(ProximaVpnService.EXTRA_PROFILE_ID, profileId)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+        }.onFailure {
+            VpnRuntime.failed(profile, it.message ?: "VPN을 다시 시작하지 못했습니다.")
+        }.getOrThrow()
     }
 
     private fun pickProfileFile(result: MethodChannel.Result) {

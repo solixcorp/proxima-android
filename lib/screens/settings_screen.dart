@@ -24,35 +24,14 @@ class SettingsScreen extends StatelessWidget {
     }
   }
 
-  Future<void> _updateProvider(
-    BuildContext context,
-    CoreProvider provider,
-  ) async {
-    try {
-      await controller.updateProvider(provider);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('${provider.name} 업데이트 완료')));
-      }
-    } catch (error) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$error')));
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final settings = controller.settings;
     final network = controller.networkInfo;
     return AppPage(
       title: '더보기',
-      subtitle: '네트워크 도구, Provider와 터널 설정을 관리합니다.',
-      onRefresh: () async {
-        await controller.refreshNetworkInfo();
-        if (controller.snapshot.isConnected) await controller.loadProviders();
-      },
+      subtitle: '네트워크 도구와 Xray 터널 설정을 관리합니다.',
+      onRefresh: controller.refreshNetworkInfo,
       children: [
         const SectionHeader('네트워크'),
         Card(
@@ -96,80 +75,22 @@ class SettingsScreen extends StatelessWidget {
             ],
           ),
         ),
-        const SectionHeader('Provider'),
-        if (!controller.snapshot.isConnected)
-          const Card(
-            child: ListTile(
-              leading: Icon(Icons.cloud_off_outlined),
-              title: Text('VPN 연결 필요'),
-              subtitle: Text('연결 후 프록시 및 규칙 Provider를 관리할 수 있습니다.'),
-            ),
-          )
-        else if (controller.loadingProviders && controller.providers.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(32),
-            child: Center(child: CircularProgressIndicator()),
-          )
-        else if (controller.providers.isEmpty)
-          const Card(
-            child: ListTile(
-              leading: Icon(Icons.inventory_2_outlined),
-              title: Text('외부 Provider 없음'),
-              subtitle: Text('현재 프로필은 외부 Provider를 사용하지 않습니다.'),
-            ),
-          )
-        else
-          Card(
-            child: Column(
-              children: [
-                for (
-                  var index = 0;
-                  index < controller.providers.length;
-                  index++
-                ) ...[
-                  ListTile(
-                    leading: const Icon(Icons.inventory_2_outlined),
-                    title: Text(controller.providers[index].name),
-                    subtitle: Text(
-                      '${controller.providers[index].type} · ${controller.providers[index].vehicleType} · ${controller.providers[index].count}개',
-                    ),
-                    trailing: IconButton(
-                      tooltip: '업데이트',
-                      onPressed: () =>
-                          _updateProvider(context, controller.providers[index]),
-                      icon: const Icon(Icons.sync_rounded),
-                    ),
-                  ),
-                  if (index < controller.providers.length - 1)
-                    const Divider(height: 1, indent: 56),
-                ],
-              ],
-            ),
+        const SectionHeader('Xray 프로필'),
+        const Card(
+          child: ListTile(
+            leading: Icon(Icons.cloud_sync_outlined),
+            title: Text('VLESS + REALITY 구독'),
+            subtitle: Text('노드와 HTTPS 구독은 프로필 탭에서 추가·업데이트합니다.'),
           ),
+        ),
         const SectionHeader('터널'),
         Card(
           child: Column(
             children: [
               ListTile(
                 leading: const Icon(Icons.memory_rounded),
-                title: const Text('네트워크 스택'),
-                subtitle: Text(_stackDescription(settings.stack)),
-                trailing: DropdownButton<String>(
-                  value: settings.stack,
-                  underline: const SizedBox.shrink(),
-                  items: const [
-                    DropdownMenuItem(value: 'mixed', child: Text('Mixed')),
-                    DropdownMenuItem(value: 'system', child: Text('System')),
-                    DropdownMenuItem(value: 'gvisor', child: Text('gVisor')),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      controller.updateSettings(
-                        settings.copyWith(stack: value),
-                      );
-                    }
-                  },
-                ),
+                title: const Text('Xray TUN'),
+                subtitle: const Text('사용자 공간 Xray 네트워크 스택'),
               ),
               const Divider(height: 1, indent: 56),
               SwitchListTile(
@@ -248,7 +169,8 @@ class SettingsScreen extends StatelessWidget {
                   context: context,
                   applicationName: 'Proxima',
                   applicationVersion: '1.0.0',
-                  applicationLegalese: 'Xray-core MPL-2.0 및 libXray MIT 구성 요소 포함',
+                  applicationLegalese:
+                      'Xray-core MPL-2.0 및 libXray MIT 구성 요소 포함',
                 ),
               ),
             ],
@@ -258,15 +180,9 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  String _stackDescription(String stack) => switch (stack) {
-    'system' => 'Android 시스템 스택',
-    'gvisor' => '사용자 공간 gVisor 스택',
-    _ => 'TCP System + UDP gVisor',
-  };
-
   String _publicIpLabel(PublicIpInfo? info) {
-    if (info == null) return '요청할 때만 외부 서비스에 조회합니다.';
-    if (info.rejected) return '현재 정책에서 조회가 차단됨';
+    if (info == null) return '요청할 때만 현재 Xray 노드를 통해 조회합니다.';
+    if (info.rejected) return '현재 노드 또는 조회 정책에서 차단됨';
     final detail = [
       info.ip,
       info.location,

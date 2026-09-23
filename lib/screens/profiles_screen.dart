@@ -19,6 +19,8 @@ class ProfilesScreen extends StatelessWidget {
     VpnProfile? profile,
     String? initialName,
     String? initialContent,
+    String? initialSourceUrl,
+    SubscriptionInfo? initialSubscriptionInfo,
     _ProfileEntryMode entryMode = _ProfileEntryMode.edit,
   }) async {
     String content;
@@ -43,6 +45,8 @@ class ProfilesScreen extends StatelessWidget {
         profile: profile,
         initialName: initialName,
         initialContent: content,
+        initialSourceUrl: initialSourceUrl,
+        initialSubscriptionInfo: initialSubscriptionInfo,
         entryMode: entryMode,
       ),
     );
@@ -68,13 +72,18 @@ class ProfilesScreen extends StatelessWidget {
   }
 
   Future<void> _scanQr(BuildContext context) async {
-    final link = await Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => const QrScannerScreen()),
+    final result = await Navigator.of(context).push<QrProfileResult>(
+      MaterialPageRoute(
+        builder: (_) =>
+            QrScannerScreen(resolvePayload: controller.resolveQrPayload),
+      ),
     );
-    if (link == null || !context.mounted) return;
+    if (result == null || !context.mounted) return;
     await _openEditor(
       context,
-      initialContent: link,
+      initialContent: result.content,
+      initialSourceUrl: result.sourceUrl,
+      initialSubscriptionInfo: result.subscriptionInfo,
       entryMode: _ProfileEntryMode.link,
     );
   }
@@ -223,63 +232,84 @@ class ProfilesScreen extends StatelessWidget {
             ]
           : [
               for (final profile in controller.profiles) ...[
-                Card(
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.fromLTRB(20, 10, 8, 10),
-                    leading: CircleAvatar(
-                      child: Icon(
-                        profile.isActive
-                            ? Icons.check_rounded
-                            : Icons.description_outlined,
-                      ),
-                    ),
-                    title: Text(
-                      profile.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      _subtitle(profile, controller.snapshot.isConnected),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    onTap: profile.isActive
-                        ? null
-                        : () => controller.selectProfile(profile.id),
-                    trailing: PopupMenuButton<String>(
-                      onSelected: (value) => switch (value) {
-                        'select' => controller.selectProfile(profile.id),
-                        'refresh' => _refresh(context, profile),
-                        'export' => _export(context, profile),
-                        'edit' => _openEditor(context, profile: profile),
-                        'delete' => _delete(context, profile),
-                        _ => null,
-                      },
-                      itemBuilder: (_) => [
-                        if (!profile.isActive)
-                          const PopupMenuItem(
-                            value: 'select',
-                            child: Text('이 프로필 사용'),
-                          ),
-                        if (profile.sourceUrl?.isNotEmpty == true)
-                          const PopupMenuItem(
-                            value: 'refresh',
-                            child: Text('구독 업데이트'),
-                          ),
-                        const PopupMenuItem(
-                          value: 'export',
-                          child: Text('파일로 내보내기'),
+                Builder(
+                  builder: (context) {
+                    final connected = controller.snapshot.isConnected;
+                    final busy = controller.snapshot.isBusy;
+                    final inUse =
+                        connected &&
+                        controller.snapshot.profileId == profile.id;
+                    final selected = !connected && profile.isActive;
+                    final current = inUse || selected;
+                    return Card(
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.fromLTRB(
+                          20,
+                          10,
+                          8,
+                          10,
                         ),
-                        const PopupMenuItem(value: 'edit', child: Text('편집')),
-                        if (!profile.isActive ||
-                            !controller.snapshot.isConnected)
-                          const PopupMenuItem(
-                            value: 'delete',
-                            child: Text('삭제'),
+                        leading: CircleAvatar(
+                          child: Icon(
+                            current
+                                ? Icons.check_rounded
+                                : Icons.description_outlined,
                           ),
-                      ],
-                    ),
-                  ),
+                        ),
+                        title: Text(
+                          profile.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          _subtitle(profile, inUse: inUse, selected: selected),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: current || busy
+                            ? null
+                            : () => controller.selectProfile(profile.id),
+                        trailing: PopupMenuButton<String>(
+                          onSelected: (value) => switch (value) {
+                            'select' => controller.selectProfile(profile.id),
+                            'refresh' => _refresh(context, profile),
+                            'export' => _export(context, profile),
+                            'edit' => _openEditor(context, profile: profile),
+                            'delete' => _delete(context, profile),
+                            _ => null,
+                          },
+                          itemBuilder: (_) => [
+                            if (!current)
+                              PopupMenuItem(
+                                value: 'select',
+                                enabled: !busy,
+                                child: const Text('이 프로필 사용'),
+                              ),
+                            if (profile.sourceUrl?.isNotEmpty == true)
+                              PopupMenuItem(
+                                value: 'refresh',
+                                enabled: !busy,
+                                child: const Text('구독 업데이트'),
+                              ),
+                            const PopupMenuItem(
+                              value: 'export',
+                              child: Text('파일로 내보내기'),
+                            ),
+                            PopupMenuItem(
+                              value: 'edit',
+                              enabled: !busy,
+                              child: const Text('편집'),
+                            ),
+                            if (!inUse && !busy)
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: Text('삭제'),
+                              ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 10),
               ],
@@ -287,8 +317,16 @@ class ProfilesScreen extends StatelessWidget {
     );
   }
 
-  String _subtitle(VpnProfile profile, bool connected) {
-    final state = profile.isActive ? (connected ? '사용 중' : '선택됨') : null;
+  String _subtitle(
+    VpnProfile profile, {
+    required bool inUse,
+    required bool selected,
+  }) {
+    final state = inUse
+        ? '사용 중'
+        : selected
+        ? '선택됨'
+        : null;
     final traffic = profile.subscriptionInfo;
     final usage = traffic?.hasTraffic == true
         ? '남음 ${formatBytes(traffic!.remaining)}'
@@ -303,12 +341,16 @@ class _ProfileEditor extends StatefulWidget {
     required this.initialContent,
     required this.entryMode,
     this.initialName,
+    this.initialSourceUrl,
+    this.initialSubscriptionInfo,
     this.profile,
   });
 
   final AppController controller;
   final VpnProfile? profile;
   final String? initialName;
+  final String? initialSourceUrl;
+  final SubscriptionInfo? initialSubscriptionInfo;
   final String initialContent;
   final _ProfileEntryMode entryMode;
 
@@ -329,7 +371,9 @@ class _ProfileEditorState extends State<_ProfileEditor> {
     _name = TextEditingController(
       text: widget.profile?.name ?? widget.initialName ?? '',
     );
-    _url = TextEditingController(text: widget.profile?.sourceUrl ?? '');
+    _url = TextEditingController(
+      text: widget.profile?.sourceUrl ?? widget.initialSourceUrl ?? '',
+    );
     _yaml = TextEditingController(text: widget.initialContent);
   }
 
@@ -348,7 +392,8 @@ class _ProfileEditorState extends State<_ProfileEditor> {
     });
     try {
       var content = _yaml.text.trim();
-      SubscriptionInfo? subscriptionInfo;
+      var subscriptionInfo =
+          widget.profile?.subscriptionInfo ?? widget.initialSubscriptionInfo;
       if (content.isEmpty && _url.text.trim().isNotEmpty) {
         final subscription = await widget.controller.fetchSubscriptionDetails(
           _url.text.trim(),

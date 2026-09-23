@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../screens/home_screen.dart';
+import '../screens/connections_screen.dart';
 import '../screens/profiles_screen.dart';
 import '../screens/proxies_screen.dart';
 import '../screens/settings_screen.dart';
@@ -46,7 +47,6 @@ class _ProximaShellState extends State<ProximaShell> {
     setState(() => _index = index);
     if (index == 3) {
       widget.controller.refreshNetworkInfo();
-      widget.controller.loadProviders();
     }
   }
 
@@ -64,6 +64,15 @@ class _ProximaShellState extends State<ProximaShell> {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => ProxiesScreen(controller: widget.controller),
+                ),
+              );
+            },
+            openConnections: () {
+              widget.controller.loadConnections();
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      ConnectionsScreen(controller: widget.controller),
                 ),
               );
             },

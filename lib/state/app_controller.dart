@@ -20,7 +20,6 @@ class AppController extends ChangeNotifier {
 
   final VpnBridge bridge;
   StreamSubscription<VpnSnapshot>? _snapshotSubscription;
-  Timer? _connectionTimer;
 
   VpnSnapshot snapshot = const VpnSnapshot(
     state: VpnConnectionState.disconnected,
@@ -40,9 +39,21 @@ class AppController extends ChangeNotifier {
   bool loadingProviders = false;
   bool loadingPublicIp = false;
   bool loadingNetwork = false;
+  bool _proxyReloadPending = false;
   String? message;
 
   VpnProfile? get activeProfile {
+    final runtimeProfileId = switch (snapshot.state) {
+      VpnConnectionState.connecting ||
+      VpnConnectionState.connected ||
+      VpnConnectionState.disconnecting => snapshot.profileId,
+      VpnConnectionState.disconnected || VpnConnectionState.error => null,
+    };
+    if (runtimeProfileId != null) {
+      for (final profile in profiles) {
+        if (profile.id == runtimeProfileId) return profile;
+      }
+    }
     for (final profile in profiles) {
       if (profile.isActive) return profile;
     }
@@ -52,6 +63,21 @@ class AppController extends ChangeNotifier {
   ProxyGroup? get globalProxyGroup {
     for (final group in proxyGroups) {
       if (group.name == 'GLOBAL') return group;
+    }
+    return null;
+  }
+
+  String? get currentProxyGroupName => switch (settings.mode) {
+    OutboundMode.rule => 'PROXY',
+    OutboundMode.global => 'GLOBAL',
+    OutboundMode.direct => null,
+  };
+
+  ProxyGroup? get currentProxyGroup {
+    final name = currentProxyGroupName;
+    if (name == null) return null;
+    for (final group in proxyGroups) {
+      if (group.name == name) return group;
     }
     return null;
   }
@@ -76,7 +102,7 @@ class AppController extends ChangeNotifier {
       networkInfo = values[4] as NetworkInfo;
       if (snapshot.isConnected) {
         _beginConnectedRefresh();
-      } else if (settings.mode == OutboundMode.global) {
+      } else if (settings.mode != OutboundMode.direct) {
         await loadProxyGroups();
       }
     } catch (error) {
@@ -92,33 +118,29 @@ class AppController extends ChangeNotifier {
     snapshot = next;
     if (becameConnected) {
       _beginConnectedRefresh();
-    } else if (!next.isConnected) {
-      _connectionTimer?.cancel();
-      _connectionTimer = null;
-      proxyGroups = const [];
+    } else if (next.state == VpnConnectionState.disconnected ||
+        next.state == VpnConnectionState.error) {
       connectionOverview = const ConnectionOverview();
       providers = const [];
       publicIp = null;
+      if (settings.mode != OutboundMode.direct) {
+        unawaited(loadProxyGroups());
+      } else {
+        proxyGroups = const [];
+      }
     }
     notifyListeners();
   }
 
   void _beginConnectedRefresh() {
-    _connectionTimer?.cancel();
     unawaited(loadProxyGroups());
-    unawaited(loadConnections());
-    unawaited(loadProviders());
-    _connectionTimer = Timer.periodic(
-      const Duration(seconds: 2),
-      (_) => unawaited(loadConnections(silent: true)),
-    );
   }
 
   Future<void> toggleVpn() async {
     if (snapshot.isBusy) return;
     message = null;
     try {
-      if (snapshot.isConnected || snapshot.state == VpnConnectionState.error) {
+      if (snapshot.isConnected) {
         await bridge.stopVpn();
         return;
       }
@@ -153,13 +175,19 @@ class AppController extends ChangeNotifier {
     required String content,
     SubscriptionInfo? subscriptionInfo,
   }) async {
+    if (snapshot.isBusy) {
+      throw StateError('연결 상태가 바뀐 뒤 프로필을 저장해 주세요.');
+    }
     final parsed = VlessRealityProfile.parseMany(content);
     final effectiveName = name.trim().isEmpty
         ? (parsed.length == 1 ? parsed.single.name : 'VLESS REALITY')
         : name.trim();
-    final generatedConfig = VlessRealityProfile.profilesToMihomoYaml(
-      parsed,
-      profileName: effectiveName,
+    final generatedConfig = VlessRealityProfile.attachSubscriptionSource(
+      VlessRealityProfile.profilesToMihomoYaml(
+        parsed,
+        profileName: effectiveName,
+      ),
+      sourceUrl,
     );
     final validationError = await validateProfile(generatedConfig);
     if (validationError != null && validationError.isNotEmpty) {
@@ -173,7 +201,7 @@ class AppController extends ChangeNotifier {
       subscriptionInfo: subscriptionInfo,
     );
     await reloadProfiles();
-    if (!snapshot.isConnected && settings.mode == OutboundMode.global) {
+    if (!snapshot.isConnected && settings.mode != OutboundMode.direct) {
       await loadProxyGroups();
     }
     if (snapshot.isConnected && snapshot.profileId == saved.id) {
@@ -182,19 +210,25 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> selectProfile(String id) async {
+    if (snapshot.isBusy) {
+      throw StateError('연결 상태가 바뀐 뒤 프로필을 변경해 주세요.');
+    }
     await bridge.selectProfile(id);
     await reloadProfiles();
     if (snapshot.isConnected && snapshot.profileId != id) {
       await bridge.startVpn(id);
-    } else if (!snapshot.isConnected && settings.mode == OutboundMode.global) {
+    } else if (!snapshot.isConnected && settings.mode != OutboundMode.direct) {
       await loadProxyGroups();
     }
   }
 
   Future<void> deleteProfile(String id) async {
+    if (snapshot.isBusy) {
+      throw StateError('연결 상태가 바뀐 뒤 프로필을 삭제해 주세요.');
+    }
     await bridge.deleteProfile(id);
     await reloadProfiles();
-    if (!snapshot.isConnected && settings.mode == OutboundMode.global) {
+    if (!snapshot.isConnected && settings.mode != OutboundMode.direct) {
       await loadProxyGroups();
     }
   }
@@ -225,6 +259,53 @@ class AppController extends ChangeNotifier {
 
   Future<String> fetchSubscription(String source) async =>
       (await fetchSubscriptionDetails(source)).content;
+
+  Future<QrProfileResult> resolveQrPayload(
+    String value, {
+    Future<SubscriptionFetchResult> Function(String source)?
+    subscriptionFetcher,
+  }) async {
+    final payload = value.trim();
+    try {
+      return QrProfileResult(
+        content: VlessRealityProfile.normalizeLinkInput(payload),
+      );
+    } on FormatException {
+      // A QR may contain a landing/subscription URL instead of the link itself.
+    }
+
+    final uri = Uri.tryParse(payload);
+    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
+      throw const FormatException('이 QR 코드에서 VLESS + REALITY 정보를 찾지 못했습니다.');
+    }
+
+    // Preserve the existing behavior for landing URLs that embed the actual
+    // VLESS payload in a query parameter or fragment.
+    for (final candidate in [...uri.queryParameters.values, uri.fragment]) {
+      if (candidate.isEmpty) continue;
+      try {
+        return QrProfileResult(
+          content: VlessRealityProfile.normalizeLinkInput(candidate),
+        );
+      } on FormatException {
+        // Try the next parameter, then the URL as a subscription endpoint.
+      }
+    }
+
+    final subscription =
+        await (subscriptionFetcher ?? fetchSubscriptionDetails)(payload);
+    final links = VlessRealityProfile.linksFromSubscription(
+      subscription.content,
+    );
+    if (links.isEmpty) {
+      throw const FormatException('구독에서 VLESS + REALITY 노드를 찾지 못했습니다.');
+    }
+    return QrProfileResult(
+      content: links.join('\n'),
+      sourceUrl: payload,
+      subscriptionInfo: subscription.info ?? const SubscriptionInfo(),
+    );
+  }
 
   Future<SubscriptionFetchResult> fetchSubscriptionDetails(
     String source,
@@ -287,7 +368,9 @@ class AppController extends ChangeNotifier {
       name: profile.name,
       sourceUrl: source,
       content: content,
-      subscriptionInfo: subscription.info ?? const SubscriptionInfo(),
+      // Some providers omit usage headers on otherwise valid refreshes. Keep
+      // the last known quota instead of replacing it with an empty value.
+      subscriptionInfo: subscription.info ?? profile.subscriptionInfo,
     );
   }
 
@@ -298,6 +381,10 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> setMode(OutboundMode mode) async {
+    if (snapshot.isBusy) {
+      throw StateError('연결 상태가 바뀐 뒤 모드를 변경해 주세요.');
+    }
+    if (mode == settings.mode) return;
     final previous = settings;
     await updateSettings(settings.copyWith(mode: mode));
     if (!snapshot.isConnected) {
@@ -311,17 +398,26 @@ class AppController extends ChangeNotifier {
           jsonEncode({'mode': mode.wireName}),
         ),
       );
-      await loadProxyGroups();
+      // Xray applies a mode change by restarting. Build the selector from the
+      // saved links while it is connecting; the connected event will reload
+      // the authoritative state after the new core is ready.
+      proxyGroups = await _offlineProxyGroups();
+      _clearProxyMessage();
+      notifyListeners();
     } catch (_) {
       settings = previous;
       await bridge.saveSettings(previous);
+      proxyGroups = await _offlineProxyGroups();
       notifyListeners();
       rethrow;
     }
   }
 
   Future<void> loadProxyGroups() async {
-    if (loadingProxies) return;
+    if (loadingProxies) {
+      _proxyReloadPending = true;
+      return;
+    }
     loadingProxies = true;
     notifyListeners();
     try {
@@ -333,32 +429,54 @@ class AppController extends ChangeNotifier {
       } else {
         proxyGroups = await _offlineProxyGroups();
       }
+      _clearProxyMessage();
     } catch (error) {
       message = '노드 목록을 불러오지 못했습니다: $error';
     } finally {
       loadingProxies = false;
       notifyListeners();
+      if (_proxyReloadPending) {
+        _proxyReloadPending = false;
+        unawaited(loadProxyGroups());
+      }
     }
   }
 
   Future<void> selectProxy(String group, String proxy) async {
+    if (snapshot.isBusy) {
+      throw StateError('연결 상태가 바뀐 뒤 노드를 변경해 주세요.');
+    }
     if (snapshot.isConnected) {
-      ensureCoreSuccess(
-        await bridge.invokeCore(
-          'changeProxy',
-          jsonEncode({'group-name': group, 'proxy-name': proxy}),
-        ),
-      );
-      await loadProxyGroups();
+      final previousGroups = proxyGroups;
+      _setProxySelection(group, proxy);
+      notifyListeners();
+      try {
+        ensureCoreSuccess(
+          await bridge.invokeCore(
+            'changeProxy',
+            jsonEncode({'group-name': group, 'proxy-name': proxy}),
+          ),
+        );
+        _clearProxyMessage();
+        notifyListeners();
+      } catch (_) {
+        proxyGroups = previousGroups;
+        notifyListeners();
+        rethrow;
+      }
+      // Xray restarts after changeProxy. The connecting -> connected snapshot
+      // transition calls _beginConnectedRefresh(), which safely reloads the
+      // authoritative proxy state after the new core is ready.
       return;
     }
     final profile = activeProfile;
-    if (settings.mode != OutboundMode.global || group != 'GLOBAL') {
-      throw StateError('연결 전에는 전역 모드의 노드만 선택할 수 있습니다.');
+    final expectedGroup = currentProxyGroupName;
+    if (expectedGroup == null || group != expectedGroup) {
+      throw StateError('현재 작동 모드에서 선택할 수 없는 정책 그룹입니다.');
     }
     if (profile == null) throw StateError('먼저 프로필을 추가해 주세요.');
-    final global = globalProxyGroup;
-    if (global == null || !global.proxies.contains(proxy)) {
+    final current = currentProxyGroup;
+    if (current == null || !current.proxies.contains(proxy)) {
       throw StateError('선택할 수 없는 노드입니다.');
     }
     await bridge.saveProxySelection(
@@ -366,6 +484,12 @@ class AppController extends ChangeNotifier {
       group: group,
       proxy: proxy,
     );
+    _setProxySelection(group, proxy);
+    _clearProxyMessage();
+    notifyListeners();
+  }
+
+  void _setProxySelection(String group, String proxy) {
     proxyGroups = proxyGroups
         .map(
           (item) => item.name == group
@@ -378,11 +502,18 @@ class AppController extends ChangeNotifier {
               : item,
         )
         .toList(growable: false);
-    notifyListeners();
+  }
+
+  void _clearProxyMessage() {
+    final current = message;
+    if (current != null && current.startsWith('노드 목록을 불러오지 못했습니다:')) {
+      message = null;
+    }
   }
 
   Future<List<ProxyGroup>> _offlineProxyGroups() async {
-    if (settings.mode != OutboundMode.global) return const [];
+    final groupName = currentProxyGroupName;
+    if (groupName == null) return const [];
     final profile = activeProfile;
     if (profile == null) return const [];
     final content = await bridge.readProfile(profile.id);
@@ -391,10 +522,13 @@ class AppController extends ChangeNotifier {
       profileName: profile.name,
     );
     if (nodes.isEmpty) return const [];
-    final selected = (await bridge.loadProxySelections(profile.id))['GLOBAL'];
+    final selections = await bridge.loadProxySelections(profile.id);
+    final selected =
+        selections[groupName] ??
+        (groupName == 'PROXY' ? selections['GLOBAL'] : null);
     return [
       ProxyGroup(
-        name: 'GLOBAL',
+        name: groupName,
         type: 'Selector',
         selected: selected != null && nodes.contains(selected)
             ? selected
@@ -589,7 +723,6 @@ class AppController extends ChangeNotifier {
 
   @override
   void dispose() {
-    _connectionTimer?.cancel();
     _snapshotSubscription?.cancel();
     super.dispose();
   }

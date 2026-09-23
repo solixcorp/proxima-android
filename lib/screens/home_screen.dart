@@ -10,11 +10,13 @@ class HomeScreen extends StatelessWidget {
     required this.controller,
     required this.openProfiles,
     required this.openProxies,
+    required this.openConnections,
   });
 
   final AppController controller;
   final VoidCallback openProfiles;
   final VoidCallback openProxies;
+  final VoidCallback openConnections;
 
   String _status(VpnConnectionState state) => switch (state) {
     VpnConnectionState.disconnected => '연결되지 않음',
@@ -45,13 +47,18 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final snapshot = controller.snapshot;
     final active = controller.activeProfile;
+    final proxyGroup = controller.currentProxyGroup;
+    final proxyGroupName = controller.currentProxyGroupName;
+    final activeNode = snapshot.isConnected ? snapshot.activeNode : null;
     final colors = Theme.of(context).colorScheme;
     return AppPage(
       title: 'Proxima',
       subtitle: 'VLESS + REALITY Android VPN 클라이언트',
       onRefresh: () async {
         await controller.reloadProfiles();
-        if (snapshot.isConnected) await controller.loadConnections();
+        if (controller.settings.mode != OutboundMode.direct) {
+          await controller.loadProxyGroups();
+        }
       },
       children: [
         Card(
@@ -136,16 +143,18 @@ class HomeScreen extends StatelessWidget {
               )
               .toList(),
           selected: {controller.settings.mode},
-          onSelectionChanged: (selection) async {
-            try {
-              await controller.setMode(selection.first);
-            } catch (error) {
-              if (context.mounted) {
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(SnackBar(content: Text('$error')));
-              }
-            }
-          },
+          onSelectionChanged: snapshot.isBusy
+              ? null
+              : (selection) async {
+                  try {
+                    await controller.setMode(selection.first);
+                  } catch (error) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context)
+                          .showSnackBar(SnackBar(content: Text('$error')));
+                    }
+                  }
+                },
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(4, 10, 4, 0),
@@ -168,33 +177,34 @@ class HomeScreen extends StatelessWidget {
             onTap: openProfiles,
           ),
         ),
-        if (controller.settings.mode == OutboundMode.global) ...[
+        if (proxyGroupName != null) ...[
           const SectionHeader('선택된 노드'),
           Card(
             child: ListTile(
+              key: const Key('selected_node_tile'),
               contentPadding: const EdgeInsets.symmetric(
                 horizontal: 20,
                 vertical: 8,
               ),
               leading: const Icon(Icons.public_rounded),
               title: Text(
-                controller.globalProxyGroup == null
+                activeNode != null && activeNode.isNotEmpty
+                    ? displayProxyName(activeNode)
+                    : proxyGroup == null
                     ? '노드를 선택해 주세요'
-                    : displayProxyName(controller.globalProxyGroup!.selected),
+                    : displayProxyName(proxyGroup.selected),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
               subtitle: Text(
-                snapshot.isConnected
-                    ? '모든 트래픽에 사용할 전역 노드'
-                    : controller.globalProxyGroup == null
+                activeNode == null && proxyGroup == null
                     ? '노드 정보를 불러오는 중입니다.'
-                    : 'VPN 연결 전에 선택한 전역 노드',
+                    : controller.settings.mode == OutboundMode.global
+                    ? 'GLOBAL · 모든 트래픽에 사용할 노드'
+                    : 'PROXY · 규칙 트래픽에 사용할 노드',
               ),
-              trailing: controller.globalProxyGroup != null
-                  ? const Icon(Icons.chevron_right_rounded)
-                  : null,
-              onTap: controller.globalProxyGroup == null ? null : openProxies,
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: snapshot.isBusy ? null : openProxies,
             ),
           ),
         ],
@@ -230,10 +240,12 @@ class HomeScreen extends StatelessWidget {
               const Divider(height: 1, indent: 56),
               ListTile(
                 leading: const Icon(Icons.swap_horiz_rounded),
-                title: const Text('활성 연결'),
+                title: const Text('Xray 코어'),
+                subtitle: const Text('최근 Xray 연결과 사용 중인 메모리 확인'),
                 trailing: ListTileValueText(
-                  '${controller.connectionOverview.connections.length}',
+                  snapshot.isConnected ? '실행 중' : '정지됨',
                 ),
+                onTap: snapshot.isConnected ? openConnections : null,
               ),
               const Divider(height: 1, indent: 56),
               ListTile(

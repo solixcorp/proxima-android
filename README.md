@@ -8,19 +8,17 @@ Proxima는 VLESS + REALITY 링크에 집중한 Android VPN 클라이언트입니
 
 - VLESS + REALITY 공유 링크 추가, 편집, 검증
 - VLESS + REALITY 링크 목록을 제공하는 HTTPS 구독 가져오기
-- VPN 연결 전에도 가능한 전역 모드의 단일 노드 선택과 규칙 기반 라우팅
+- VPN 연결 전에도 가능한 Rule/Global 모드의 노드 선택
 - 구독 응답의 `subscription-userinfo` 기반 사용량·남은 트래픽·만료일 및 플랜명 표시
 - 링크를 앱 내부 실행용 Xray 구성으로 자동 변환
 - Android VPN 권한 요청과 포그라운드 `VpnService` 연결 제어
 - Android 빠른 설정 타일에서 최근 프로필 즉시 연결·해제
 - Rule, Global, Direct 작동 모드 전환
-- 정책 그룹과 프록시 노드 조회, 선택, 지연 시간 측정
-- 활성 연결의 목적지, 적용 규칙, 프록시 체인, 트래픽 조회 및 종료
-- Proxy Provider, Rule Provider 조회와 업데이트
-- 실시간 업로드·다운로드 속도와 누적 트래픽 표시
+- Rule/Global 모드의 현재 노드 조회·선택(연결 중 변경 시 Xray 자동 재시작)
+- Xray metrics 기반 실시간 업로드·다운로드 속도와 누적 트래픽 표시
 - DNS 조회, 외부 IP 조회, 네트워크 진단 도구
 - 로컬 VLESS 링크 파일 가져오기·내보내기
-- System, gVisor, Mixed 네트워크 스택과 IPv6/MTU 설정
+- IPv6/MTU 설정
 - 앱 샌드박스 프로필 저장과 Android 백업 차단
 - 휴대폰과 태블릿/넓은 화면에 맞춘 Material 3 UI
 
@@ -51,9 +49,9 @@ flutter build apk --debug
 
 ## 프로필 주의사항
 
-- `vless://` 형식이며 `security=reality`, `encryption=none`, REALITY `pbk`가 포함된 링크만 사용할 수 있습니다.
+- `vless://` 형식이며 `security=reality`, REALITY `pbk`가 포함된 링크를 사용합니다. 세부 옵션은 번들된 libXray 변환기로 검증합니다.
 - 여러 VLESS + REALITY 링크는 줄바꿈으로 입력할 수 있으며, 하나의 프로필 안에서 여러 노드로 변환됩니다.
-- TCP(raw), WebSocket, gRPC 전송 방식을 지원합니다. WebSocket에는 `path`, gRPC에는 `serviceName`이 필요합니다.
+- REALITY와 호환되는 RAW(TCP), XHTTP, gRPC 전송을 지원합니다. Xray-core에서 REALITY+WebSocket은 지원하지 않습니다.
 - 링크는 앱 내부 저장용 메타데이터로 보관되며 연결 직전에 Xray JSON으로 변환됩니다.
 - 구독 요청은 VLESS URI 목록을 받는 클라이언트 User-Agent로 전송합니다. 비지원 노드는 앱에 가져오지 않습니다.
 - Android TUN은 앱이 생성하고 그 fd를 Xray에 전달합니다. 외부 소켓은 Android `protect()`로 VPN 루프에서 제외합니다.
