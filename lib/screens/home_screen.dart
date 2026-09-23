@@ -208,6 +208,16 @@ class HomeScreen extends StatelessWidget {
             ),
           ),
         ],
+        if (controller.settings.mode == OutboundMode.rule) ...[
+          const SectionHeader('규칙 라우팅'),
+          const Card(
+            child: ListTile(
+              leading: Icon(Icons.rule_rounded),
+              title: Text('규칙에 따라 자동 선택'),
+              subtitle: Text('규칙 모드에서는 특정 노드를 직접 선택할 수 없습니다.'),
+            ),
+          ),
+        ],
         const SectionHeader('트래픽'),
         Row(
           children: [

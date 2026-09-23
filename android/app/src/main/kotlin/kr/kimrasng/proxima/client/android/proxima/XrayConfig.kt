@@ -39,7 +39,20 @@ object XrayConfig {
         val outbounds = JSONArray()
         for (index in 0 until nodes.length()) outbounds.put(nodes.getJSONObject(index))
         outbounds.put(JSONObject().put("tag", directTag).put("protocol", "freedom"))
-        val rules = JSONArray().put(
+        val rules = JSONArray()
+        // Many VLESS servers do not relay UDP DNS. Sending Android's resolver
+        // packets through such a node leaves the VPN established but makes
+        // every hostname fail. Resolve DNS through the protected underlying
+        // network, then route the resulting application connection normally.
+        rules.put(
+            JSONObject()
+                .put("type", "field")
+                .put("inboundTag", JSONArray().put("proxima-tun"))
+                .put("network", "udp")
+                .put("port", "53")
+                .put("outboundTag", directTag),
+        )
+        rules.put(
             JSONObject()
                 .put("type", "field")
                 .put("inboundTag", JSONArray().put("proxima-tun"))

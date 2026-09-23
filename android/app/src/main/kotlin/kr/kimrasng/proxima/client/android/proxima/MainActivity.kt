@@ -33,7 +33,9 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private var importResult: MethodChannel.Result? = null
     private var exportResult: MethodChannel.Result? = null
     private var exportContent: String? = null
-    private val coreWorker = Executors.newSingleThreadExecutor()
+    // Node probes are independent SOCKS routes. A single worker made the
+    // "measure all" button wait for every timeout one by one.
+    private val coreWorker = Executors.newFixedThreadPool(8)
     private val runtimeListener: (Map<String, Any?>) -> Unit = { value -> eventSink?.success(value) }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -254,7 +256,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         return XrayProbe.delay(
             port = port,
             target = request.optString("test-url", "https://www.gstatic.com/generate_204"),
-            timeoutMillis = request.optInt("timeout", 5_000),
+            timeoutMillis = request.optInt("timeout", 3_000),
         )
     }
 
@@ -286,7 +288,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         val selection = JSONObject(data)
         val group = selection.optString("group-name")
         val proxy = selection.optString("proxy-name")
-        require(group == "GLOBAL" || group == "PROXY") { "선택할 수 없는 정책 그룹입니다." }
+        require(group == "GLOBAL") { "노드는 전역 모드에서만 직접 선택할 수 있습니다." }
         require(proxy in XrayConfig.nodeNames(profile, profiles.readContent(profile.id))) {
             "선택할 수 없는 노드입니다."
         }
@@ -471,6 +473,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         importResult = null
         exportResult = null
         exportContent = null
+        coreWorker.shutdownNow()
         super.onDestroy()
     }
 

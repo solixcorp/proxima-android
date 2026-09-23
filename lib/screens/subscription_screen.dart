@@ -97,6 +97,7 @@ class _ConnectionStatusCard extends StatelessWidget {
 
   String get _nodeLabel {
     if (controller.settings.mode == OutboundMode.direct) return '직접 연결';
+    if (controller.settings.mode == OutboundMode.rule) return '규칙에 따라 자동 선택';
     final active = controller.snapshot.activeNode;
     if (controller.snapshot.isConnected &&
         active != null &&

@@ -32,7 +32,7 @@ class ProxiesScreen extends StatelessWidget {
           },
           subtitle: switch (mode) {
             OutboundMode.global => '모든 트래픽에 사용할 노드 하나를 선택합니다.',
-            OutboundMode.rule => '규칙 모드의 PROXY 트래픽에 사용할 노드를 선택합니다.',
+            OutboundMode.rule => '규칙에 따라 경로가 자동으로 선택됩니다.',
             OutboundMode.direct => '프록시 노드를 거치지 않고 바로 통신합니다.',
           },
           onRefresh: controller.loadProxyGroups,
@@ -40,18 +40,26 @@ class ProxiesScreen extends StatelessWidget {
             IconButton(
               tooltip: '새로고침',
               onPressed:
-                  !controller.loadingProxies && mode != OutboundMode.direct
+                  !controller.loadingProxies && mode == OutboundMode.global
                   ? controller.loadProxyGroups
                   : null,
               icon: const Icon(Icons.refresh_rounded),
             ),
           ],
-          children: mode == OutboundMode.direct
+          children: mode == OutboundMode.rule
+              ? const [
+                  PageEmptyState(
+                    icon: Icons.rule_rounded,
+                    title: '규칙 모드에서는 노드를 직접 선택하지 않습니다',
+                    message: '전역 모드로 전환하면 사용할 노드를 직접 선택할 수 있습니다.',
+                  ),
+                ]
+              : mode == OutboundMode.direct
               ? const [
                   PageEmptyState(
                     icon: Icons.arrow_forward_rounded,
                     title: '직접 연결 모드입니다',
-                    message: '전역 또는 규칙 모드를 선택하면 사용할 노드를 지정할 수 있습니다.',
+                    message: '전역 모드를 선택하면 사용할 노드를 지정할 수 있습니다.',
                   ),
                 ]
               : controller.loadingProxies && controller.proxyGroups.isEmpty
@@ -65,12 +73,8 @@ class ProxiesScreen extends StatelessWidget {
               ? [
                   PageEmptyState(
                     icon: Icons.layers_clear_outlined,
-                    title: mode == OutboundMode.global
-                        ? '선택할 전역 노드가 없습니다'
-                        : '규칙용 PROXY 노드가 없습니다',
-                    message: mode == OutboundMode.global
-                        ? '프로필에 사용할 수 있는 노드가 있는지 확인해 주세요.'
-                        : '현재 프로필에 VLESS + REALITY 노드가 있는지 확인해 주세요.',
+                    title: '선택할 전역 노드가 없습니다',
+                    message: '프로필에 사용할 수 있는 노드가 있는지 확인해 주세요.',
                   ),
                 ]
               : [
@@ -127,6 +131,7 @@ class _ProxyPicker extends StatefulWidget {
 class _ProxyPickerState extends State<_ProxyPicker> {
   String? _working;
   bool _testingAll = false;
+  final Set<String> _testing = <String>{};
   final Map<String, int?> _delays = {};
 
   Future<void> _choose(String proxy) async {
@@ -145,8 +150,9 @@ class _ProxyPickerState extends State<_ProxyPicker> {
   }
 
   Future<void> _test(String proxy) async {
+    if (_testing.isNotEmpty) return;
     setState(() {
-      _working = proxy;
+      _testing.add(proxy);
       _delays.remove(proxy);
     });
     try {
@@ -158,27 +164,43 @@ class _ProxyPickerState extends State<_ProxyPicker> {
             .showSnackBar(SnackBar(content: Text('노드 검사 실패: $error')));
       }
     } finally {
-      if (mounted) setState(() => _working = null);
+      if (mounted) setState(() => _testing.remove(proxy));
     }
   }
 
   Future<void> _testAll(List<String> proxies) async {
-    setState(() => _testingAll = true);
-    try {
-      final results = await Future.wait(
-        proxies.map(
-          (proxy) async =>
-              MapEntry(proxy, await widget.controller.testDelay(proxy)),
-        ),
-      );
-      if (mounted) setState(() => _delays.addEntries(results));
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('노드 일괄 검사 실패: $error')));
+    if (_testing.isNotEmpty) return;
+    setState(() {
+      _testingAll = true;
+      _testing.addAll(proxies);
+      for (final proxy in proxies) {
+        _delays.remove(proxy);
       }
+    });
+    try {
+      await Future.wait(
+        proxies.map((proxy) async {
+          int? delay;
+          try {
+            delay = await widget.controller.testDelay(proxy);
+          } catch (_) {
+            delay = null;
+          }
+          if (mounted) {
+            setState(() {
+              _delays[proxy] = delay;
+              _testing.remove(proxy);
+            });
+          }
+        }),
+      );
     } finally {
-      if (mounted) setState(() => _testingAll = false);
+      if (mounted) {
+        setState(() {
+          _testingAll = false;
+          _testing.clear();
+        });
+      }
     }
   }
 
@@ -236,6 +258,7 @@ class _ProxyPickerState extends State<_ProxyPicker> {
                   onChanged: (value) {
                     if (value != null &&
                         _working == null &&
+                        _testing.isEmpty &&
                         !disabled &&
                         !_testingAll) {
                       _choose(value);
@@ -247,7 +270,8 @@ class _ProxyPickerState extends State<_ProxyPicker> {
                     itemBuilder: (context, index) {
                       final proxy = current.proxies[index];
                       final selected = proxy == current.selected;
-                      final working = _working == proxy;
+                      final working =
+                          _working == proxy || _testing.contains(proxy);
                       return RadioListTile<String>(
                         value: proxy,
                         enabled: !working && !disabled && !_testingAll,
@@ -268,7 +292,10 @@ class _ProxyPickerState extends State<_ProxyPicker> {
                             : IconButton(
                                 tooltip: '지연 시간 측정',
                                 onPressed:
-                                    connected && !disabled && !_testingAll
+                                    connected &&
+                                        !disabled &&
+                                        !_testingAll &&
+                                        _testing.isEmpty
                                     ? () => _test(proxy)
                                     : null,
                                 icon: const Icon(Icons.network_ping_rounded),

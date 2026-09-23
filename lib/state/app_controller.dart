@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import '../core/native_vpn_bridge.dart';
 import '../core/vless_reality_profile.dart';
@@ -68,9 +69,8 @@ class AppController extends ChangeNotifier {
   }
 
   String? get currentProxyGroupName => switch (settings.mode) {
-    OutboundMode.rule => 'PROXY',
     OutboundMode.global => 'GLOBAL',
-    OutboundMode.direct => null,
+    OutboundMode.rule || OutboundMode.direct => null,
   };
 
   ProxyGroup? get currentProxyGroup {
@@ -443,6 +443,9 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> selectProxy(String group, String proxy) async {
+    if (settings.mode != OutboundMode.global || group != 'GLOBAL') {
+      throw StateError('노드는 전역 모드에서만 직접 선택할 수 있습니다.');
+    }
     if (snapshot.isBusy) {
       throw StateError('연결 상태가 바뀐 뒤 노드를 변경해 주세요.');
     }
@@ -612,7 +615,7 @@ class AppController extends ChangeNotifier {
       jsonEncode({
         'proxy-name': proxy,
         'test-url': 'https://www.gstatic.com/generate_204',
-        'timeout': 5000,
+        'timeout': 3000,
       }),
     );
     final envelope = jsonDecode(result) as Map<String, dynamic>;
@@ -690,7 +693,7 @@ class AppController extends ChangeNotifier {
         await bridge.invokeCore('probeCurrentProxyIp', settings.mode.wireName),
       );
     } catch (error) {
-      message = '외부 IP를 확인하지 못했습니다: $error';
+      message = '외부 IP를 확인하지 못했습니다: ${_readableError(error)}';
     } finally {
       loadingPublicIp = false;
       notifyListeners();
@@ -717,8 +720,16 @@ class AppController extends ChangeNotifier {
   }
 
   void _report(Object error) {
-    message = error.toString().replaceFirst('Bad state: ', '');
+    message = _readableError(error);
     notifyListeners();
+  }
+
+  String _readableError(Object error) {
+    if (error is PlatformException) {
+      final detail = error.message?.trim();
+      return detail != null && detail.isNotEmpty ? detail : error.code;
+    }
+    return error.toString().replaceFirst('Bad state: ', '');
   }
 
   @override

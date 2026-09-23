@@ -84,7 +84,7 @@ void main() {
     expect(bridge.selections['GLOBAL'], 'Seoul');
   });
 
-  test('selects a rule node before connecting', () async {
+  test('does not allow selecting a node in rule mode', () async {
     const first =
         'vless://123e4567-e89b-42d3-a456-426614174000@edge-a.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=tcp#Tokyo';
     const second =
@@ -97,11 +97,12 @@ void main() {
     final controller = AppController(bridge);
     await controller.initialize();
 
-    expect(controller.currentProxyGroup?.name, 'PROXY');
-    await controller.selectProxy('PROXY', 'Seoul');
-
-    expect(controller.currentProxyGroup?.selected, 'Seoul');
-    expect(bridge.selections['PROXY'], 'Seoul');
+    expect(controller.currentProxyGroup, isNull);
+    await expectLater(
+      controller.selectProxy('PROXY', 'Seoul'),
+      throwsStateError,
+    );
+    expect(bridge.selections, isEmpty);
   });
 
   test(
@@ -110,9 +111,10 @@ void main() {
       final bridge = _FakeBridge();
       final controller = AppController(bridge)
         ..snapshot = const VpnSnapshot(state: VpnConnectionState.connected)
+        ..settings = const VpnSettings(mode: OutboundMode.global)
         ..proxyGroups = const [
           ProxyGroup(
-            name: 'PROXY',
+            name: 'GLOBAL',
             type: 'Selector',
             selected: 'Tokyo',
             proxies: ['Tokyo', 'Seoul'],
@@ -120,7 +122,7 @@ void main() {
         ]
         ..message = '노드 목록을 불러오지 못했습니다: restarting';
 
-      await controller.selectProxy('PROXY', 'Seoul');
+      await controller.selectProxy('GLOBAL', 'Seoul');
 
       expect(controller.currentProxyGroup?.selected, 'Seoul');
       expect(bridge.invokedMethods, ['changeProxy']);
@@ -150,7 +152,7 @@ void main() {
       throwsStateError,
     );
     expect(controller.settings.mode, OutboundMode.rule);
-    expect(controller.currentProxyGroup?.selected, 'Tokyo');
+    expect(controller.currentProxyGroup, isNull);
   });
 
   testWidgets('node route rebuilds when the selected node changes', (
@@ -181,46 +183,40 @@ void main() {
     expect(find.text('Tokyo'), findsNothing);
   });
 
-  testWidgets(
-    'home exposes the PROXY node and node screen entry in rule mode',
-    (tester) async {
-      var opened = false;
-      final controller = AppController(_FakeBridge())
-        ..settings = const VpnSettings(mode: OutboundMode.rule)
-        ..proxyGroups = const [
-          ProxyGroup(
-            name: 'PROXY',
-            type: 'Selector',
-            selected: 'Seoul',
-            proxies: ['Tokyo', 'Seoul'],
-          ),
-          ProxyGroup(
-            name: 'GLOBAL',
-            type: 'Selector',
-            selected: 'Tokyo',
-            proxies: ['Tokyo', 'Seoul'],
-          ),
-        ];
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: HomeScreen(
-            controller: controller,
-            openProfiles: () {},
-            openProxies: () => opened = true,
-            openConnections: () {},
-          ),
+  testWidgets('home hides node selection in rule mode', (tester) async {
+    final controller = AppController(_FakeBridge())
+      ..settings = const VpnSettings(mode: OutboundMode.rule)
+      ..proxyGroups = const [
+        ProxyGroup(
+          name: 'PROXY',
+          type: 'Selector',
+          selected: 'Seoul',
+          proxies: ['Tokyo', 'Seoul'],
         ),
-      );
-      await tester.drag(find.byType(CustomScrollView), const Offset(0, -650));
-      await tester.pumpAndSettle();
+        ProxyGroup(
+          name: 'GLOBAL',
+          type: 'Selector',
+          selected: 'Tokyo',
+          proxies: ['Tokyo', 'Seoul'],
+        ),
+      ];
 
-      expect(find.text('Seoul'), findsOneWidget);
-      expect(find.textContaining('PROXY'), findsOneWidget);
-      await tester.tap(find.byKey(const Key('selected_node_tile')));
-      expect(opened, isTrue);
-    },
-  );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(
+          controller: controller,
+          openProfiles: () {},
+          openProxies: () {},
+          openConnections: () {},
+        ),
+      ),
+    );
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -650));
+    await tester.pumpAndSettle();
+
+    expect(find.text('규칙에 따라 자동 선택'), findsOneWidget);
+    expect(find.byKey(const Key('selected_node_tile')), findsNothing);
+  });
 
   test('formats traffic values', () {
     expect(formatBytes(1536, perSecond: true), '1.5 KB/s');
@@ -373,7 +369,7 @@ void main() {
     expect(find.byKey(const Key('subscription_status_card')), findsOneWidget);
     expect(find.text('VPN으로 보호됨'), findsOneWidget);
     expect(find.text('규칙'), findsOneWidget);
-    expect(find.text('Seoul'), findsOneWidget);
+    expect(find.text('규칙에 따라 자동 선택'), findsOneWidget);
     expect(find.text('Local Reality'), findsOneWidget);
     expect(find.text('로컬 프로필'), findsOneWidget);
   });
