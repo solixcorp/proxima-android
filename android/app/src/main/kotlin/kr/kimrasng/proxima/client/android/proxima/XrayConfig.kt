@@ -18,6 +18,8 @@ object XrayConfig {
     const val RULE_PROBE_KEY = "__PROXIMA_RULE__"
     private const val RULE_PROBE_TAG = "proxima-rule-probe"
     private const val AUTO_BALANCER_TAG = "proxima-auto"
+    private const val DNS_OUTBOUND_TAG = "proxima-dns"
+    private const val DNS_UPSTREAM_TAG = "proxima-dns-upstream"
 
     fun build(
         profile: StoredProfile,
@@ -27,11 +29,13 @@ object XrayConfig {
         metricsPort: Int? = null,
         probePorts: Map<String, Int> = emptyMap(),
         accessLogPath: String? = null,
+        upstreamDns: String = "1.1.1.1",
     ): XrayRuntimeConfig {
         val sourceLinks = links(content)
         val names = uniqueNodeNames(sourceLinks, profile.name)
         val tags = names.indices.map { index -> "proxima-node-$index-${names[index]}" }
         val nodes = convertedNodes(sourceLinks, tags)
+        val serverDomains = nodeServerDomains(nodes, sourceLinks)
         val selected = VpnSettingsRepositoryHolder.selected(profile.id)
         val requestedName = when (settings.mode) {
             "global" -> selected["GLOBAL"]
@@ -47,6 +51,38 @@ object XrayConfig {
         val outbounds = JSONArray()
         for (index in 0 until nodes.length()) outbounds.put(nodes.getJSONObject(index))
         outbounds.put(JSONObject().put("tag", directTag).put("protocol", "freedom"))
+        outbounds.put(
+            JSONObject()
+                .put("tag", DNS_OUTBOUND_TAG)
+                .put("protocol", "dns")
+                .apply {
+                    if (settings.mode != "direct") {
+                        put(
+                            "streamSettings",
+                            JSONObject().put(
+                                "sockopt",
+                                JSONObject().put("dialerProxy", activeTag),
+                            ),
+                        )
+                    }
+                }
+                .put(
+                    "settings",
+                    JSONObject()
+                        .put("rewriteNetwork", "tcp")
+                        .put("rewriteAddress", if (settings.mode == "direct") upstreamDns else "1.1.1.1")
+                        .put("rewritePort", 53)
+                        // The built-in DNS handles A/AAAA through DoH. Forward
+                        // other record types over TCP instead of leaking UDP.
+                        .put(
+                            "rules",
+                            JSONArray()
+                                .put(JSONObject().put("action", "hijack").put("qType", 1))
+                                .put(JSONObject().put("action", "hijack").put("qType", 28))
+                                .put(JSONObject().put("action", "direct")),
+                        ),
+                ),
+        )
         if (useSubscriptionRules) {
             outbounds.put(JSONObject().put("tag", blockTag).put("protocol", "blackhole"))
         }
@@ -54,21 +90,40 @@ object XrayConfig {
         val policyBalancers = if (useSubscriptionRules) {
             policyBalancers(storedRouting.rules, names, tags)
         } else emptyMap()
-        // Many VLESS servers do not relay UDP DNS. Sending Android's resolver
-        // packets through such a node leaves the VPN established but makes
-        // every hostname fail. Resolve DNS through the protected underlying
-        // network, then route the resulting application connection normally.
+        // DNS packets from the TUN are plain DNS, not DoH. The DNS outbound
+        // hands A/AAAA to the built-in resolver; its DoH connection is then
+        // routed through VLESS as a regular TCP request.
         rules.put(
             JSONObject()
                 .put("type", "field")
                 .put("inboundTag", JSONArray().put("proxima-tun"))
-                .put("network", "udp")
+                .put("network", "tcp,udp")
                 .put("port", "53")
-                .put("outboundTag", directTag),
+                .put("outboundTag", DNS_OUTBOUND_TAG),
+        )
+        rules.put(
+            JSONObject()
+                .put("type", "field")
+                .put("inboundTag", JSONArray().put(DNS_UPSTREAM_TAG))
+                .put("outboundTag", if (settings.mode == "direct") directTag else activeTag),
         )
         if (useSubscriptionRules) {
             storedRouting.rules.forEach { storedRule ->
-                convertRule(storedRule, directTag, blockTag, activeTag, policyBalancers)?.let(rules::put)
+                val rule = convertRule(storedRule, directTag, blockTag, activeTag, policyBalancers)
+                    ?: return@forEach
+                if (storedRule.optString("target") == "direct" && rule.optString("network") != "tcp") {
+                    // A DIRECT UDP rule would still use the blocked physical
+                    // transport. Keep its position and conditions, but send
+                    // only its UDP half through the selected VLESS node.
+                    rules.put(
+                        JSONObject(rule.toString())
+                            .put("network", "udp")
+                            .put("outboundTag", activeTag),
+                    )
+                    if (rule.optString("network") == "udp") return@forEach
+                    rule.put("network", "tcp")
+                }
+                rules.put(rule)
             }
         } else {
             rules.put(
@@ -116,6 +171,7 @@ object XrayConfig {
             )
             .put("outbounds", outbounds)
             .put("routing", routingConfig)
+            .put("dns", dnsConfig(serverDomains, upstreamDns))
         if (useSubscriptionRules) {
             config.put(
                 "observatory",
@@ -277,6 +333,62 @@ object XrayConfig {
             converted.getJSONObject(index).put("tag", names[index])
         }
         return converted
+    }
+
+    private fun nodeServerDomains(nodes: JSONArray, sourceLinks: List<String>): List<String> = buildList {
+        for (index in 0 until nodes.length()) {
+            val outbound = nodes.getJSONObject(index)
+            val convertedAddress = outbound.optJSONObject("settings")
+                ?.optJSONArray("vnext")?.optJSONObject(0)?.optString("address")
+            val address = (convertedAddress?.takeIf { it.isNotBlank() }
+                ?: Uri.parse(sourceLinks[index]).host.orEmpty())
+                .trim().trimEnd('.').lowercase()
+            if (address.isEmpty() || ':' in address || address.all { it.isDigit() || it == '.' }) {
+                continue
+            }
+            if (address !in this) add(address)
+            // Resolve the proxy server through Xray's built-in DNS, which has
+            // a separate physical TCP bootstrap path for these hostnames.
+            val stream = outbound.optJSONObject("streamSettings") ?: JSONObject().also {
+                outbound.put("streamSettings", it)
+            }
+            val sockopt = stream.optJSONObject("sockopt") ?: JSONObject().also {
+                stream.put("sockopt", it)
+            }
+            sockopt.put("domainStrategy", "UseIP")
+        }
+    }
+
+    private fun dnsConfig(serverDomains: List<String>, upstreamDns: String): JSONObject {
+        val servers = JSONArray()
+        if (serverDomains.isNotEmpty()) {
+            val domains = JSONArray(serverDomains.map { "full:$it" })
+            val tcpAddress = if (':' in upstreamDns) "[$upstreamDns]" else upstreamDns
+            servers.put(
+                JSONObject()
+                    .put("address", "tcp+local://$tcpAddress:53")
+                    .put("domains", domains)
+                    .put("skipFallback", true),
+            )
+            servers.put(
+                JSONObject()
+                    .put("address", "https+local://1.1.1.1/dns-query")
+                    .put("domains", domains)
+                    .put("skipFallback", true),
+            )
+            servers.put(
+                JSONObject()
+                    .put("address", "https+local://8.8.8.8/dns-query")
+                    .put("domains", domains)
+                    .put("skipFallback", true),
+            )
+        }
+        servers.put("https://1.1.1.1/dns-query")
+        servers.put("https://8.8.8.8/dns-query")
+        return JSONObject()
+            .put("servers", servers)
+            .put("tag", DNS_UPSTREAM_TAG)
+            .put("disableFallbackIfMatch", true)
     }
 
     private data class StoredRouting(val rules: List<JSONObject>, val testUrl: String)

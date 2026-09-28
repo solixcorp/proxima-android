@@ -113,11 +113,10 @@ class ProximaVpnService : AndroidVpnService() {
             .setMtu(settings.mtu)
             .addAddress(IPV4_ADDRESS, IPV4_PREFIX)
             .addRoute("0.0.0.0", 0)
-            // Use the resolver from the physical network. Some mobile/Wi-Fi
-            // networks block public UDP DNS such as 1.1.1.1 even though their
-            // own resolver works. Xray routes this DNS traffic through the
-            // protected direct outbound before proxying application traffic.
-            .addDnsServer(upstreamDns)
+            // Android sends plain DNS to this address inside the TUN. Xray
+            // intercepts both UDP and TCP port 53 and resolves A/AAAA over
+            // DoH through the selected VLESS node.
+            .addDnsServer(VPN_DNS)
             .apply {
                 if (settings.ipv6) {
                     addAddress(IPV6_ADDRESS, IPV6_PREFIX)
@@ -168,6 +167,7 @@ class ProximaVpnService : AndroidVpnService() {
             metricsPort = metricsPort,
             probePorts = probePorts,
             accessLogPath = accessLog.absolutePath,
+            upstreamDns = upstreamDns,
         )
         XrayCore.run(runtimeConfig.json)
         check(XrayCore.isRunning()) { "Xray 코어가 시작되지 않았습니다." }
@@ -413,6 +413,7 @@ class ProximaVpnService : AndroidVpnService() {
         private const val IPV4_ADDRESS = "172.19.0.1"
         private const val IPV4_PREFIX = 30
         private const val IPV4_DNS = "1.1.1.1"
+        private const val VPN_DNS = "172.19.0.2"
         private const val IPV6_ADDRESS = "fdfe:dcba:9876::1"
         private const val IPV6_PREFIX = 126
         private val LOCAL_BYPASS_ROUTES = listOf(
