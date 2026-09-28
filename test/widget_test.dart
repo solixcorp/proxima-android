@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -637,6 +638,28 @@ rules:
       return const SubscriptionFetchResult(content: link);
     });
     expect(requestedAgents, ['clash.meta', 'ClashForAndroid']);
+    expect(result.content, link);
+  });
+
+  test('retries the legacy client identity after both Clash requests get 403', () async {
+    const link =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=tcp#Tokyo';
+    final requestedAgents = <String>[];
+    final result = await AppController.fetchPreferredSubscription((
+      agent,
+    ) async {
+      requestedAgents.add(agent);
+      if (agent != 'v2rayN/6.45 Proxima/1.0') {
+        throw const HttpException('서버 응답 403');
+      }
+      return const SubscriptionFetchResult(content: link);
+    });
+
+    expect(requestedAgents, [
+      'clash.meta',
+      'ClashForAndroid',
+      'v2rayN/6.45 Proxima/1.0',
+    ]);
     expect(result.content, link);
   });
 

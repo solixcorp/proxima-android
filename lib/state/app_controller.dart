@@ -346,7 +346,15 @@ class AppController extends ChangeNotifier {
     SubscriptionFetchResult? fallback;
     Object? firstRequestError;
     StackTrace? firstRequestStack;
-    for (final userAgent in const ['clash.meta', 'ClashForAndroid']) {
+    var receivedResponse = false;
+    for (final userAgent in const [
+      'clash.meta',
+      'ClashForAndroid',
+      'v2rayN/6.45 Proxima/1.0',
+    ]) {
+      // The legacy identity is only needed when neither Clash request yielded
+      // a usable subscription. Some providers reject the Clash identities.
+      if (userAgent == 'v2rayN/6.45 Proxima/1.0' && fallback != null) break;
       late final SubscriptionFetchResult result;
       try {
         result = await fetch(userAgent);
@@ -355,6 +363,7 @@ class AppController extends ChangeNotifier {
         firstRequestStack ??= stack;
         continue;
       }
+      receivedResponse = true;
       try {
         if (ClashSubscriptionParser.tryParse(result.content) != null) {
           return result;
@@ -366,6 +375,9 @@ class AppController extends ChangeNotifier {
       }
     }
     if (fallback != null) return fallback;
+    if (receivedResponse) {
+      throw const FormatException('구독에서 지원되는 VLESS 링크나 Clash YAML을 찾지 못했습니다.');
+    }
     if (firstRequestError != null) {
       Error.throwWithStackTrace(firstRequestError, firstRequestStack!);
     }
@@ -392,7 +404,7 @@ class AppController extends ChangeNotifier {
       final location = response.headers.value(HttpHeaders.locationHeader);
       await response.drain<void>();
       if (location == null || redirects >= 5) {
-        throw HttpException('구독 주소의 리디렉션이 너무 많습니다.', uri: current);
+        throw const HttpException('구독 주소의 리디렉션이 너무 많습니다.');
       }
       final redirected = current.resolve(location);
       if (redirected.scheme != 'https' || redirected.host.isEmpty) {
@@ -401,7 +413,14 @@ class AppController extends ChangeNotifier {
       current = redirected;
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw HttpException('서버 응답 ${response.statusCode}', uri: current);
+      final statusCode = response.statusCode;
+      await response.drain<void>();
+      if (statusCode == HttpStatus.forbidden) {
+        throw const HttpException(
+          '구독 서버가 접근을 거부했습니다(403). 구독 주소나 계정 상태를 확인해 주세요.',
+        );
+      }
+      throw HttpException('서버 응답 $statusCode');
     }
     final info = _subscriptionInfo(response.headers);
     final chunks = <int>[];

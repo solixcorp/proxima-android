@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/vpn_models.dart';
 import '../state/app_controller.dart';
 import '../widgets/app_page.dart';
+import '../widgets/app_motion.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
@@ -51,6 +52,17 @@ class HomeScreen extends StatelessWidget {
     final proxyGroupName = controller.currentProxyGroupName;
     final activeNode = snapshot.isConnected ? snapshot.activeNode : null;
     final colors = Theme.of(context).colorScheme;
+    final showingActiveConnection =
+        snapshot.isConnected ||
+        snapshot.state == VpnConnectionState.disconnecting;
+    final duration = AppMotion.medium(context);
+    final status = _status(snapshot.state);
+    final description = _description(snapshot.state);
+    final selectedNodeLabel = activeNode != null && activeNode.isNotEmpty
+        ? displayProxyName(activeNode)
+        : proxyGroup == null
+        ? '노드를 선택해 주세요'
+        : displayProxyName(proxyGroup.selected);
     return AppPage(
       title: 'Proxima',
       subtitle: 'VLESS + REALITY Android VPN 클라이언트',
@@ -62,83 +74,157 @@ class HomeScreen extends StatelessWidget {
       },
       children: [
         Card(
-          color: snapshot.isConnected
-              ? colors.primaryContainer
-              : snapshot.state == VpnConnectionState.error
-              ? colors.errorContainer
-              : colors.surfaceContainerHigh,
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  snapshot.isConnected
-                      ? Icons.shield_rounded
-                      : Icons.shield_outlined,
-                  size: 40,
-                  color: snapshot.isConnected
-                      ? colors.onPrimaryContainer
-                      : colors.onSurfaceVariant,
-                ),
-                const SizedBox(height: 22),
-                Text(
-                  _status(snapshot.state),
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _description(snapshot.state),
-                  style: TextStyle(
-                    color: snapshot.isConnected
-                        ? colors.onPrimaryContainer
-                        : colors.onSurfaceVariant,
+          color: Colors.transparent,
+          clipBehavior: Clip.antiAlias,
+          child: AnimatedContainer(
+            duration: duration,
+            curve: Curves.easeInOutCubic,
+            color: showingActiveConnection
+                ? colors.primaryContainer
+                : snapshot.state == VpnConnectionState.error
+                ? colors.errorContainer
+                : colors.surfaceContainerHigh,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AnimatedSwitcher(
+                    duration: duration,
+                    child: Icon(
+                      showingActiveConnection
+                          ? Icons.shield_rounded
+                          : Icons.shield_outlined,
+                      key: ValueKey(showingActiveConnection),
+                      size: 40,
+                      color: showingActiveConnection
+                          ? colors.onPrimaryContainer
+                          : snapshot.state == VpnConnectionState.error
+                          ? colors.onErrorContainer
+                          : colors.onSurfaceVariant,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 24),
-                SizedBox(
-                  width: double.infinity,
-                  child: snapshot.isConnected
-                      ? OutlinedButton.icon(
-                          key: const Key('connect_button'),
-                          onPressed: snapshot.isBusy
-                              ? null
-                              : controller.toggleVpn,
-                          icon: const Icon(Icons.stop_circle_outlined),
-                          label: const Text('연결 해제'),
-                        )
-                      : FilledButton.icon(
-                          key: const Key('connect_button'),
-                          onPressed: snapshot.isBusy
-                              ? null
-                              : controller.toggleVpn,
-                          icon: snapshot.isBusy
-                              ? const SizedBox.square(
-                                  dimension: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
+                  const SizedBox(height: 22),
+                  AnimatedSize(
+                    duration: duration,
+                    alignment: Alignment.topLeft,
+                    child: AnimatedSwitcher(
+                      duration: duration,
+                      layoutBuilder: AppMotion.topStart,
+                      child: Text(
+                        status,
+                        key: ValueKey(status),
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  AnimatedSize(
+                    duration: duration,
+                    alignment: Alignment.topLeft,
+                    child: AnimatedSwitcher(
+                      duration: duration,
+                      layoutBuilder: AppMotion.topStart,
+                      child: Text(
+                        description,
+                        key: ValueKey(description),
+                        style: TextStyle(
+                          color: showingActiveConnection
+                              ? colors.onPrimaryContainer
+                              : snapshot.state == VpnConnectionState.error
+                              ? colors.onErrorContainer
+                              : colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: AnimatedSwitcher(
+                      duration: AppMotion.short(context),
+                      layoutBuilder: (currentChild, previousChildren) => Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          for (final child in previousChildren)
+                            IgnorePointer(child: child),
+                          ?currentChild,
+                        ],
+                      ),
+                      child: KeyedSubtree(
+                        key: ValueKey(showingActiveConnection),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: showingActiveConnection
+                              ? OutlinedButton.icon(
+                                  key: const Key('connect_button'),
+                                  onPressed: snapshot.isBusy
+                                      ? null
+                                      : controller.toggleVpn,
+                                  icon: snapshot.isBusy
+                                      ? const SizedBox.square(
+                                          dimension: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(Icons.stop_circle_outlined),
+                                  label: Text(
+                                    snapshot.isBusy ? '연결 해제 중…' : '연결 해제',
                                   ),
                                 )
-                              : const Icon(Icons.play_arrow_rounded),
-                          label: Text(snapshot.isBusy ? '연결 중…' : '연결'),
+                              : FilledButton.icon(
+                                  key: const Key('connect_button'),
+                                  onPressed: snapshot.isBusy
+                                      ? null
+                                      : controller.toggleVpn,
+                                  icon: snapshot.isBusy
+                                      ? const SizedBox.square(
+                                          dimension: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(Icons.play_arrow_rounded),
+                                  label: Text(snapshot.isBusy ? '연결 중…' : '연결'),
+                                ),
                         ),
-                ),
-              ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
         const SectionHeader('작동 모드'),
         SegmentedButton<OutboundMode>(
+          // Keep every segment's icon slot the same size during selection.
+          showSelectedIcon: false,
+          style: ButtonStyle(animationDuration: AppMotion.medium(context)),
           segments: OutboundMode.values
               .map(
                 (mode) => ButtonSegment<OutboundMode>(
                   value: mode,
                   label: Text(mode.label),
-                  icon: Icon(switch (mode) {
-                    OutboundMode.rule => Icons.rule_rounded,
-                    OutboundMode.global => Icons.public_rounded,
-                    OutboundMode.direct => Icons.arrow_forward_rounded,
-                  }),
+                  icon: SizedBox.square(
+                    dimension: 18,
+                    child: AnimatedSwitcher(
+                      duration: AppMotion.short(context),
+                      child: Icon(
+                        controller.settings.mode == mode
+                            ? Icons.check_rounded
+                            : switch (mode) {
+                                OutboundMode.rule => Icons.rule_rounded,
+                                OutboundMode.global => Icons.public_rounded,
+                                OutboundMode.direct =>
+                                  Icons.arrow_forward_rounded,
+                              },
+                        key: ValueKey(controller.settings.mode == mode),
+                        size: 18,
+                      ),
+                    ),
+                  ),
                 ),
               )
               .toList(),
@@ -188,11 +274,7 @@ class HomeScreen extends StatelessWidget {
               ),
               leading: const Icon(Icons.public_rounded),
               title: Text(
-                activeNode != null && activeNode.isNotEmpty
-                    ? displayProxyName(activeNode)
-                    : proxyGroup == null
-                    ? '노드를 선택해 주세요'
-                    : displayProxyName(proxyGroup.selected),
+                selectedNodeLabel,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -214,7 +296,9 @@ class HomeScreen extends StatelessWidget {
             child: ListTile(
               leading: Icon(Icons.rule_rounded),
               title: Text('규칙에 따라 자동 선택'),
-              subtitle: Text('Clash 구독 또는 링크 목록에 입력한 규칙으로 경로를 선택합니다. 규칙이 없으면 기본 노드를 사용합니다.'),
+              subtitle: Text(
+                'Clash 구독 또는 링크 목록에 입력한 규칙으로 경로를 선택합니다. 규칙이 없으면 기본 노드를 사용합니다.',
+              ),
             ),
           ),
         ],

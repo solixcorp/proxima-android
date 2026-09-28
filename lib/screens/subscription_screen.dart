@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/vpn_models.dart';
 import '../state/app_controller.dart';
 import '../widgets/app_page.dart';
+import '../widgets/app_motion.dart';
 
 class SubscriptionScreen extends StatelessWidget {
   const SubscriptionScreen({super.key, required this.controller});
@@ -195,7 +196,13 @@ class _UsageCard extends StatelessWidget {
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-                child: LinearProgressIndicator(value: percent),
+                child: TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0, end: percent),
+                  duration: AppMotion.medium(context),
+                  curve: Curves.easeInOutCubic,
+                  builder: (context, value, _) =>
+                      LinearProgressIndicator(value: value),
+                ),
               ),
             ],
             if (info.expire case final expire?)

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/vpn_models.dart';
 import '../state/app_controller.dart';
 import '../widgets/app_page.dart';
+import '../widgets/app_motion.dart';
 
 class ProxiesScreen extends StatelessWidget {
   const ProxiesScreen({super.key, required this.controller});
@@ -46,72 +47,81 @@ class ProxiesScreen extends StatelessWidget {
               icon: const Icon(Icons.refresh_rounded),
             ),
           ],
-          children: mode == OutboundMode.rule
-              ? const [
-                  PageEmptyState(
-                    icon: Icons.rule_rounded,
-                    title: '규칙 모드에서는 노드를 직접 선택하지 않습니다',
-                    message: '전역 모드로 전환하면 사용할 노드를 직접 선택할 수 있습니다.',
-                  ),
-                ]
-              : mode == OutboundMode.direct
-              ? const [
-                  PageEmptyState(
-                    icon: Icons.arrow_forward_rounded,
-                    title: '직접 연결 모드입니다',
-                    message: '전역 모드를 선택하면 사용할 노드를 지정할 수 있습니다.',
-                  ),
-                ]
-              : controller.loadingProxies && controller.proxyGroups.isEmpty
-              ? const [
-                  Padding(
-                    padding: EdgeInsets.all(56),
-                    child: Center(child: CircularProgressIndicator()),
-                  ),
-                ]
-              : controller.proxyGroups.isEmpty
-              ? [
-                  PageEmptyState(
-                    icon: Icons.layers_clear_outlined,
-                    title: '선택할 전역 노드가 없습니다',
-                    message: '프로필에 사용할 수 있는 노드가 있는지 확인해 주세요.',
-                  ),
-                ]
-              : [
-                  for (final group in controller.proxyGroups) ...[
-                    Card(
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 10,
-                        ),
-                        leading: CircleAvatar(
-                          child: Icon(
-                            group.type.toLowerCase().contains('urltest')
-                                ? Icons.speed_rounded
-                                : Icons.alt_route_rounded,
+          children: [
+            AnimatedSwitcher(
+              duration: AppMotion.medium(context),
+              layoutBuilder: (currentChild, previousChildren) => Stack(
+                alignment: Alignment.topCenter,
+                children: [...previousChildren, ?currentChild],
+              ),
+              child: mode == OutboundMode.rule
+                  ? const PageEmptyState(
+                      key: ValueKey('rule-mode'),
+                      icon: Icons.rule_rounded,
+                      title: '규칙 모드에서는 노드를 직접 선택하지 않습니다',
+                      message: '전역 모드로 전환하면 사용할 노드를 직접 선택할 수 있습니다.',
+                    )
+                  : mode == OutboundMode.direct
+                  ? const PageEmptyState(
+                      key: ValueKey('direct-mode'),
+                      icon: Icons.arrow_forward_rounded,
+                      title: '직접 연결 모드입니다',
+                      message: '전역 모드를 선택하면 사용할 노드를 지정할 수 있습니다.',
+                    )
+                  : controller.loadingProxies && controller.proxyGroups.isEmpty
+                  ? const Padding(
+                      key: ValueKey('loading-proxies'),
+                      padding: EdgeInsets.all(56),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  : controller.proxyGroups.isEmpty
+                  ? const PageEmptyState(
+                      key: ValueKey('empty-proxies'),
+                      icon: Icons.layers_clear_outlined,
+                      title: '선택할 전역 노드가 없습니다',
+                      message: '프로필에 사용할 수 있는 노드가 있는지 확인해 주세요.',
+                    )
+                  : Column(
+                      key: const ValueKey('proxy-groups'),
+                      children: [
+                        for (final group in controller.proxyGroups) ...[
+                          Card(
+                            key: ValueKey(group.name),
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                                vertical: 10,
+                              ),
+                              leading: CircleAvatar(
+                                child: Icon(
+                                  group.type.toLowerCase().contains('urltest')
+                                      ? Icons.speed_rounded
+                                      : Icons.alt_route_rounded,
+                                ),
+                              ),
+                              title: Text(group.name),
+                              subtitle: Text(
+                                displayProxyName(group.selected),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  ListTileValueText('${group.proxies.length}'),
+                                  const SizedBox(width: 4),
+                                  const Icon(Icons.chevron_right_rounded),
+                                ],
+                              ),
+                              onTap: () => _openGroup(context, group),
+                            ),
                           ),
-                        ),
-                        title: Text(group.name),
-                        subtitle: Text(
-                          displayProxyName(group.selected),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            ListTileValueText('${group.proxies.length}'),
-                            const SizedBox(width: 4),
-                            const Icon(Icons.chevron_right_rounded),
-                          ],
-                        ),
-                        onTap: () => _openGroup(context, group),
-                      ),
+                          const SizedBox(height: 10),
+                        ],
+                      ],
                     ),
-                    const SizedBox(height: 10),
-                  ],
-                ],
+            ),
+          ],
         );
       },
     );
@@ -272,41 +282,59 @@ class _ProxyPickerState extends State<_ProxyPicker> {
                       final selected = proxy == current.selected;
                       final working =
                           _working == proxy || _testing.contains(proxy);
-                      return RadioListTile<String>(
-                        value: proxy,
-                        enabled: !working && !disabled && !_testingAll,
-                        title: Text(
-                          displayProxyName(proxy),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        secondary: working
-                            ? const SizedBox.square(
-                                dimension: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : selected
-                            ? const Icon(Icons.check_circle_rounded)
-                            : IconButton(
-                                tooltip: '지연 시간 측정',
-                                onPressed:
-                                    connected &&
-                                        !disabled &&
-                                        !_testingAll &&
-                                        _testing.isEmpty
-                                    ? () => _test(proxy)
-                                    : null,
-                                icon: const Icon(Icons.network_ping_rounded),
-                              ),
-                        subtitle: switch (_delays[proxy]) {
-                          final int delay => Text(
-                            delay < 0 ? '시간 초과' : '$delay ms',
+                      return AnimatedContainer(
+                        duration: AppMotion.short(context),
+                        curve: Curves.easeInOutCubic,
+                        color: selected
+                            ? Theme.of(context).colorScheme.primaryContainer
+                                  .withValues(alpha: 0.35)
+                            : Colors.transparent,
+                        child: RadioListTile<String>(
+                          value: proxy,
+                          enabled: !working && !disabled && !_testingAll,
+                          title: Text(
+                            displayProxyName(proxy),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          null => null,
-                        },
-                        selected: selected,
+                          secondary: AnimatedSwitcher(
+                            duration: AppMotion.short(context),
+                            child: working
+                                ? const SizedBox.square(
+                                    key: ValueKey('working'),
+                                    dimension: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : selected
+                                ? const Icon(
+                                    Icons.check_circle_rounded,
+                                    key: ValueKey('selected'),
+                                  )
+                                : IconButton(
+                                    key: const ValueKey('test'),
+                                    tooltip: '지연 시간 측정',
+                                    onPressed:
+                                        connected &&
+                                            !disabled &&
+                                            !_testingAll &&
+                                            _testing.isEmpty
+                                        ? () => _test(proxy)
+                                        : null,
+                                    icon: const Icon(
+                                      Icons.network_ping_rounded,
+                                    ),
+                                  ),
+                          ),
+                          subtitle: switch (_delays[proxy]) {
+                            final int delay => Text(
+                              delay < 0 ? '시간 초과' : '$delay ms',
+                            ),
+                            null => null,
+                          },
+                          selected: selected,
+                        ),
                       );
                     },
                   ),

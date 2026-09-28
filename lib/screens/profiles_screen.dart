@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/vpn_models.dart';
 import '../state/app_controller.dart';
 import '../widgets/app_page.dart';
+import '../widgets/app_motion.dart';
 import 'proxima_web_screen.dart';
 import 'qr_scanner_screen.dart';
 
@@ -221,98 +222,144 @@ class ProfilesScreen extends StatelessWidget {
         icon: const Icon(Icons.add_rounded),
         label: const Text('추가'),
       ),
-      children: controller.profiles.isEmpty
-          ? const [
-              PageEmptyState(
-                icon: Icons.description_outlined,
-                title: '저장된 프로필이 없습니다',
-                message: 'VLESS + REALITY 링크를 붙여넣거나 파일에서 가져오세요.',
-              ),
-            ]
-          : [
-              for (final profile in controller.profiles) ...[
-                Builder(
-                  builder: (context) {
-                    final connected = controller.snapshot.isConnected;
-                    final busy = controller.snapshot.isBusy;
-                    final inUse =
-                        connected &&
-                        controller.snapshot.profileId == profile.id;
-                    final selected = !connected && profile.isActive;
-                    final current = inUse || selected;
-                    return Card(
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.fromLTRB(
-                          20,
-                          10,
-                          8,
-                          10,
-                        ),
-                        leading: CircleAvatar(
-                          child: Icon(
-                            current
-                                ? Icons.check_rounded
-                                : Icons.description_outlined,
-                          ),
-                        ),
-                        title: Text(
-                          profile.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(
-                          _subtitle(profile, inUse: inUse, selected: selected),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        onTap: current || busy
-                            ? null
-                            : () => controller.selectProfile(profile.id),
-                        trailing: PopupMenuButton<String>(
-                          onSelected: (value) => switch (value) {
-                            'select' => controller.selectProfile(profile.id),
-                            'refresh' => _refresh(context, profile),
-                            'export' => _export(context, profile),
-                            'edit' => _openEditor(context, profile: profile),
-                            'delete' => _delete(context, profile),
-                            _ => null,
-                          },
-                          itemBuilder: (_) => [
-                            if (!current)
-                              PopupMenuItem(
-                                value: 'select',
-                                enabled: !busy,
-                                child: const Text('이 프로필 사용'),
+      children: [
+        AnimatedSwitcher(
+          duration: AppMotion.medium(context),
+          layoutBuilder: (currentChild, previousChildren) => Stack(
+            alignment: Alignment.topCenter,
+            children: [...previousChildren, ?currentChild],
+          ),
+          child: controller.profiles.isEmpty
+              ? const PageEmptyState(
+                  key: ValueKey('empty-profiles'),
+                  icon: Icons.description_outlined,
+                  title: '저장된 프로필이 없습니다',
+                  message: 'VLESS + REALITY 링크를 붙여넣거나 파일에서 가져오세요.',
+                )
+              : Column(
+                  key: const ValueKey('profile-list'),
+                  children: [
+                    for (final profile in controller.profiles) ...[
+                      Builder(
+                        key: ValueKey(profile.id),
+                        builder: (context) {
+                          final connected = controller.snapshot.isConnected;
+                          final busy = controller.snapshot.isBusy;
+                          final inUse =
+                              connected &&
+                              controller.snapshot.profileId == profile.id;
+                          final selected = !connected && profile.isActive;
+                          final current = inUse || selected;
+                          return Card(
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.fromLTRB(
+                                20,
+                                10,
+                                8,
+                                10,
                               ),
-                            if (profile.sourceUrl?.isNotEmpty == true)
-                              PopupMenuItem(
-                                value: 'refresh',
-                                enabled: !busy,
-                                child: const Text('구독 업데이트'),
+                              leading: AnimatedContainer(
+                                duration: AppMotion.short(context),
+                                curve: Curves.easeInOutCubic,
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: current
+                                      ? Theme.of(context)
+                                            .colorScheme
+                                            .primaryContainer
+                                      : Theme.of(context)
+                                            .colorScheme
+                                            .surfaceContainerHighest,
+                                ),
+                                child: AnimatedSwitcher(
+                                  duration: AppMotion.short(context),
+                                  child: Icon(
+                                    current
+                                        ? Icons.check_rounded
+                                        : Icons.description_outlined,
+                                    key: ValueKey(current),
+                                    color: current
+                                        ? Theme.of(context)
+                                              .colorScheme
+                                              .onPrimaryContainer
+                                        : Theme.of(context)
+                                              .colorScheme
+                                              .onSurfaceVariant,
+                                  ),
+                                ),
                               ),
-                            const PopupMenuItem(
-                              value: 'export',
-                              child: Text('파일로 내보내기'),
+                              title: Text(
+                                profile.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Text(
+                                _subtitle(
+                                  profile,
+                                  inUse: inUse,
+                                  selected: selected,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              onTap: current || busy
+                                  ? null
+                                  : () => controller.selectProfile(profile.id),
+                              trailing: PopupMenuButton<String>(
+                                onSelected: (value) => switch (value) {
+                                  'select' => controller.selectProfile(
+                                    profile.id,
+                                  ),
+                                  'refresh' => _refresh(context, profile),
+                                  'export' => _export(context, profile),
+                                  'edit' => _openEditor(
+                                    context,
+                                    profile: profile,
+                                  ),
+                                  'delete' => _delete(context, profile),
+                                  _ => null,
+                                },
+                                itemBuilder: (_) => [
+                                  if (!current)
+                                    PopupMenuItem(
+                                      value: 'select',
+                                      enabled: !busy,
+                                      child: const Text('이 프로필 사용'),
+                                    ),
+                                  if (profile.sourceUrl?.isNotEmpty == true)
+                                    PopupMenuItem(
+                                      value: 'refresh',
+                                      enabled: !busy,
+                                      child: const Text('구독 업데이트'),
+                                    ),
+                                  const PopupMenuItem(
+                                    value: 'export',
+                                    child: Text('파일로 내보내기'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'edit',
+                                    enabled: !busy,
+                                    child: const Text('편집'),
+                                  ),
+                                  if (!inUse && !busy)
+                                    const PopupMenuItem(
+                                      value: 'delete',
+                                      child: Text('삭제'),
+                                    ),
+                                ],
+                              ),
                             ),
-                            PopupMenuItem(
-                              value: 'edit',
-                              enabled: !busy,
-                              child: const Text('편집'),
-                            ),
-                            if (!inUse && !busy)
-                              const PopupMenuItem(
-                                value: 'delete',
-                                child: Text('삭제'),
-                              ),
-                          ],
-                        ),
+                          );
+                        },
                       ),
-                    );
-                  },
+                      const SizedBox(height: 10),
+                    ],
+                  ],
                 ),
-                const SizedBox(height: 10),
-              ],
-            ],
+        ),
+      ],
     );
   }
 

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/vpn_models.dart';
 import '../state/app_controller.dart';
 import '../widgets/app_page.dart';
+import '../widgets/app_motion.dart';
 
 class ConnectionsScreen extends StatefulWidget {
   const ConnectionsScreen({super.key, required this.controller});
@@ -130,19 +131,31 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              if (controller.loadingConnections &&
-                  controller.connectionOverview.connections.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(48),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (connections.isEmpty)
-                const PageEmptyState(
-                  icon: Icons.check_circle_outline_rounded,
-                  title: '표시할 연결이 없습니다',
-                  message: '앱에서 네트워크 요청을 시작한 뒤 새로고침해 보세요.',
-                )
-              else
+              AnimatedCrossFade(
+                duration: AppMotion.medium(context),
+                crossFadeState: connections.isEmpty
+                    ? CrossFadeState.showFirst
+                    : CrossFadeState.showSecond,
+                firstChild: AnimatedSwitcher(
+                  duration: AppMotion.short(context),
+                  child:
+                      controller.loadingConnections &&
+                          controller.connectionOverview.connections.isEmpty
+                      ? const Padding(
+                          key: ValueKey('loading-connections'),
+                          padding: EdgeInsets.all(48),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      : const PageEmptyState(
+                          key: ValueKey('empty-connections'),
+                          icon: Icons.check_circle_outline_rounded,
+                          title: '표시할 연결이 없습니다',
+                          message: '앱에서 네트워크 요청을 시작한 뒤 새로고침해 보세요.',
+                        ),
+                ),
+                secondChild: const SizedBox.shrink(),
+              ),
+              if (connections.isNotEmpty)
                 for (final connection in connections) ...[
                   _ConnectionCard(connection: connection),
                   const SizedBox(height: 10),

@@ -7,6 +7,7 @@ import '../screens/proxies_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/subscription_screen.dart';
 import '../state/app_controller.dart';
+import '../widgets/app_motion.dart';
 
 class ProximaShell extends StatefulWidget {
   const ProximaShell({super.key, required this.controller});
@@ -17,8 +18,26 @@ class ProximaShell extends StatefulWidget {
   State<ProximaShell> createState() => _ProximaShellState();
 }
 
-class _ProximaShellState extends State<ProximaShell> {
+class _ProximaShellState extends State<ProximaShell>
+    with SingleTickerProviderStateMixin {
   int _index = 0;
+  late final AnimationController _tabFade;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabFade = AnimationController(
+      vsync: this,
+      value: 1,
+      duration: const Duration(milliseconds: 180),
+    );
+  }
+
+  @override
+  void dispose() {
+    _tabFade.dispose();
+    super.dispose();
+  }
 
   static const _destinations = [
     NavigationDestination(
@@ -44,7 +63,15 @@ class _ProximaShellState extends State<ProximaShell> {
   ];
 
   void _select(int index) {
+    if (index == _index) return;
     setState(() => _index = index);
+    if (MediaQuery.maybeOf(context)?.disableAnimations == true) {
+      _tabFade.value = 1;
+    } else {
+      _tabFade
+        ..duration = AppMotion.short(context)
+        ..forward(from: 0);
+    }
     if (index == 3) {
       widget.controller.refreshNetworkInfo();
     }
@@ -92,7 +119,10 @@ class _ProximaShellState extends State<ProximaShell> {
                     onClose: widget.controller.clearMessage,
                   ),
                 Expanded(
-                  child: IndexedStack(index: _index, children: pages),
+                  child: FadeTransition(
+                    opacity: _tabFade,
+                    child: IndexedStack(index: _index, children: pages),
+                  ),
                 ),
               ],
             );

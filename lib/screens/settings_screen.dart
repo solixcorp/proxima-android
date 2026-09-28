@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/vpn_models.dart';
 import '../state/app_controller.dart';
 import '../widgets/app_page.dart';
+import '../widgets/app_motion.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key, required this.controller});
@@ -83,17 +84,25 @@ class SettingsScreen extends StatelessWidget {
                 leading: const Icon(Icons.public_rounded),
                 title: const Text('VPN 외부 IP'),
                 subtitle: Text(_publicIpLabel(controller.publicIp)),
-                trailing: controller.loadingPublicIp
-                    ? const SizedBox.square(
-                        dimension: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : TextButton(
-                        onPressed: controller.snapshot.isConnected
-                            ? controller.probePublicIp
-                            : null,
-                        child: const Text('확인'),
-                      ),
+                trailing: SizedBox(
+                  width: 64,
+                  child: AnimatedSwitcher(
+                    duration: AppMotion.short(context),
+                    child: controller.loadingPublicIp
+                        ? const SizedBox.square(
+                            key: ValueKey('loading-ip'),
+                            dimension: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : TextButton(
+                            key: const ValueKey('check-ip'),
+                            onPressed: controller.snapshot.isConnected
+                                ? controller.probePublicIp
+                                : null,
+                            child: const Text('확인'),
+                          ),
+                  ),
+                ),
               ),
             ],
           ),
