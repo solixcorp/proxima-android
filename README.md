@@ -1,13 +1,13 @@
 # Proxima for Android
 
-Proxima는 VLESS + REALITY 링크에 집중한 Android VPN 클라이언트입니다. 사용자는 공유 링크나 HTTPS 구독을 추가하고, 앱은 이를 Xray JSON 구성으로 변환해 Android `VpnService`의 TUN 인터페이스에서 기기 트래픽을 처리합니다.
+Proxima는 VLESS 링크에 집중한 Android VPN 클라이언트입니다. 사용자는 공유 링크나 HTTPS 구독을 추가하고, 앱은 이를 Xray JSON 구성으로 변환해 Android `VpnService`의 TUN 인터페이스에서 기기 트래픽을 처리합니다.
 
-복잡한 범용 프록시 설정 편집기를 목표로 하지 않습니다. 대신 VLESS + REALITY 프로필 추가, 연결 제어, 노드 선택, 트래픽 확인, 네트워크 진단처럼 Android에서 실제로 자주 쓰는 흐름을 앱 안에서 단순하게 다루는 것을 목표로 합니다.
+복잡한 범용 프록시 설정 편집기를 목표로 하지 않습니다. 대신 VLESS 프로필 추가, 연결 제어, 노드 선택, 트래픽 확인, 네트워크 진단처럼 Android에서 실제로 자주 쓰는 흐름을 앱 안에서 단순하게 다루는 것을 목표로 합니다.
 
 ## 제공 기능
 
-- VLESS + REALITY 공유 링크 추가, 편집, 검증
-- VLESS + REALITY 링크 목록을 제공하는 HTTPS 구독 가져오기
+- VLESS 공유 링크 추가, 편집, 검증
+- VLESS 링크 목록을 제공하는 HTTPS 구독 가져오기
 - VPN 연결 전에도 가능한 Rule/Global 모드의 노드 선택
 - 구독 응답의 `subscription-userinfo` 기반 사용량·남은 트래픽·만료일 및 플랜명 표시
 - 링크를 앱 내부 실행용 Xray 구성으로 자동 변환
@@ -49,16 +49,16 @@ flutter build apk --debug
 
 ## 프로필 주의사항
 
-- `vless://` 형식이며 `security=reality`, REALITY `pbk`가 포함된 링크를 사용합니다. 세부 옵션은 번들된 libXray 변환기로 검증합니다.
-- 여러 VLESS + REALITY 링크는 줄바꿈으로 입력할 수 있으며, 하나의 프로필 안에서 여러 노드로 변환됩니다.
+- `vless://` 형식의 `security=none`, `security=tls`, `security=reality` 링크를 지원합니다. `security`를 생략하면 `none`으로 처리하며, REALITY 사용 시에는 `pbk`가 필요합니다. 세부 옵션은 번들된 libXray 변환기로 검증합니다.
+- 여러 VLESS 링크는 줄바꿈으로 입력할 수 있으며, 하나의 프로필 안에서 여러 노드로 변환됩니다.
 - Clash YAML 구독의 `rules`와 `proxy-groups`는 규칙 모드에서 목적지별 노드 선택에 사용됩니다. VLESS 공유 링크 자체에는 목적지 규칙이 없으므로, 링크 목록에는 `DOMAIN-SUFFIX,example.com,노드 이름` 또는 `IP-CIDR,203.0.113.0/24,노드 이름` 같은 규칙을 줄마다 추가할 수 있습니다. `MATCH,DIRECT`처럼 기본 경로도 지정할 수 있습니다. 규칙을 입력하지 않으면 기본 노드를 사용합니다.
-- REALITY와 호환되는 RAW(TCP), XHTTP, gRPC 전송을 지원합니다. Xray-core에서 REALITY+WebSocket은 지원하지 않습니다.
+- RAW(TCP), XHTTP, gRPC와 일반/TLS WebSocket 전송을 지원합니다. Xray-core에서 REALITY+WebSocket은 지원하지 않습니다.
 - 링크는 앱 내부 저장용 메타데이터로 보관되며 연결 직전에 Xray JSON으로 변환됩니다.
 - 구독 요청은 `clash.meta` User-Agent로 Clash YAML을 우선 요청하고, 규칙 포함 YAML이 아니면 `ClashForAndroid`로 한 번 더 시도합니다. 제공자가 링크 목록만 반환하면 해당 VLESS 노드를 가져옵니다. 비지원 노드는 앱에 가져오지 않습니다.
 - Android TUN은 앱이 생성하고 그 fd를 Xray에 전달합니다. 외부 소켓은 Android `protect()`로 VPN 루프에서 제외합니다.
 - 구독 URL은 자격 증명을 포함할 수 있으므로 화면에는 호스트명만 표시하고 로그에는 URL을 남기지 않습니다.
-- 새로 설치한 앱에는 기본 Direct 프로필이 생성되지 않습니다. VLESS + REALITY 링크를 먼저 추가해 주세요.
-- 이전 버전의 범용 YAML 프로필은 이 버전에서 연결할 수 없습니다. 해당 프로필을 삭제하고 VLESS + REALITY 링크를 다시 추가해 주세요.
+- 새로 설치한 앱에는 기본 Direct 프로필이 생성되지 않습니다. VLESS 링크를 먼저 추가해 주세요.
+- 이전 버전의 범용 YAML 프로필은 이 버전에서 연결할 수 없습니다. 해당 프로필을 삭제하고 VLESS 링크를 다시 추가해 주세요.
 
 ## 라이선스
 

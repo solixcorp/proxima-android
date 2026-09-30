@@ -111,7 +111,7 @@ class SettingsScreen extends StatelessWidget {
         const Card(
           child: ListTile(
             leading: Icon(Icons.cloud_sync_outlined),
-            title: Text('VLESS + REALITY 구독'),
+            title: Text('VLESS 구독'),
             subtitle: Text('노드와 HTTPS 구독은 프로필 탭에서 추가·업데이트합니다.'),
           ),
         ),

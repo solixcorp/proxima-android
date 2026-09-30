@@ -3,4 +3,35 @@
     <string name="app_name">Proxima</string>
     <string name="quick_settings_tile_label">Proxima VPN</string>
     <string name="app_widget_label">Proxima VPN 위젯</string>
+    <string name="widget_description">홈 화면에서 VPN 연결 상태를 확인하고 연결을 제어합니다.</string>
+    <string name="widget_brand">PROXIMA</string>
+    <string name="widget_off">연결 안 됨</string>
+    <string name="widget_on">연결됨</string>
+    <string name="widget_connecting">연결 중…</string>
+    <string name="widget_disconnecting">해제 중…</string>
+    <string name="widget_error">연결 실패</string>
+    <string name="widget_setup">설정 필요</string>
+    <string name="widget_choose_profile">앱에서 프로필을 추가하세요</string>
+    <string name="widget_permission">앱에서 VPN 권한을 허용하세요</string>
+    <string name="widget_error_detail">앱에서 연결 상태를 확인하세요</string>
+    <string name="widget_ready">전원 버튼으로 연결하세요</string>
+    <string name="widget_preparing">서버에 연결하고 있습니다</string>
+    <string name="widget_stopping">연결을 종료하고 있습니다</string>
+    <string name="widget_connect">연결</string>
+    <string name="widget_disconnect">연결 해제</string>
+    <string name="widget_cancel">취소</string>
+    <string name="widget_wait">잠시만요</string>
+    <string name="widget_retry">다시 연결</string>
+    <string name="widget_open">앱 열기</string>
+    <string name="widget_rule">규칙 모드</string>
+    <string name="widget_global">전역 모드</string>
+    <string name="widget_direct">직접 모드</string>
+    <string name="widget_auto_node">자동 노드 선택</string>
+    <string name="widget_direct_detail">프록시 없이 직접 연결</string>
+    <string name="widget_download">↓ 다운로드</string>
+    <string name="widget_upload">↑ 업로드</string>
+    <string name="widget_elapsed_empty">연결 시간 —</string>
+    <string name="widget_elapsed_format" formatted="false">연결 시간 %s</string>
+    <string name="widget_speed_placeholder">—</string>
+    <string name="widget_button_description">%1$s, %2$s</string>
 </resources>

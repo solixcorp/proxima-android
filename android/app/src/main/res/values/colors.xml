@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="widget_background_color">#F3F4F9</color>
-    <color name="widget_stroke_color">#E0E2EC</color>
-    <color name="widget_text_primary">#191C20</color>
-    <color name="widget_text_secondary">#44474E</color>
+    <color name="widget_background_color">#171819</color>
+    <color name="widget_stroke_color">#343638</color>
+    <color name="widget_text_primary">#F4F3EF</color>
+    <color name="widget_text_secondary">#A9ABA8</color>
+    <color name="widget_accent">#EAE9E4</color>
+    <color name="widget_on_accent">#171819</color>
+    <color name="widget_connected">#F4F3EF</color>
+    <color name="widget_connected_surface">#2B2D2E</color>
+    <color name="widget_surface">#27292A</color>
+    <color name="widget_error">#E4E0DA</color>
+    <color name="widget_ripple">#33FFFFFF</color>
 </resources>

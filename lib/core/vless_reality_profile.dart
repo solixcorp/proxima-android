@@ -2,11 +2,8 @@ import 'dart:convert';
 
 import 'clash_subscription.dart';
 
-/// A single VLESS share link using REALITY transport settings.
-///
-/// Proxima deliberately accepts a narrow link format.  This keeps every saved
-/// profile compatible with the bundled Xray core instead of accepting a
-/// broader link and failing later while connecting.
+/// A VLESS share link using plain, TLS, or REALITY transport security.
+/// The original link is preserved for the bundled libXray converter.
 class VlessRealityProfile {
   static const routingMetadataPrefix = '# proxima-routing-rules:';
   static const inlineRulesPrefix = '# proxima-inline-rules:';
@@ -22,6 +19,7 @@ class VlessRealityProfile {
     required this.fingerprint,
     required this.flow,
     required this.network,
+    this.security = 'reality',
     this.path,
     this.host,
     this.serviceName,
@@ -49,15 +47,20 @@ class VlessRealityProfile {
 
     String query(String key, {String fallback = ''}) =>
         uri.queryParameters[key]?.trim() ?? fallback;
-    if (query('security').toLowerCase() != 'reality') {
-      throw const FormatException('VLESS + REALITY 링크만 지원합니다.');
+    final rawSecurity = query('security').toLowerCase();
+    final security = rawSecurity.isEmpty ? 'none' : rawSecurity;
+    if (!const {'none', 'tls', 'reality'}.contains(security)) {
+      throw const FormatException('security는 none, tls, reality만 지원합니다.');
     }
     final publicKey = query('pbk');
-    if (publicKey.isEmpty || !_realityPublicKey.hasMatch(publicKey)) {
+    if (security == 'reality' &&
+        (publicKey.isEmpty || !_realityPublicKey.hasMatch(publicKey))) {
       throw const FormatException('REALITY public key(pbk)를 확인해 주세요.');
     }
     final shortId = query('sid');
-    if (shortId.isNotEmpty && !_shortId.hasMatch(shortId)) {
+    if (security == 'reality' &&
+        shortId.isNotEmpty &&
+        !_shortId.hasMatch(shortId)) {
       throw const FormatException('REALITY short ID(sid)를 확인해 주세요.');
     }
 
@@ -66,10 +69,12 @@ class VlessRealityProfile {
       'tcp' || 'raw' => 'tcp',
       'xhttp' || 'splithttp' => 'xhttp',
       'grpc' => 'grpc',
-      'ws' || 'websocket' => throw const FormatException(
-        'REALITY는 WebSocket 전송을 지원하지 않습니다.',
+      'ws' || 'websocket' when security == 'reality' =>
+        throw const FormatException('REALITY는 WebSocket 전송을 지원하지 않습니다.'),
+      'ws' || 'websocket' => 'ws',
+      _ => throw const FormatException(
+        'RAW(TCP), XHTTP, gRPC, WebSocket 전송 방식만 지원합니다.',
       ),
-      _ => throw const FormatException('RAW(TCP), XHTTP, gRPC 전송 방식만 지원합니다.'),
     };
     final path = query('path');
     final host = query('host');
@@ -79,7 +84,9 @@ class VlessRealityProfile {
     final serverName = query('sni');
     return VlessRealityProfile(
       sourceLink: uri.toString(),
-      name: fragment.isEmpty ? 'VLESS REALITY · ${uri.host}' : fragment,
+      name: fragment.isEmpty
+          ? 'VLESS${security == 'reality' ? ' REALITY' : ''} · ${uri.host}'
+          : fragment,
       server: uri.host,
       port: uri.port,
       uuid: uri.userInfo,
@@ -89,6 +96,7 @@ class VlessRealityProfile {
       fingerprint: query('fp', fallback: 'chrome'),
       flow: query('flow'),
       network: network,
+      security: security,
       path: path.isEmpty ? null : path,
       host: host.isEmpty ? null : host,
       serviceName: serviceName.isEmpty ? null : serviceName,
@@ -106,6 +114,7 @@ class VlessRealityProfile {
   final String fingerprint;
   final String flow;
   final String network;
+  final String security;
   final String? path;
   final String? host;
   final String? serviceName;
@@ -261,14 +270,23 @@ class VlessRealityProfile {
     '    port: $port',
     '    uuid: ${_yaml(uuid)}',
     '    udp: true',
-    '    tls: true',
-    '    servername: ${_yaml(serverName)}',
-    '    client-fingerprint: ${_yaml(fingerprint)}',
+    '    tls: ${security != 'none'}',
+    if (security != 'none') ...[
+      '    servername: ${_yaml(serverName)}',
+      '    client-fingerprint: ${_yaml(fingerprint)}',
+    ],
     '    network: $network',
-    '    reality-opts:',
-    '      public-key: ${_yaml(publicKey)}',
-    if (shortId.isNotEmpty) '      short-id: ${_yaml(shortId)}',
+    if (security == 'reality') ...[
+      '    reality-opts:',
+      '      public-key: ${_yaml(publicKey)}',
+      if (shortId.isNotEmpty) '      short-id: ${_yaml(shortId)}',
+    ],
     if (flow.isNotEmpty) '    flow: ${_yaml(flow)}',
+    if (network == 'ws') ...[
+      '    ws-opts:',
+      '      path: ${_yaml(path ?? '/')}',
+      if (host != null) ...['      headers:', '        Host: ${_yaml(host!)}'],
+    ],
     if (network == 'xhttp' && path != null) ...[
       '    xhttp-opts:',
       '      path: ${_yaml(path!)}',
@@ -308,7 +326,7 @@ class VlessRealityProfile {
   static String linkFromSubscription(String value) {
     final links = linksFromSubscription(value);
     if (links.length != 1) {
-      throw const FormatException('한 프로필에는 VLESS REALITY 링크 하나만 사용할 수 있습니다.');
+      throw const FormatException('한 프로필에는 VLESS 링크 하나만 사용할 수 있습니다.');
     }
     return links.single;
   }
@@ -359,7 +377,7 @@ class VlessRealityProfile {
     );
     if (fromFileName != null) return fromFileName;
 
-    return _providerFromHost(profiles.first.server) ?? 'VLESS REALITY';
+    return _providerFromHost(profiles.first.server) ?? 'VLESS';
   }
 
   static bool isAutomaticProfileName(String value) {
@@ -369,6 +387,7 @@ class VlessRealityProfile {
     );
     return normalized.isEmpty ||
         normalized == 'vless' ||
+        value.trim().toLowerCase().startsWith('vless · ') ||
         normalized == 'vless reality' ||
         normalized.startsWith('vless reality ');
   }

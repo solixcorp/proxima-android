@@ -263,7 +263,7 @@ class AppController extends ChangeNotifier {
       ].join('\n');
     }
     throw const FormatException(
-      '이전 Mihomo YAML 프로필입니다. VLESS + REALITY 링크로 새 프로필을 추가해 주세요.',
+      '이전 Mihomo YAML 프로필입니다. VLESS 링크로 새 프로필을 추가해 주세요.',
     );
   }
 
@@ -291,7 +291,7 @@ class AppController extends ChangeNotifier {
 
     final uri = Uri.tryParse(payload);
     if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
-      throw const FormatException('이 QR 코드에서 VLESS + REALITY 정보를 찾지 못했습니다.');
+      throw const FormatException('이 QR 코드에서 VLESS 정보를 찾지 못했습니다.');
     }
 
     // Preserve the existing behavior for landing URLs that embed the actual
@@ -313,7 +313,7 @@ class AppController extends ChangeNotifier {
       subscription.content,
     );
     if (links.isEmpty) {
-      throw const FormatException('구독에서 VLESS + REALITY 노드를 찾지 못했습니다.');
+      throw const FormatException('구독에서 VLESS 노드를 찾지 못했습니다.');
     }
     return QrProfileResult(
       content: subscription.content,

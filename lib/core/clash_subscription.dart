@@ -110,9 +110,7 @@ class ClashSubscriptionParser {
       realProxyNames.add(name);
     }
     if (links.isEmpty) {
-      throw const FormatException(
-        'Clash 구독에서 지원되는 VLESS + REALITY 노드를 찾지 못했습니다.',
-      );
+      throw const FormatException('Clash 구독에서 지원되는 VLESS 노드를 찾지 못했습니다.');
     }
 
     final groups = <String, Map<String, Object?>>{};
@@ -192,15 +190,22 @@ class ClashSubscriptionParser {
     final server = proxy['server']?.toString().trim() ?? '';
     final port = _integer(proxy['port']);
     final publicKey = reality?['public-key']?.toString().trim() ?? '';
-    if (uuid.isEmpty || server.isEmpty || port == null || publicKey.isEmpty) {
+    if (uuid.isEmpty ||
+        server.isEmpty ||
+        port == null ||
+        (reality != null && publicKey.isEmpty)) {
       return null;
     }
     final network = proxy['network']?.toString().trim().toLowerCase();
     final parameters = <String, String>{
       'encryption': 'none',
-      'security': 'reality',
+      'security': reality != null
+          ? 'reality'
+          : proxy['tls'] == true
+          ? 'tls'
+          : 'none',
       'type': network == null || network.isEmpty ? 'tcp' : network,
-      'pbk': publicKey,
+      if (reality != null) 'pbk': publicKey,
       'sni': proxy['servername']?.toString().trim().isNotEmpty == true
           ? proxy['servername'].toString().trim()
           : server,
@@ -216,6 +221,30 @@ class ClashSubscriptionParser {
     add('flow', 'flow');
     final shortId = reality?['short-id']?.toString().trim();
     if (shortId != null && shortId.isNotEmpty) parameters['sid'] = shortId;
+    final alpn = _list(proxy['alpn']);
+    if (alpn != null && alpn.isNotEmpty) parameters['alpn'] = alpn.join(',');
+    if (proxy['skip-cert-verify'] == true) parameters['allowInsecure'] = '1';
+    final ws = _stringMap(proxy['ws-opts']);
+    final xhttp = _stringMap(proxy['xhttp-opts']);
+    final grpc = _stringMap(proxy['grpc-opts']);
+    void addOption(String key, Object? value) {
+      final text = value?.toString();
+      if (text != null && text.isNotEmpty) parameters[key] = text;
+    }
+
+    if (network == 'ws' || network == 'websocket') {
+      addOption('path', ws?['path']);
+      final headers = _stringMap(ws?['headers']);
+      for (final entry in headers?.entries ?? <MapEntry<String, Object?>>[]) {
+        if (entry.key.toLowerCase() == 'host') addOption('host', entry.value);
+      }
+    } else if (network == 'xhttp' || network == 'splithttp') {
+      addOption('path', xhttp?['path']);
+      addOption('host', xhttp?['host']);
+      addOption('mode', xhttp?['mode']);
+    } else if (network == 'grpc') {
+      addOption('serviceName', grpc?['grpc-service-name']);
+    }
     final name = proxy['name']?.toString().trim() ?? server;
     return Uri(
       scheme: 'vless',

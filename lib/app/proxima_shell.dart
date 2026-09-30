@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../screens/home_screen.dart';
@@ -187,11 +189,43 @@ class _AppMark extends StatelessWidget {
   }
 }
 
-class _MessageBanner extends StatelessWidget {
+class _MessageBanner extends StatefulWidget {
   const _MessageBanner({required this.message, required this.onClose});
 
   final String message;
   final VoidCallback onClose;
+
+  @override
+  State<_MessageBanner> createState() => _MessageBannerState();
+}
+
+class _MessageBannerState extends State<_MessageBanner> {
+  Timer? _dismissTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleDismiss();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MessageBanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.message != widget.message) {
+      _scheduleDismiss();
+    }
+  }
+
+  void _scheduleDismiss() {
+    _dismissTimer?.cancel();
+    _dismissTimer = Timer(const Duration(seconds: 3), () => widget.onClose());
+  }
+
+  @override
+  void dispose() {
+    _dismissTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -202,10 +236,14 @@ class _MessageBanner extends StatelessWidget {
         bottom: false,
         child: ListTile(
           leading: Icon(Icons.error_outline, color: colors.onErrorContainer),
-          title: Text(message, maxLines: 2, overflow: TextOverflow.ellipsis),
+          title: Text(
+            widget.message,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
           trailing: IconButton(
             tooltip: '닫기',
-            onPressed: onClose,
+            onPressed: widget.onClose,
             icon: const Icon(Icons.close),
           ),
         ),

@@ -57,7 +57,7 @@ object XrayCore {
      * outbounds. Unlike testXray, this is safe while the managed core is running.
      */
     fun convertShareLinks(links: List<String>): JSONArray {
-        require(links.isNotEmpty()) { "VLESS + REALITY 노드를 찾을 수 없습니다." }
+        require(links.isNotEmpty()) { "VLESS 노드를 찾을 수 없습니다." }
         val response = invoke(
             "convertShareLinksToXrayJson",
             JSONObject().put("text", links.joinToString("\n")),

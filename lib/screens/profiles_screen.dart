@@ -108,7 +108,7 @@ class ProfilesScreen extends StatelessWidget {
             ),
             ListTile(
               leading: const Icon(Icons.vpn_key_outlined),
-              title: const Text('VLESS + REALITY 링크'),
+              title: const Text('VLESS 링크'),
               subtitle: const Text('공유 링크 또는 여러 링크를 붙여넣습니다.'),
               onTap: () {
                 Navigator.pop(sheetContext);
@@ -118,7 +118,7 @@ class ProfilesScreen extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.qr_code_scanner_rounded),
               title: const Text('QR 코드 스캔'),
-              subtitle: const Text('카메라로 VLESS + REALITY 링크를 읽습니다.'),
+              subtitle: const Text('카메라로 VLESS 링크를 읽습니다.'),
               onTap: () {
                 Navigator.pop(sheetContext);
                 _scanQr(context);
@@ -215,7 +215,7 @@ class ProfilesScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return AppPage(
       title: '프로필',
-      subtitle: 'VLESS + REALITY 링크와 HTTPS 구독을 관리합니다.',
+      subtitle: 'VLESS 링크와 HTTPS 구독을 관리합니다.',
       onRefresh: controller.reloadProfiles,
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showAddOptions(context),
@@ -234,7 +234,7 @@ class ProfilesScreen extends StatelessWidget {
                   key: ValueKey('empty-profiles'),
                   icon: Icons.description_outlined,
                   title: '저장된 프로필이 없습니다',
-                  message: 'VLESS + REALITY 링크를 붙여넣거나 파일에서 가져오세요.',
+                  message: 'VLESS 링크를 붙여넣거나 파일에서 가져오세요.',
                 )
               : Column(
                   key: const ValueKey('profile-list'),
@@ -521,9 +521,9 @@ class _ProfileEditorState extends State<_ProfileEditor> {
                   height: 1.35,
                 ),
                 decoration: const InputDecoration(
-                  labelText: 'VLESS + REALITY 링크 목록',
+                  labelText: 'VLESS 링크 목록',
                   hintText:
-                      'vless://uuid@server:443?...&security=reality...\n'
+                      'vless://uuid@server:8080?security=none&type=ws&path=%2F\n'
                       '여러 노드는 줄바꿈으로 붙여넣을 수 있습니다.\n'
                       '선택: DOMAIN-SUFFIX,example.com,노드 이름\n'
                       '선택: IP-CIDR,203.0.113.0/24,노드 이름',

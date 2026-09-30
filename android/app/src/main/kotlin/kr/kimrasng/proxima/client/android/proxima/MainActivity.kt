@@ -56,7 +56,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 "saveProfile" -> {
                     val content = requiredString(call, "content")
                     require(VlessRealityConfig.isGeneratedProfile(content)) {
-                        "VLESS + REALITY 링크로 만든 프로필만 저장할 수 있습니다."
+                        "VLESS 링크로 만든 프로필만 저장할 수 있습니다."
                     }
                     result.success(
                         profiles.save(
@@ -164,7 +164,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         require(VpnService.prepare(this) == null) { "VPN permission is required" }
         val profile = profiles.profile(profileId) ?: error("Profile not found")
         require(VlessRealityConfig.isGeneratedProfile(profiles.readContent(profileId))) {
-            "VLESS + REALITY 링크로 만든 프로필만 연결할 수 있습니다."
+            "VLESS 링크로 만든 프로필만 연결할 수 있습니다."
         }
         profiles.select(profileId)
         val state = VpnRuntime.snapshot()

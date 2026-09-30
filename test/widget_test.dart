@@ -724,12 +724,16 @@ rules:
     expect(VlessRealityProfile.normalizeLinkInput(encoded), link);
   });
 
-  test('rejects non-REALITY VLESS links', () {
+  test('accepts TLS VLESS links without a REALITY key', () {
+    final profile = VlessRealityProfile.parse(
+      'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=tls',
+    );
+    expect(profile.security, 'tls');
+    expect(profile.publicKey, isEmpty);
+    expect(profile.toMihomoYaml(profileName: 'TLS'), contains('tls: true'));
     expect(
-      () => VlessRealityProfile.parse(
-        'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=tls',
-      ),
-      throwsFormatException,
+      profile.toMihomoYaml(profileName: 'TLS'),
+      isNot(contains('reality-opts:')),
     );
   });
 

@@ -65,7 +65,7 @@ class HomeScreen extends StatelessWidget {
         : displayProxyName(proxyGroup.selected);
     return AppPage(
       title: 'Proxima',
-      subtitle: 'VLESS + REALITY Android VPN 클라이언트',
+      subtitle: 'VLESS Android VPN 클라이언트',
       onRefresh: () async {
         await controller.reloadProfiles();
         if (controller.settings.mode != OutboundMode.direct) {

@@ -3,7 +3,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../models/vpn_models.dart';
 
-/// Captures one VLESS + REALITY share link and returns it to the profile flow.
+/// Captures one VLESS share link and returns it to the profile flow.
 class QrScannerScreen extends StatefulWidget {
   const QrScannerScreen({super.key, required this.resolvePayload});
 

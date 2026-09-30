@@ -9,6 +9,10 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
+import android.util.Log
+import android.util.SizeF
+import android.view.View
 import android.widget.RemoteViews
 import java.util.Locale
 
@@ -45,6 +49,8 @@ class ProximaWidgetProvider : AppWidgetProvider() {
     private fun toggleVpn(context: Context) {
         val snapshot = VpnRuntime.snapshot()
         val state = snapshot["state"]?.toString()
+
+        if (state == "disconnecting") return
 
         if (state == "connected" || state == "connecting") {
             val stopIntent = Intent(context, ProximaVpnService::class.java).apply {
@@ -93,187 +99,175 @@ class ProximaWidgetProvider : AppWidgetProvider() {
         ) {
             try {
                 val options = appWidgetManager.getAppWidgetOptions(appWidgetId)
-                val minWidth = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH) ?: 0
-                val minHeight = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT) ?: 0
-                val isLarge = minHeight >= 118
-                val isWide = !isLarge && minWidth >= 220 && minHeight >= 64
-                val layoutId = when {
-                    isLarge -> R.layout.widget_proxima_large
-                    isWide -> R.layout.widget_proxima_wide
-                    else -> R.layout.widget_proxima_compact
-                }
-                val views = RemoteViews(context.packageName, layoutId)
-
                 val snapshot = VpnRuntime.snapshot()
-                val state = snapshot["state"]?.toString() ?: "disconnected"
-                val profileName = snapshot["profileName"]?.toString()
-                    ?: ProfileRepository(context).active()?.name
-                views.setTextViewText(R.id.widget_title, profileName ?: "Proxima VPN")
-                val activeNode = snapshot["activeNode"]?.toString()
-                // A widget can be refreshed before the process recreates the
-                // in-memory snapshot. Fall back to persisted settings so a
-                // stale node name can never disguise RULE mode as GLOBAL.
-                val activeMode = snapshot["activeMode"]?.toString()
+                val profile = ProfileRepository(context).active()
+                val mode = snapshot["activeMode"]?.toString()
                     ?: VpnSettingsRepository(context).load().mode
-                val startedAt = (snapshot["startedAt"] as? Number)?.toLong() ?: 0L
-                val uploadSpeed = (snapshot["uploadSpeed"] as? Number)?.toLong() ?: 0L
-                val downloadSpeed = (snapshot["downloadSpeed"] as? Number)?.toLong() ?: 0L
-
-                // Launch MainActivity when tapping container
-                val launchIntent = Intent(context, MainActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                }
-                val pendingLaunch = PendingIntent.getActivity(
-                    context,
-                    0,
-                    launchIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                views.setOnClickPendingIntent(R.id.widget_container, pendingLaunch)
-
-                // Toggle VPN when tapping button
-                val toggleIntent = Intent(context, ProximaWidgetProvider::class.java).apply {
-                    action = ACTION_TOGGLE_VPN
-                }
-                val pendingToggle = PendingIntent.getBroadcast(
-                    context,
-                    1,
-                    toggleIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                views.setOnClickPendingIntent(R.id.widget_button, pendingToggle)
-
-                val displayNode = when {
-                    state == "connected" && activeMode == "rule" -> "규칙 모드 · 자동 선택"
-                    state == "connected" && activeMode == "direct" -> "직접 모드"
-                    state == "connected" && activeMode == "global" && !activeNode.isNullOrEmpty() ->
-                        "전역 모드 · $activeNode"
-                    !activeNode.isNullOrEmpty() && !profileName.isNullOrEmpty() -> "$profileName · $activeNode"
-                    !activeNode.isNullOrEmpty() -> activeNode
-                    !profileName.isNullOrEmpty() -> profileName
-                    else -> "연결되지 않음"
-                }
-
-                if (isLarge) {
-                    // Large widgets need an explicit state in their spacious
-                    // centre area.  Leaving the last profile/node name here
-                    // made a disconnected widget look as though it was still
-                    // routing through that node.
-                    when (state) {
-                        "connected" -> {
-                            views.setViewVisibility(R.id.widget_traffic_layout, android.view.View.VISIBLE)
-                            views.setViewVisibility(R.id.widget_traffic_down, android.view.View.VISIBLE)
-                            views.setTextViewText(R.id.widget_node, displayNode)
-                            views.setTextViewText(R.id.widget_uptime, "⏱ ${formatUptime(startedAt)}")
-                            views.setTextViewText(R.id.widget_traffic_up, "↑ ${formatBytes(uploadSpeed)}")
-                            views.setTextViewText(R.id.widget_traffic_down, "↓ ${formatBytes(downloadSpeed)}")
-                            views.setTextViewText(R.id.widget_button, "연결 해제")
-                            views.setInt(
-                                R.id.widget_button,
-                                "setBackgroundResource",
-                                R.drawable.widget_button_connected
-                            )
-                        }
-                        "connecting" -> {
-                            views.setViewVisibility(R.id.widget_traffic_layout, android.view.View.VISIBLE)
-                            views.setViewVisibility(R.id.widget_traffic_down, android.view.View.GONE)
-                            views.setTextViewText(R.id.widget_node, "VPN 연결 중")
-                            views.setTextViewText(R.id.widget_traffic_up, "안전한 연결을 준비하고 있습니다")
-                            views.setTextViewText(R.id.widget_button, "연결하는 중…")
-                            views.setInt(
-                                R.id.widget_button,
-                                "setBackgroundResource",
-                                R.drawable.widget_button_disconnected
-                            )
-                        }
-                        else -> {
-                            views.setViewVisibility(R.id.widget_traffic_layout, android.view.View.VISIBLE)
-                            views.setViewVisibility(R.id.widget_traffic_down, android.view.View.GONE)
-                            views.setTextViewText(R.id.widget_node, "VPN 꺼짐")
-                            views.setTextViewText(R.id.widget_uptime, profileName ?: "연결할 프로필을 선택하세요")
-                            views.setTextViewText(R.id.widget_traffic_up, "안전한 연결을 시작하세요")
-                            views.setTextViewText(R.id.widget_button, "연결")
-                            views.setInt(
-                                R.id.widget_button,
-                                "setBackgroundResource",
-                                R.drawable.widget_button_disconnected
-                            )
-                        }
-                    }
-                } else if (isWide) {
-                    when (state) {
-                        "connected" -> {
-                            views.setViewVisibility(R.id.widget_traffic_layout, android.view.View.VISIBLE)
-                            views.setTextViewText(R.id.widget_status, displayNode)
-                            views.setTextViewText(R.id.widget_traffic_up, "↑ ${formatBytes(uploadSpeed)}")
-                            views.setTextViewText(R.id.widget_traffic_down, "↓ ${formatBytes(downloadSpeed)}")
-                            views.setTextViewText(R.id.widget_button, "연결 해제")
-                            views.setInt(
-                                R.id.widget_button,
-                                "setBackgroundResource",
-                                R.drawable.widget_button_connected,
-                            )
-                        }
-                        "connecting" -> {
-                            views.setViewVisibility(R.id.widget_traffic_layout, android.view.View.GONE)
-                            views.setTextViewText(R.id.widget_status, "연결하는 중…")
-                            views.setTextViewText(R.id.widget_button, "대기")
-                            views.setInt(
-                                R.id.widget_button,
-                                "setBackgroundResource",
-                                R.drawable.widget_button_disconnected,
-                            )
-                        }
-                        else -> {
-                            views.setViewVisibility(R.id.widget_traffic_layout, android.view.View.GONE)
-                            views.setTextViewText(R.id.widget_status, "VPN 꺼짐")
-                            views.setTextViewText(R.id.widget_button, "연결")
-                            views.setInt(
-                                R.id.widget_button,
-                                "setBackgroundResource",
-                                R.drawable.widget_button_disconnected,
-                            )
-                        }
-                    }
+                val state = snapshot["state"]?.toString() ?: "disconnected"
+                val needsSetup = state !in setOf("connected", "connecting", "disconnecting") &&
+                    (profile == null || VpnService.prepare(context) != null)
+                val fontScale = context.resources.configuration.fontScale.coerceAtLeast(1f)
+                fun render(layout: Int) = createViews(context, layout, snapshot, profile?.name, mode, needsSetup)
+                val views = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    // Let the launcher select a layout for its actual bounds, including rotation.
+                    RemoteViews(mapOf(
+                        SizeF(180f, 56f) to render(R.layout.widget_proxima_compact),
+                        SizeF(280f * fontScale, 96f * fontScale) to render(R.layout.widget_proxima_wide),
+                        SizeF(240f * fontScale, 200f * fontScale) to render(R.layout.widget_proxima_large),
+                    ))
                 } else {
-                    // 세로 1칸 컴팩트 레이아웃 (원래 전 모습)
-                    when (state) {
-                        "connected" -> {
-                            val statusText = "보호됨 · $displayNode"
-                            views.setTextViewText(R.id.widget_status, statusText)
-                            views.setTextViewText(R.id.widget_button, "연결 해제")
-                            views.setInt(
-                                R.id.widget_button,
-                                "setBackgroundResource",
-                                R.drawable.widget_button_connected
-                            )
-                        }
-                        "connecting" -> {
-                            views.setTextViewText(R.id.widget_status, "연결하는 중…")
-                            views.setTextViewText(R.id.widget_button, "연결 중")
-                            views.setInt(
-                                R.id.widget_button,
-                                "setBackgroundResource",
-                                R.drawable.widget_button_disconnected
-                            )
-                        }
-                        else -> {
-                            val statusText = if (!profileName.isNullOrEmpty()) "연결 안 됨 · $profileName" else "연결되지 않음"
-                            views.setTextViewText(R.id.widget_status, statusText)
-                            views.setTextViewText(R.id.widget_button, "연결")
-                            views.setInt(
-                                R.id.widget_button,
-                                "setBackgroundResource",
-                                R.drawable.widget_button_disconnected
-                            )
-                        }
+                    fun layout(width: Int, height: Int): Int = when {
+                        width >= 240 * fontScale && height >= 200 * fontScale -> R.layout.widget_proxima_large
+                        width >= 280 * fontScale && height >= 96 * fontScale -> R.layout.widget_proxima_wide
+                        else -> R.layout.widget_proxima_compact
                     }
+                    RemoteViews(
+                        render(layout(
+                            options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH),
+                            options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT),
+                        )),
+                        render(layout(
+                            options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH),
+                            options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT),
+                        )),
+                    )
                 }
-
                 appWidgetManager.updateAppWidget(appWidgetId, views)
-            } catch (e: Exception) {
-                // Ignore
+            } catch (error: Exception) {
+                Log.w("ProximaWidget", "Unable to update widget $appWidgetId", error)
             }
+        }
+
+        private fun createViews(
+            context: Context,
+            layout: Int,
+            snapshot: Map<String, Any?>,
+            savedProfileName: String?,
+            mode: String,
+            needsSetup: Boolean,
+        ): RemoteViews {
+            val views = RemoteViews(context.packageName, layout)
+            val state = snapshot["state"]?.toString() ?: "disconnected"
+            val connected = state == "connected"
+            val connecting = state == "connecting"
+            val disconnecting = state == "disconnecting"
+            val failed = state == "error"
+            val profileName = snapshot["profileName"]?.toString() ?: savedProfileName
+            val status = context.getString(when {
+                connected -> R.string.widget_on
+                connecting -> R.string.widget_connecting
+                disconnecting -> R.string.widget_disconnecting
+                failed -> R.string.widget_error
+                needsSetup -> R.string.widget_setup
+                else -> R.string.widget_off
+            })
+            val actionLabel = context.getString(when {
+                connected -> R.string.widget_disconnect
+                connecting -> R.string.widget_cancel
+                disconnecting -> R.string.widget_wait
+                needsSetup -> R.string.widget_open
+                failed -> R.string.widget_retry
+                else -> R.string.widget_connect
+            })
+            val modeLabel = context.getString(when (mode) {
+                "global" -> R.string.widget_global
+                "direct" -> R.string.widget_direct
+                else -> R.string.widget_rule
+            })
+            val detail = when {
+                connected -> when (mode) {
+                    "direct" -> context.getString(R.string.widget_direct_detail)
+                    "global" -> snapshot["activeNode"]?.toString()?.takeIf { it.isNotBlank() } ?: modeLabel
+                    else -> context.getString(R.string.widget_auto_node)
+                }
+                connecting -> context.getString(R.string.widget_preparing)
+                disconnecting -> context.getString(R.string.widget_stopping)
+                needsSetup && savedProfileName == null -> context.getString(R.string.widget_choose_profile)
+                needsSetup -> context.getString(R.string.widget_permission)
+                failed -> context.getString(R.string.widget_error_detail)
+                else -> context.getString(R.string.widget_ready)
+            }
+            views.setTextViewText(R.id.widget_status, status)
+            views.setTextColor(R.id.widget_status, context.getColor(when {
+                connected -> R.color.widget_connected
+                failed -> R.color.widget_error
+                connecting -> R.color.widget_accent
+                else -> R.color.widget_text_secondary
+            }))
+            views.setTextViewText(R.id.widget_title, when {
+                needsSetup && layout != R.layout.widget_proxima_large -> detail
+                layout == R.layout.widget_proxima_wide && connected -> "${profileName ?: context.getString(R.string.app_name)} · $modeLabel"
+                else -> profileName ?: context.getString(R.string.app_name)
+            })
+            if (layout == R.layout.widget_proxima_compact &&
+                context.resources.configuration.fontScale > 1.2f) {
+                views.setViewVisibility(R.id.widget_title, View.GONE)
+            }
+            views.setInt(R.id.widget_button, "setBackgroundResource", when {
+                connected -> R.drawable.widget_button_connected
+                connecting || disconnecting -> R.drawable.widget_button_pending
+                else -> R.drawable.widget_button_disconnected
+            })
+            views.setImageViewResource(R.id.widget_button, when {
+                connecting -> R.drawable.widget_ic_cancel
+                needsSetup -> R.drawable.widget_ic_open
+                else -> R.drawable.widget_ic_power
+            })
+            views.setInt(R.id.widget_button, "setColorFilter", context.getColor(when {
+                connected -> R.color.widget_connected
+                connecting || disconnecting -> R.color.widget_text_secondary
+                else -> R.color.widget_on_accent
+            }))
+            views.setContentDescription(R.id.widget_button, context.getString(R.string.widget_button_description, status, actionLabel))
+            views.setBoolean(R.id.widget_button, "setEnabled", !disconnecting)
+            views.setInt(R.id.widget_button, "setImageAlpha", if (disconnecting) 100 else 255)
+
+            val pendingLaunch = PendingIntent.getActivity(
+                context, 0,
+                Intent(context, MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val pendingToggle = PendingIntent.getBroadcast(
+                context, 1,
+                Intent(context, ProximaWidgetProvider::class.java).apply { action = ACTION_TOGGLE_VPN },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            views.setOnClickPendingIntent(R.id.widget_container, pendingLaunch)
+            // Launch setup directly; modern Android restricts background activity starts.
+            views.setOnClickPendingIntent(R.id.widget_button, if (needsSetup) pendingLaunch else pendingToggle)
+
+            if (layout != R.layout.widget_proxima_compact) {
+                val startedAt = (snapshot["startedAt"] as? Number)?.toLong() ?: 0L
+                val showElapsed = startedAt > 0L &&
+                    state in setOf("connected", "connecting", "disconnecting")
+                views.setViewVisibility(R.id.widget_uptime, if (showElapsed) View.VISIBLE else View.GONE)
+                views.setViewVisibility(R.id.widget_uptime_empty, if (showElapsed) View.GONE else View.VISIBLE)
+                if (showElapsed) {
+                    val elapsed = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
+                    views.setChronometer(
+                        R.id.widget_uptime,
+                        SystemClock.elapsedRealtime() - elapsed,
+                        context.getString(R.string.widget_elapsed_format),
+                        true,
+                    )
+                }
+                if (layout == R.layout.widget_proxima_large) {
+                    views.setViewVisibility(
+                        R.id.widget_traffic_layout,
+                        if (connected) View.VISIBLE else View.GONE,
+                    )
+                    if (connected) {
+                        val down = formatBytes((snapshot["downloadSpeed"] as? Number)?.toLong() ?: 0L)
+                        val up = formatBytes((snapshot["uploadSpeed"] as? Number)?.toLong() ?: 0L)
+                        views.setTextViewText(R.id.widget_traffic_down, down)
+                        views.setTextViewText(R.id.widget_traffic_up, up)
+                    }
+                    views.setTextViewText(R.id.widget_node, if (connected) "$modeLabel · $detail" else detail)
+                }
+            }
+            return views
         }
 
         private fun formatBytes(bytesPerSec: Long): String {
@@ -285,13 +279,5 @@ class ProximaWidgetProvider : AppWidgetProvider() {
             return String.format(Locale.US, "%.1f %s", value, sizes[i])
         }
 
-        private fun formatUptime(startedAt: Long): String {
-            if (startedAt <= 0) return "00:00:00"
-            val elapsedSec = ((System.currentTimeMillis() - startedAt) / 1000).coerceAtLeast(0)
-            val hours = elapsedSec / 3600
-            val minutes = (elapsedSec % 3600) / 60
-            val seconds = elapsedSec % 60
-            return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
-        }
     }
 }

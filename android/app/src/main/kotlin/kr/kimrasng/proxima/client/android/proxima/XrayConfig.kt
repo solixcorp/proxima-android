@@ -11,7 +11,7 @@ data class XrayRuntimeConfig(
     val probePorts: Map<String, Int>,
 )
 
-/** Converts Proxima's VLESS+REALITY-only stored links to an Xray configuration. */
+/** Converts Proxima's VLESS stored links to an Xray configuration. */
 object XrayConfig {
     private const val METADATA_PREFIX = "# proxima-vless-reality-link:"
     private const val ROUTING_PREFIX = "# proxima-routing-rules:"
@@ -274,7 +274,7 @@ object XrayConfig {
         activeMode: String? = null,
     ): JSONObject {
         val names = nodeNames(profile, content)
-        require(names.isNotEmpty()) { "VLESS + REALITY 노드를 찾을 수 없습니다." }
+        require(names.isNotEmpty()) { "VLESS 노드를 찾을 수 없습니다." }
         val all = JSONArray(names)
         val proxies = JSONObject()
             .put(
@@ -324,10 +324,10 @@ object XrayConfig {
     object VpnSettingsRepositoryHolder { var selected: (String) -> Map<String, String> = { emptyMap() } }
 
     private fun convertedNodes(sourceLinks: List<String>, names: List<String>): JSONArray {
-        require(sourceLinks.isNotEmpty()) { "VLESS + REALITY 노드를 찾을 수 없습니다." }
+        require(sourceLinks.isNotEmpty()) { "VLESS 노드를 찾을 수 없습니다." }
         val converted = XrayCore.convertShareLinks(sourceLinks)
         require(converted.length() == sourceLinks.size) {
-            "libXray가 일부 VLESS + REALITY 노드를 지원하지 않습니다."
+            "libXray가 일부 VLESS 노드를 지원하지 않습니다."
         }
         for (index in names.indices) {
             converted.getJSONObject(index).put("tag", names[index])

@@ -55,7 +55,7 @@ class SubscriptionScreen extends StatelessWidget {
           const PageEmptyState(
             icon: Icons.data_usage_outlined,
             title: '선택된 프로필이 없습니다',
-            message: '프로필 탭에서 VLESS + REALITY 구독을 추가해 주세요.',
+            message: '프로필 탭에서 VLESS 구독을 추가해 주세요.',
           )
         else ...[
           _ProfileCard(profile: profile),
