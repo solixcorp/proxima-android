@@ -143,7 +143,7 @@ class _ProximaShellState extends State<ProximaShell>
                       );
                       return SizeTransition(
                         sizeFactor: animation,
-                        axisAlignment: -1,
+                        alignment: AlignmentDirectional.topStart,
                         child: SlideTransition(
                           position: slide,
                           child: FadeTransition(
