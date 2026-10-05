@@ -113,17 +113,54 @@ class _ProximaShellState extends State<ProximaShell>
         return LayoutBuilder(
           builder: (context, constraints) {
             final useRail = constraints.maxWidth >= 600;
-            final body = Column(
+            final body = Stack(
               children: [
-                if (widget.controller.message case final message?)
-                  _MessageBanner(
-                    message: message,
-                    onClose: widget.controller.clearMessage,
-                  ),
-                Expanded(
+                Positioned.fill(
                   child: FadeTransition(
                     opacity: _tabFade,
                     child: IndexedStack(index: _index, children: pages),
+                  ),
+                ),
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    reverseDuration: const Duration(milliseconds: 180),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) {
+                      final slide = Tween<Offset>(
+                        begin: const Offset(0, -1),
+                        end: Offset.zero,
+                      ).animate(
+                        CurvedAnimation(
+                          parent: animation,
+                          curve: Curves.easeOutCubic,
+                          reverseCurve: Curves.easeInCubic,
+                        ),
+                      );
+                      return SizeTransition(
+                        sizeFactor: animation,
+                        axisAlignment: -1,
+                        child: SlideTransition(
+                          position: slide,
+                          child: FadeTransition(
+                            opacity: animation,
+                            child: child,
+                          ),
+                        ),
+                      );
+                    },
+                    child: switch (widget.controller.message) {
+                      final message? => _MessageBanner(
+                        key: ValueKey(message),
+                        message: message,
+                        onClose: widget.controller.clearMessage,
+                      ),
+                      null => const SizedBox.shrink(key: ValueKey('no-message')),
+                    },
                   ),
                 ),
               ],
@@ -190,7 +227,11 @@ class _AppMark extends StatelessWidget {
 }
 
 class _MessageBanner extends StatefulWidget {
-  const _MessageBanner({required this.message, required this.onClose});
+  const _MessageBanner({
+    super.key,
+    required this.message,
+    required this.onClose,
+  });
 
   final String message;
   final VoidCallback onClose;
@@ -201,6 +242,9 @@ class _MessageBanner extends StatefulWidget {
 
 class _MessageBannerState extends State<_MessageBanner> {
   Timer? _dismissTimer;
+  bool _visible = true;
+
+  static const _dismissDuration = Duration(milliseconds: 260);
 
   @override
   void initState() {
@@ -218,7 +262,14 @@ class _MessageBannerState extends State<_MessageBanner> {
 
   void _scheduleDismiss() {
     _dismissTimer?.cancel();
-    _dismissTimer = Timer(const Duration(seconds: 3), () => widget.onClose());
+    _visible = true;
+    _dismissTimer = Timer(const Duration(seconds: 3), _dismiss);
+  }
+
+  void _dismiss() {
+    if (!_visible) return;
+    setState(() => _visible = false);
+    _dismissTimer = Timer(_dismissDuration, widget.onClose);
   }
 
   @override
@@ -230,21 +281,38 @@ class _MessageBannerState extends State<_MessageBanner> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return Material(
-      color: colors.errorContainer,
-      child: SafeArea(
-        bottom: false,
-        child: ListTile(
-          leading: Icon(Icons.error_outline, color: colors.onErrorContainer),
-          title: Text(
-            widget.message,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          trailing: IconButton(
-            tooltip: '닫기',
-            onPressed: widget.onClose,
-            icon: const Icon(Icons.close),
+    return ClipRect(
+      child: AnimatedSize(
+        duration: _dismissDuration,
+        curve: Curves.easeInCubic,
+        alignment: Alignment.topCenter,
+        child: AnimatedSlide(
+          duration: _dismissDuration,
+          curve: Curves.easeInCubic,
+          offset: _visible ? Offset.zero : const Offset(0, -1),
+          child: AnimatedOpacity(
+            duration: _dismissDuration,
+            curve: Curves.easeInCubic,
+            opacity: _visible ? 1 : 0,
+            child: Material(
+              color: colors.errorContainer,
+              child: SafeArea(
+                bottom: false,
+                child: ListTile(
+                  leading: Icon(Icons.error_outline, color: colors.onErrorContainer),
+                  title: Text(
+                    widget.message,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: IconButton(
+                    tooltip: '닫기',
+                    onPressed: _dismiss,
+                    icon: const Icon(Icons.close),
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       ),
