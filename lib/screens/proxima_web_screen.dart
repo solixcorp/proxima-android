@@ -29,7 +29,7 @@ class _ProximaWebScreenState extends State<ProximaWebScreen> {
           },
         ),
       )
-      ..loadRequest(Uri.parse('https://solix.kr'));
+      ..loadRequest(Uri.parse('https://server.tun.re'));
   }
 
   @override
