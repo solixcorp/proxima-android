@@ -33,7 +33,7 @@ class ClashSubscriptionParser {
     final ruleLines = lines
         .where(
           (line) => RegExp(
-            r'^(?:AND|DOMAIN|DOMAIN-SUFFIX|DOMAIN-KEYWORD|IP-CIDR|IP-CIDR6|GEOIP|GEOSITE|MATCH),',
+            r'^[A-Z][A-Z0-9-]*,',
             caseSensitive: false,
           ).hasMatch(line),
         )
@@ -57,10 +57,11 @@ class ClashSubscriptionParser {
     }
 
     final rules = <Map<String, Object?>>[];
+    final displayRules = <Map<String, Object?>>[];
     for (final line in ruleLines) {
       final rule = _parseRule(line, resolveTarget, resolveCandidates);
-      if (rule == null) throw FormatException('지원하지 않는 규칙: $line');
-      rules.add(rule);
+      if (rule != null) rules.add(rule);
+      displayRules.add(_displayRule(line, rule));
     }
     if (!rules.any((rule) => rule['match'] == true)) {
       rules.add({
@@ -75,6 +76,7 @@ class ClashSubscriptionParser {
       'source': 'vless-links',
       'autoTestUrl': 'https://www.gstatic.com/generate_204',
       'rules': rules,
+      'displayRules': displayRules,
     };
   }
 
@@ -162,13 +164,16 @@ class ClashSubscriptionParser {
     }
 
     final rules = <Map<String, Object?>>[];
+    final displayRules = <Map<String, Object?>>[];
     for (final item in rawRules) {
+      final source = item.toString();
       final parsed = _parseRule(
-        item.toString(),
+        source,
         resolveTarget,
         resolveCandidates,
       );
       if (parsed != null) rules.add(parsed);
+      displayRules.add(_displayRule(source, parsed));
     }
     if (!rules.any((rule) => rule['match'] == true)) {
       rules.add(const {'match': true, 'target': 'proxy'});
@@ -180,6 +185,7 @@ class ClashSubscriptionParser {
         'source': 'clash-meta',
         'autoTestUrl': _automaticTestUrl(groups),
         'rules': rules,
+        'displayRules': displayRules,
       },
     );
   }
@@ -256,6 +262,29 @@ class ClashSubscriptionParser {
     ).toString();
   }
 
+  static Map<String, Object?> _displayRule(
+    String source,
+    Map<String, Object?>? parsed,
+  ) => {
+    ...?parsed,
+    'raw': source,
+    'supported': parsed != null && supportsRule(parsed),
+  };
+
+  // XrayConfig normalizes only these private-network geo conditions locally.
+  // Apply the same check when reading profiles saved by older app versions.
+  static bool supportsRule(Map<String, Object?> rule) =>
+        rule['supported'] != false &&
+        !(rule['domain'] as List? ?? const []).any(
+          (value) => value.toString().startsWith('geosite:') &&
+              value != 'geosite:private',
+        ) &&
+        !(rule['ip'] as List? ?? const []).any(
+          (value) => value.toString().startsWith('geoip:') &&
+              value != 'geoip:private' &&
+              value != 'geoip:lan',
+        );
+
   static Map<String, Object?>? _parseRule(
     String source,
     String Function(String value) resolveTarget,
@@ -302,7 +331,6 @@ class ClashSubscriptionParser {
       return {'match': true, ...targetFields(values[1])};
     }
     if (values.length < 3) return null;
-    final fields = targetFields(values[2]);
     switch (kind) {
       case 'DOMAIN':
       case 'DOMAIN-SUFFIX':
@@ -310,20 +338,20 @@ class ClashSubscriptionParser {
       case 'GEOSITE':
         final result = <String, Object?>{
           'domain': [_domainValue(kind, values[1])],
-          ...fields,
+          ...targetFields(values[2]),
         };
         return result;
       case 'IP-CIDR':
       case 'IP-CIDR6':
         final result = <String, Object?>{
           'ip': [values[1].trim()],
-          ...fields,
+          ...targetFields(values[2]),
         };
         return result;
       case 'GEOIP':
         final result = <String, Object?>{
           'ip': ['geoip:${values[1].trim().toLowerCase()}'],
-          ...fields,
+          ...targetFields(values[2]),
         };
         return result;
       default:
@@ -357,7 +385,9 @@ class ClashSubscriptionParser {
 
   static bool _isInformationNode(String name) {
     final lower = name.toLowerCase();
-    return name.contains('剩余流量') ||
+    return name.startsWith('잔여 트래픽:') ||
+        name.startsWith('만료까지:') ||
+        name.contains('剩余流量') ||
         name.contains('距离下次重置') ||
         name.contains('套餐到期') ||
         lower.contains('hello-ssone.com');

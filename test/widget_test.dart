@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -12,6 +13,7 @@ import 'package:proxima/screens/profiles_screen.dart';
 import 'package:proxima/screens/proxies_screen.dart';
 import 'package:proxima/screens/subscription_screen.dart';
 import 'package:proxima/state/app_controller.dart';
+import 'package:proxima/widgets/app_page.dart';
 
 void main() {
   testWidgets('renders the disconnected dashboard', (tester) async {
@@ -104,6 +106,406 @@ void main() {
       throwsStateError,
     );
     expect(bridge.selections, isEmpty);
+  });
+
+  testWidgets('shows saved destination rules before the first connection', (
+    tester,
+  ) async {
+    const link =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?security=tls&type=tcp#Seoul';
+    final bridge = _FakeBridge()
+      ..profileContent = VlessRealityProfile.storedConfigFromInput(
+        '$link\nDOMAIN-SUFFIX,example.com,PROXY\nIP-CIDR,10.0.0.0/8,DIRECT\nMATCH,PROXY',
+        profileName: 'Proxima',
+      );
+    final controller = AppController(bridge);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    await tester.pumpWidget(
+      MaterialApp(home: ProxiesScreen(controller: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('domain:example.com'), findsOneWidget);
+    expect(find.text('10.0.0.0/8'), findsOneWidget);
+    expect(bridge.startedProfileId, isNull);
+    expect(bridge.invokedMethods, isEmpty);
+  });
+
+  testWidgets('scrolls the rule list when dragging selectable destinations', (
+    tester,
+  ) async {
+    const link =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?security=tls&type=tcp#Seoul';
+    final rules = List.generate(
+      40,
+      (index) => 'DOMAIN-SUFFIX,rule$index.example.com,PROXY',
+    ).join('\n');
+    final bridge = _FakeBridge()
+      ..profileContent = VlessRealityProfile.storedConfigFromInput(
+        '$link\n$rules\nMATCH,PROXY',
+        profileName: 'Proxima',
+      );
+    final controller = AppController(bridge);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await tester.pumpWidget(
+      MaterialApp(home: ProxiesScreen(controller: controller)),
+    );
+    await tester.pumpAndSettle();
+    final scroll = tester.state<ScrollableState>(
+      find.descendant(
+        of: find.byType(CustomScrollView),
+        matching: find.byType(Scrollable),
+      ).first,
+    );
+    expect(scroll.position.pixels, 0);
+    await tester.dragFrom(
+      tester.getCenter(find.text('domain:rule0.example.com')),
+      const Offset(0, -200),
+    );
+    await tester.pumpAndSettle();
+    expect(scroll.position.pixels, greaterThan(0));
+  });
+
+  for (final mode in [OutboundMode.rule, OutboundMode.global]) {
+    test('refreshes current subscription servers before connecting in $mode', () async {
+      final bridge = _AccountImportBridge();
+      final controller = _AccountImportController(bridge);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.importAccountSubscription(
+        'https://sub.example.com/sub/account',
+      );
+      // Current routing metadata must not suppress a fresh server-list fetch.
+      bridge.profileContent = VlessRealityProfile.storedConfigFromInput(
+        '${controller.subscriptionContent}\nMATCH,PROXY',
+        profileName: 'Proxima',
+      );
+      controller.settings = VpnSettings(mode: mode);
+      controller.subscriptionContent =
+          'vless://123e4567-e89b-42d3-a456-426614174000@new-edge.example.com:443?security=tls&type=tcp#Active';
+
+      await controller.toggleVpn();
+
+      final links = VlessRealityProfile.linksFromStoredConfig(
+        bridge.profileContent,
+      );
+      expect(links.map((link) => Uri.parse(link).host), ['new-edge.example.com']);
+      expect(bridge.startedProfileId, 'account-profile');
+    });
+  }
+
+  test('preserves rule-set and process rules in subscription display order', () {
+    const yaml = '''
+proxies:
+  - {name: Seoul, type: vless, server: edge.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000}
+proxy-groups:
+  - {name: PROXY, type: fallback, proxies: [Seoul]}
+rules:
+  - RULE-SET,private_domain,DIRECT
+  - DOMAIN-SUFFIX,example.com,PROXY
+  - PROCESS-NAME,game.exe,PROXY
+  - MATCH,PROXY
+''';
+    final content = VlessRealityProfile.storedConfigFromInput(
+      yaml,
+      profileName: 'Proxima',
+    );
+
+    final rules = VlessRealityProfile.routingRulesFromStoredConfig(content);
+
+    expect(rules.map((rule) => rule.destination), [
+      'RULE-SET,private_domain',
+      'domain:example.com',
+      'PROCESS-NAME,game.exe',
+      '나머지 모든 트래픽',
+    ]);
+    expect(rules.map((rule) => rule.supported), [false, true, false, true]);
+  });
+
+  test('does not offer Proxima quota placeholders as connection servers', () {
+    const yaml = '''
+proxies:
+  - {name: "잔여 트래픽: 50.0 GB", type: vless, server: active.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000}
+  - {name: "만료까지: 30일", type: vless, server: active.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000}
+  - {name: Seoul, type: vless, server: active.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000}
+proxy-groups:
+  - {name: PROXY, type: fallback, proxies: [Seoul]}
+rules:
+  - MATCH,PROXY
+''';
+
+    final config = VlessRealityProfile.storedConfigFromInput(
+      yaml,
+      profileName: 'Proxima',
+    );
+
+    final links = VlessRealityProfile.linksFromStoredConfig(config);
+    expect(links.map((link) => Uri.parse(link).host), ['active.example.com']);
+    expect(Uri.parse(links.single).fragment, 'Seoul');
+  });
+
+  test('does not connect stale servers when subscription refresh fails', () async {
+    final bridge = _AccountImportBridge();
+    final controller = _AccountImportController(bridge);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.importAccountSubscription(
+      'https://sub.example.com/sub/account',
+    );
+    final originalContent = bridge.profileContent;
+    controller.failFetch = true;
+
+    await controller.toggleVpn();
+
+    expect(bridge.startedProfileId, isNull);
+    expect(bridge.profileContent, originalContent);
+    expect(controller.message, isNotNull);
+    expect(controller.preparingConnection, isFalse);
+  });
+
+  test('local profiles connect without a subscription fetch', () async {
+    final bridge = _FakeBridge();
+    final controller = _AccountImportController(bridge)..failFetch = true;
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    await controller.toggleVpn();
+
+    expect(bridge.startedProfileId, bridge.profile.id);
+    expect(controller.message, isNull);
+  });
+
+  test('does not connect a different profile selected during server refresh', () async {
+    final bridge = _AccountImportBridge();
+    final controller = _AccountImportController(bridge);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.importAccountSubscription('https://sub.example.com/first');
+    bridge.savedProfiles.add(
+      VpnProfile(
+        id: 'second-subscription',
+        name: 'Second',
+        sourceUrl: 'https://sub.example.com/second',
+        updatedAt: DateTime.utc(2026),
+        isActive: false,
+      ),
+    );
+    final requested = Completer<void>();
+    final response = Completer<SubscriptionFetchResult>();
+    controller
+      ..fetchRequested = requested
+      ..pendingFetch = response.future;
+
+    final connection = controller.toggleVpn();
+    await requested.future.timeout(const Duration(seconds: 5));
+    await controller.selectProfile('second-subscription');
+    response.complete(SubscriptionFetchResult(content: controller.subscriptionContent));
+    await connection;
+
+    expect(bridge.startedProfileId, isNull);
+    expect(controller.activeProfile?.id, 'second-subscription');
+  });
+
+  for (final failOldRead in [false, true]) {
+    test('discards stale rule reads after switching profiles ($failOldRead)', () async {
+      const link =
+          'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?security=tls&type=tcp#First';
+      final original = VlessRealityProfile.storedConfigFromInput(
+        '$link\nDOMAIN-SUFFIX,first.example.com,PROXY\nMATCH,PROXY',
+        profileName: 'First',
+      );
+      final bridge = _AccountImportBridge()..profileContent = original;
+      final controller = AppController(bridge);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      bridge.savedProfiles.add(
+        VpnProfile(
+          id: 'second-profile',
+          name: 'Second',
+          updatedAt: DateTime.utc(2026),
+          isActive: false,
+        ),
+      );
+      final requested = Completer<void>();
+      final response = Completer<String>();
+      bridge
+        ..profileReadRequested = requested
+        ..pendingProfileRead = response.future;
+      final oldLoad = controller.loadProxyGroups();
+      await requested.future.timeout(const Duration(seconds: 5));
+      bridge
+        ..profileReadError = 'second_read_failed'
+        ..failingReadProfileId = 'second-profile';
+      var stalePublished = false;
+      final finished = Completer<void>();
+      void observe() {
+        if (controller.activeProfile?.id != 'second-profile') return;
+        if (controller.routingRules.isNotEmpty ||
+            controller.proxyError?.contains('first_read_failed') == true) {
+          stalePublished = true;
+        }
+        if (!controller.loadingProxies &&
+            controller.proxyError?.contains('second_read_failed') == true &&
+            !finished.isCompleted) {
+          finished.complete();
+        }
+      }
+      controller.addListener(observe);
+      addTearDown(() => controller.removeListener(observe));
+      await controller.selectProfile('second-profile');
+      if (failOldRead) {
+        response.completeError(StateError('first_read_failed'));
+      } else {
+        response.complete(original);
+      }
+      await oldLoad;
+      await finished.future.timeout(const Duration(seconds: 5));
+      expect(stalePublished, isFalse);
+      expect(controller.routingRules, isEmpty);
+      expect(controller.proxyError, contains('second_read_failed'));
+    });
+  }
+
+  test('invalidates displayed rules when the native profile changes', () async {
+    const link =
+        'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?security=tls&type=tcp#First';
+    final events = StreamController<VpnSnapshot>(sync: true);
+    final bridge = _AccountImportBridge()
+      ..snapshotEvents = events.stream
+      ..profileContent = VlessRealityProfile.storedConfigFromInput(
+        '$link\nDOMAIN-SUFFIX,first.example.com,PROXY',
+        profileName: 'First',
+      );
+    final controller = AppController(bridge);
+    addTearDown(() async {
+      controller.dispose();
+      await events.close();
+    });
+    await controller.initialize();
+    controller.snapshot = VpnSnapshot(
+      state: VpnConnectionState.connected,
+      profileId: bridge.profile.id,
+    );
+    bridge.savedProfiles.add(
+      VpnProfile(
+        id: 'second-profile',
+        name: 'Second',
+        updatedAt: DateTime.utc(2026),
+        isActive: false,
+      ),
+    );
+    await controller.selectProfile('second-profile');
+    expect(controller.routingRules, isNotEmpty);
+    events.add(
+      const VpnSnapshot(
+        state: VpnConnectionState.connecting,
+        profileId: 'second-profile',
+      ),
+    );
+    expect(controller.activeProfile?.id, 'second-profile');
+    expect(controller.routingRules, isEmpty);
+    expect(controller.proxyError, isNull);
+  });
+
+  testWidgets('rule errors survive dismissal of the shell message', (tester) async {
+    final bridge = _FakeBridge()..profileReadError = 'rule_read_failed';
+    final controller = AppController(bridge);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    controller.clearMessage();
+    await tester.pumpWidget(
+      MaterialApp(home: ProxiesScreen(controller: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('rule_read_failed'), findsOneWidget);
+  });
+
+  test('cancelling server preparation discards a late subscription response', () async {
+    final bridge = _AccountImportBridge();
+    final controller = _AccountImportController(bridge);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.importAccountSubscription('https://sub.example.com/account');
+    final originalContent = bridge.profileContent;
+    final requested = Completer<void>();
+    final response = Completer<SubscriptionFetchResult>();
+    controller
+      ..fetchRequested = requested
+      ..pendingFetch = response.future;
+
+    final connection = controller.toggleVpn();
+    await requested.future.timeout(const Duration(seconds: 5));
+    controller.cancelConnectionPreparation();
+    response.complete(
+      const SubscriptionFetchResult(
+        content:
+            'vless://123e4567-e89b-42d3-a456-426614174000@late.example.com:443?security=tls&type=tcp#Late',
+      ),
+    );
+    await connection;
+
+    expect(bridge.startedProfileId, isNull);
+    expect(bridge.profileContent, originalContent);
+    expect(controller.preparingConnection, isFalse);
+    expect(controller.message, isNull);
+  });
+
+  for (final reconnect in [false, true]) {
+    test('cancellation during validation discards its write ($reconnect)', () async {
+      final bridge = _AccountImportBridge();
+      final controller = _AccountImportController(bridge);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.importAccountSubscription('https://sub.example.com/account');
+      controller.subscriptionContent =
+          'vless://123e4567-e89b-42d3-a456-426614174000@cancelled.example.com:443?security=tls&type=tcp#Cancelled';
+      final requested = Completer<void>();
+      final response = Completer<String?>();
+      bridge
+        ..validationRequested = requested
+        ..pendingValidation = response.future;
+      final cancelledConnection = controller.toggleVpn();
+      await requested.future.timeout(const Duration(seconds: 5));
+      controller.cancelConnectionPreparation();
+      if (reconnect) {
+        controller.subscriptionContent =
+            'vless://123e4567-e89b-42d3-a456-426614174000@current.example.com:443?security=tls&type=tcp#Current';
+        await controller.toggleVpn();
+      }
+      final currentContent = bridge.profileContent;
+      final currentSaveCount = bridge.savedIds.length;
+      response.complete(null);
+      await cancelledConnection;
+      expect(bridge.profileContent, currentContent);
+      expect(bridge.savedIds, hasLength(currentSaveCount));
+      expect(
+        bridge.startedProfileId,
+        reconnect ? controller.activeProfile?.id : isNull,
+      );
+      expect(controller.preparingConnection, isFalse);
+      expect(controller.message, isNull);
+    });
+  }
+
+  testWidgets('progress appears only after a one-second operation', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: DelayedProgressIndicator(semanticsLabel: 'Loading rules'),
+      ),
+    );
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    // Elapsed time is the behavior under test, not a synchronization shortcut.
+    await tester.pump(const Duration(milliseconds: 999));
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   test(
@@ -791,13 +1193,24 @@ rules:
 class _AccountImportController extends AppController {
   _AccountImportController(super.bridge);
 
+  bool failFetch = false;
+  Completer<void>? fetchRequested;
+  Future<SubscriptionFetchResult>? pendingFetch;
+  String subscriptionContent =
+      'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=tls&type=tcp#Account';
+
   @override
-  Future<SubscriptionFetchResult> fetchSubscriptionDetails(String source) async =>
-      const SubscriptionFetchResult(
-        content:
-            'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=tls&type=tcp#Account',
-        info: SubscriptionInfo(planName: 'Standard'),
-      );
+  Future<SubscriptionFetchResult> fetchSubscriptionDetails(String source) async {
+    fetchRequested?.complete();
+    fetchRequested = null;
+    final pending = pendingFetch;
+    if (pending != null) return pending;
+    if (failFetch) throw const SocketException('subscription unavailable');
+    return SubscriptionFetchResult(
+      content: subscriptionContent,
+      info: const SubscriptionInfo(planName: 'Standard'),
+    );
+  }
 }
 
 class _AccountImportBridge extends _FakeBridge {
@@ -816,13 +1229,14 @@ class _AccountImportBridge extends _FakeBridge {
     required String content,
     SubscriptionInfo? subscriptionInfo,
   }) async {
+    profileContent = content;
     savedIds.add(id);
     final saved = VpnProfile(
       id: id ?? 'account-profile',
       name: name,
       sourceUrl: sourceUrl,
       updatedAt: DateTime.utc(2026),
-      isActive: false,
+      isActive: id != null && id == selectedId,
       subscriptionInfo: subscriptionInfo,
     );
     savedProfiles.removeWhere((profile) => profile.id == saved.id);
@@ -831,7 +1245,20 @@ class _AccountImportBridge extends _FakeBridge {
   }
 
   @override
-  Future<void> selectProfile(String id) async => selectedId = id;
+  Future<void> selectProfile(String id) async {
+    selectedId = id;
+    for (var index = 0; index < savedProfiles.length; index++) {
+      final profile = savedProfiles[index];
+      savedProfiles[index] = VpnProfile(
+        id: profile.id,
+        name: profile.name,
+        sourceUrl: profile.sourceUrl,
+        subscriptionInfo: profile.subscriptionInfo,
+        updatedAt: profile.updatedAt,
+        isActive: profile.id == id,
+      );
+    }
+  }
 }
 
 class _FakeBridge implements VpnBridge {
@@ -845,12 +1272,19 @@ class _FakeBridge implements VpnBridge {
     isActive: true,
   );
   String profileContent = '';
+  String? profileReadError;
+  String? failingReadProfileId;
+  Completer<void>? profileReadRequested;
+  Future<String>? pendingProfileRead;
+  Completer<void>? validationRequested;
+  Future<String?>? pendingValidation;
+  Stream<VpnSnapshot>? snapshotEvents;
   final selections = <String, String>{};
   String? startedProfileId;
   int stopCount = 0;
 
   @override
-  Stream<VpnSnapshot> get snapshots => const Stream.empty();
+  Stream<VpnSnapshot> get snapshots => snapshotEvents ?? const Stream.empty();
 
   @override
   Future<Map<Object?, Object?>> coreInfo() async => {
@@ -896,7 +1330,21 @@ class _FakeBridge implements VpnBridge {
   Future<ImportedProfile?> pickProfileFile() async => null;
 
   @override
-  Future<String> readProfile(String id) async => profileContent;
+  Future<String> readProfile(String id) async {
+    final pending = pendingProfileRead;
+    if (pending != null) {
+      pendingProfileRead = null;
+      profileReadRequested?.complete();
+      profileReadRequested = null;
+      return pending;
+    }
+    final error = profileReadError;
+    if (error != null &&
+        (failingReadProfileId == null || failingReadProfileId == id)) {
+      throw StateError(error);
+    }
+    return profileContent;
+  }
 
   @override
   Future<bool> requestVpnPermission() async => true;
@@ -942,5 +1390,14 @@ class _FakeBridge implements VpnBridge {
   }
 
   @override
-  Future<String?> validateProfile(String content) async => null;
+  Future<String?> validateProfile(String content) async {
+    final pending = pendingValidation;
+    if (pending != null) {
+      pendingValidation = null;
+      validationRequested?.complete();
+      validationRequested = null;
+      return pending;
+    }
+    return null;
+  }
 }

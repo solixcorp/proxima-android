@@ -18,6 +18,7 @@ object XrayConfig {
     const val RULE_PROBE_KEY = "__PROXIMA_RULE__"
     private const val RULE_PROBE_TAG = "proxima-rule-probe"
     private const val AUTO_BALANCER_TAG = "proxima-auto"
+    private const val AUTO_OUTBOUND_TAG = "proxima-auto-outbound"
     private const val DNS_OUTBOUND_TAG = "proxima-dns"
     private const val DNS_UPSTREAM_TAG = "proxima-dns-upstream"
 
@@ -39,7 +40,8 @@ object XrayConfig {
         val selected = VpnSettingsRepositoryHolder.selected(profile.id)
         val requestedName = when (settings.mode) {
             "global" -> selected["GLOBAL"]
-            "rule" -> selected["PROXY"] ?: selected["GLOBAL"]
+            "rule" -> selected["PROXY"]?.takeIf(names::contains)
+                ?: selected["GLOBAL"]?.takeIf(names::contains)
             else -> null
         }
         val activeIndex = names.indexOf(requestedName).takeIf { it >= 0 } ?: 0
@@ -61,7 +63,10 @@ object XrayConfig {
                             "streamSettings",
                             JSONObject().put(
                                 "sockopt",
-                                JSONObject().put("dialerProxy", activeTag),
+                                JSONObject().put(
+                                    "dialerProxy",
+                                    if (useSubscriptionRules) AUTO_OUTBOUND_TAG else activeTag,
+                                ),
                             ),
                         )
                     }
@@ -84,6 +89,12 @@ object XrayConfig {
                 ),
         )
         if (useSubscriptionRules) {
+            outbounds.put(
+                JSONObject()
+                    .put("tag", AUTO_OUTBOUND_TAG)
+                    .put("protocol", "loopback")
+                    .put("settings", JSONObject().put("inboundTag", DNS_UPSTREAM_TAG)),
+            )
             outbounds.put(JSONObject().put("tag", blockTag).put("protocol", "blackhole"))
         }
         val rules = JSONArray()
@@ -105,20 +116,24 @@ object XrayConfig {
             JSONObject()
                 .put("type", "field")
                 .put("inboundTag", JSONArray().put(DNS_UPSTREAM_TAG))
-                .put("outboundTag", if (settings.mode == "direct") directTag else activeTag),
+                .put(
+                    if (useSubscriptionRules) "balancerTag" else "outboundTag",
+                    if (useSubscriptionRules) AUTO_BALANCER_TAG
+                    else if (settings.mode == "direct") directTag else activeTag,
+                ),
         )
         if (useSubscriptionRules) {
             storedRouting.rules.forEach { storedRule ->
-                val rule = convertRule(storedRule, directTag, blockTag, activeTag, policyBalancers)
+                val rule = convertRule(storedRule, directTag, blockTag, policyBalancers)
                     ?: return@forEach
                 if (storedRule.optString("target") == "direct" && rule.optString("network") != "tcp") {
                     // A DIRECT UDP rule would still use the blocked physical
                     // transport. Keep its position and conditions, but send
-                    // only its UDP half through the selected VLESS node.
+                    // only its UDP half through the automatic VLESS policy.
                     rules.put(
                         JSONObject(rule.toString())
                             .put("network", "udp")
-                            .put("outboundTag", activeTag),
+                            .put("outboundTag", AUTO_OUTBOUND_TAG),
                     )
                     if (rule.optString("network") == "udp") return@forEach
                     rule.put("network", "tcp")
@@ -425,7 +440,6 @@ object XrayConfig {
         source: JSONObject,
         directTag: String,
         blockTag: String,
-        activeTag: String,
         policyBalancers: Map<String, Pair<String, List<String>>>,
     ): JSONObject? {
         val target = source.optString("target")
@@ -469,14 +483,7 @@ object XrayConfig {
             "block" -> rule.put("outboundTag", blockTag)
             "proxy" -> {
                 val policy = policyBalancers[source.optString("policy")]
-                // A successful global selection is a better default than a
-                // latency probe that may choose a node unable to carry app
-                // traffic. Keep restricted policy pools when it is excluded.
-                if (policy == null || activeTag in policy.second) {
-                    rule.put("outboundTag", activeTag)
-                } else {
-                    rule.put("balancerTag", policy.first)
-                }
+                rule.put("balancerTag", policy?.first ?: AUTO_BALANCER_TAG)
             }
         }
         return rule

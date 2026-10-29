@@ -114,7 +114,7 @@ class HomeScreen extends StatelessWidget {
                       child: Text(
                         status,
                         key: ValueKey(status),
-                        style: Theme.of(context).textTheme.headlineSmall,
+                        style: Theme.of(context).textTheme.titleLarge,
                       ),
                     ),
                   ),
@@ -158,10 +158,12 @@ class HomeScreen extends StatelessWidget {
                           child: showingActiveConnection
                               ? OutlinedButton.icon(
                                   key: const Key('connect_button'),
-                                  onPressed: snapshot.isBusy
+                                  onPressed: snapshot.isBusy ||
+                                          controller.preparingConnection
                                       ? null
                                       : controller.toggleVpn,
-                                  icon: snapshot.isBusy
+                                  icon: snapshot.isBusy ||
+                                          controller.preparingConnection
                                       ? const SizedBox.square(
                                           dimension: 18,
                                           child: CircularProgressIndicator(
@@ -175,10 +177,19 @@ class HomeScreen extends StatelessWidget {
                                 )
                               : FilledButton.icon(
                                   key: const Key('connect_button'),
-                                  onPressed: snapshot.isBusy
+                                  style: FilledButton.styleFrom(
+                                    disabledForegroundColor: colors.onSurface,
+                                  ),
+                                  onPressed: snapshot.isBusy ||
+                                          controller.preparingConnection
                                       ? null
                                       : controller.toggleVpn,
-                                  icon: snapshot.isBusy
+                                  icon: controller.preparingConnection
+                                      ? const DelayedProgressIndicator(
+                                          size: 18,
+                                          semanticsLabel: '서버 확인 중',
+                                        )
+                                      : snapshot.isBusy
                                       ? const SizedBox.square(
                                           dimension: 18,
                                           child: CircularProgressIndicator(
@@ -186,12 +197,26 @@ class HomeScreen extends StatelessWidget {
                                           ),
                                         )
                                       : const Icon(Icons.play_arrow_rounded),
-                                  label: Text(snapshot.isBusy ? '연결 중…' : '연결'),
+                                  label: Text(
+                                    controller.preparingConnection
+                                        ? '서버 확인 중…'
+                                        : snapshot.isBusy
+                                        ? '연결 중…'
+                                        : '연결',
+                                  ),
                                 ),
                         ),
                       ),
                     ),
                   ),
+                  if (controller.preparingConnection)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: controller.cancelConnectionPreparation,
+                        child: const Text('연결 취소'),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -229,7 +254,7 @@ class HomeScreen extends StatelessWidget {
               )
               .toList(),
           selected: {controller.settings.mode},
-          onSelectionChanged: snapshot.isBusy
+          onSelectionChanged: snapshot.isBusy || controller.preparingConnection
               ? null
               : (selection) async {
                   try {
@@ -292,13 +317,15 @@ class HomeScreen extends StatelessWidget {
         ],
         if (controller.settings.mode == OutboundMode.rule) ...[
           const SectionHeader('규칙 라우팅'),
-          const Card(
+          Card(
             child: ListTile(
-              leading: Icon(Icons.rule_rounded),
-              title: Text('규칙에 따라 자동 선택'),
-              subtitle: Text(
+              leading: const Icon(Icons.rule_rounded),
+              title: const Text('규칙에 따라 자동 선택'),
+              subtitle: const Text(
                 'Clash 구독 또는 링크 목록에 입력한 규칙으로 경로를 선택합니다. 규칙이 없으면 기본 노드를 사용합니다.',
               ),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: openProxies,
             ),
           ),
         ],

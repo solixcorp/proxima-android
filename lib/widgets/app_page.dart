@@ -1,4 +1,51 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+
+class DelayedProgressIndicator extends StatefulWidget {
+  const DelayedProgressIndicator({
+    super.key,
+    required this.semanticsLabel,
+    this.size = 36,
+  });
+
+  final String semanticsLabel;
+  final double size;
+
+  @override
+  State<DelayedProgressIndicator> createState() =>
+      _DelayedProgressIndicatorState();
+}
+
+class _DelayedProgressIndicatorState extends State<DelayedProgressIndicator> {
+  late final Timer _delay;
+  bool _visible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _delay = Timer(const Duration(seconds: 1), () {
+      setState(() => _visible = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _delay.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => SizedBox.square(
+    dimension: widget.size,
+    child: _visible
+        ? CircularProgressIndicator(
+            strokeWidth: 2,
+            semanticsLabel: widget.semanticsLabel,
+          )
+        : null,
+  );
+}
 
 class AppPage extends StatelessWidget {
   const AppPage({
@@ -20,7 +67,20 @@ class AppPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double expandedHeight = subtitle != null ? 132.0 : 108.0;
+    final textTheme = Theme.of(context).textTheme;
+    final scaler = MediaQuery.textScalerOf(context);
+    final titleSize = textTheme.titleMedium?.fontSize ?? 16;
+    final subtitleSize = textTheme.bodyMedium?.fontSize ?? 14;
+    final extraTitleHeight =
+        (scaler.scale(titleSize) - titleSize) *
+        (textTheme.titleMedium?.height ?? 1.5);
+    final extraSubtitleHeight = subtitle == null
+        ? 0
+        : (scaler.scale(subtitleSize) - subtitleSize) *
+              (textTheme.bodyMedium?.height ?? 1.5);
+    final double expandedHeight =
+        (subtitle != null ? 132.0 : 108.0) +
+        (extraTitleHeight + extraSubtitleHeight).clamp(0, double.infinity);
 
     final scrollView = CustomScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
@@ -84,15 +144,25 @@ class _AppPageFlexibleTitle extends StatelessWidget {
     final double currentLeft =
         collapsedLeft + (expandedLeft - collapsedLeft) * t;
 
-    // Scale from 1.0 (Collapsed: titleLarge size) to 1.35 (Expanded)
-    final double scale = 1.0 + 0.35 * t;
+    final double scale = 1.0 + 0.1 * t;
 
     final double topPadding = MediaQuery.paddingOf(context).top;
 
-    final double fontHeight = textTheme.titleLarge?.fontSize ?? 22.0;
-    final double collapsedTop = topPadding + (kToolbarHeight - fontHeight) / 2;
+    final scaler = MediaQuery.textScalerOf(context);
+    final double fontHeight = scaler.scale(
+      textTheme.titleMedium?.fontSize ?? 16,
+    );
+    final titleLineHeight = fontHeight * (textTheme.titleMedium?.height ?? 1.5);
+    final subtitleLineHeight = scaler.scale(
+      textTheme.bodyMedium?.fontSize ?? 14,
+    ) * (textTheme.bodyMedium?.height ?? 1.5);
+    final double collapsedTop =
+        topPadding + (kToolbarHeight - titleLineHeight) / 2;
     final double expandedTop =
-        settings.maxExtent - (subtitle != null ? 60.0 : 38.0);
+        settings.maxExtent -
+        (titleLineHeight * 1.1 +
+            (subtitle != null ? 6 + subtitleLineHeight : 0) +
+            12);
 
     final double currentTop = collapsedTop + (expandedTop - collapsedTop) * t;
 
@@ -103,7 +173,7 @@ class _AppPageFlexibleTitle extends StatelessWidget {
           Positioned(
             left: 20,
             right: 20,
-            top: currentTop + 30.0 * scale,
+            top: currentTop + titleLineHeight * scale + 6,
             child: Opacity(
               opacity: t.clamp(0.0, 1.0),
               child: Text(
@@ -126,7 +196,7 @@ class _AppPageFlexibleTitle extends StatelessWidget {
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: textTheme.titleLarge?.copyWith(
+              style: textTheme.titleMedium?.copyWith(
                 color: colorScheme.onSurface,
                 fontWeight: FontWeight.bold,
               ),

@@ -28,7 +28,7 @@ class ProxiesScreen extends StatelessWidget {
         return AppPage(
           title: switch (mode) {
             OutboundMode.global => '전역 노드',
-            OutboundMode.rule => '규칙별 노드',
+            OutboundMode.rule => '라우팅 규칙',
             OutboundMode.direct => '직접 연결',
           },
           subtitle: switch (mode) {
@@ -38,30 +38,130 @@ class ProxiesScreen extends StatelessWidget {
           },
           onRefresh: controller.loadProxyGroups,
           actions: [
-            IconButton(
+            IconButton.filled(
               tooltip: '새로고침',
+              style: IconButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                disabledForegroundColor:
+                    Theme.of(context).colorScheme.onSurfaceVariant,
+              ).copyWith(
+                side: WidgetStateProperty.resolveWith((states) {
+                  return states.contains(WidgetState.focused)
+                      ? BorderSide(
+                          color: Theme.of(context).colorScheme.onSurface,
+                          width: 2,
+                        )
+                      : BorderSide.none;
+                }),
+              ),
               onPressed:
-                  !controller.loadingProxies && mode == OutboundMode.global
+                  !controller.loadingProxies && mode != OutboundMode.direct
                   ? controller.loadProxyGroups
                   : null,
               icon: const Icon(Icons.refresh_rounded),
             ),
           ],
           children: [
+            if (mode == OutboundMode.rule) ...[
+              if (controller.proxyError != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
+                  child: _RuleError(message: controller.proxyError!),
+                ),
+              if (controller.loadingProxies && controller.routingRules.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(56),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        DelayedProgressIndicator(
+                          semanticsLabel: '규칙 확인 중',
+                        ),
+                        SizedBox(height: 12),
+                        Text('규칙 확인 중'),
+                      ],
+                    ),
+                  ),
+                )
+              else if (controller.routingRules.isEmpty)
+                PageEmptyState(
+                  icon: Icons.rule_rounded,
+                  title: '규칙 없음',
+                  message: controller.activeProfile == null
+                      ? '프로필을 추가하면 연결하지 않아도 규칙을 확인할 수 있습니다.'
+                      : '새로고침을 누르세요.',
+                )
+              else ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
+                  child: Text(
+                    '${controller.routingRules.length}개 · 지원 규칙만 적용',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+                for (final rule in controller.routingRules) ...[
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SelectableText(
+                            rule.destination,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          const SizedBox(height: 6),
+                          if (rule.network != null || rule.port != null)
+                          Text(
+                            [
+                              if (rule.network != null)
+                                rule.network!.toUpperCase(),
+                              if (rule.port != null) '포트 ${rule.port}',
+                            ].join(' · '),
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme.onSurfaceVariant,
+                                ),
+                          ),
+                          Text(
+                            rule.target,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          if (!rule.supported) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              '변환 미지원 · 표시 전용',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ],
+                          if (rule.candidates.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              rule.candidates.map(displayProxyName).join(', '),
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ],
+            ] else
             AnimatedSwitcher(
               duration: AppMotion.medium(context),
               layoutBuilder: (currentChild, previousChildren) => Stack(
                 alignment: Alignment.topCenter,
                 children: [...previousChildren, ?currentChild],
               ),
-              child: mode == OutboundMode.rule
-                  ? const PageEmptyState(
-                      key: ValueKey('rule-mode'),
-                      icon: Icons.rule_rounded,
-                      title: '규칙 모드에서는 노드를 직접 선택하지 않습니다',
-                      message: '전역 모드로 전환하면 사용할 노드를 직접 선택할 수 있습니다.',
-                    )
-                  : mode == OutboundMode.direct
+              child: mode == OutboundMode.direct
                   ? const PageEmptyState(
                       key: ValueKey('direct-mode'),
                       icon: Icons.arrow_forward_rounded,
@@ -123,6 +223,56 @@ class ProxiesScreen extends StatelessWidget {
             ),
           ],
         );
+      },
+    );
+  }
+}
+
+class _RuleError extends StatelessWidget {
+  const _RuleError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context).textTheme.bodyMedium?.copyWith(
+      color: Theme.of(context).colorScheme.error,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final painter = TextPainter(
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+        );
+        final lines = <String>[];
+        final paragraphs = message.replaceFirst(
+          '노드 목록을 불러오지 못했습니다: ',
+          '규칙 조회 실패\n',
+        ).split('\n');
+        for (final paragraph in paragraphs) {
+          final words = paragraph.split(' ');
+          if (words.length > 1 &&
+              RegExp(r'^주세요[.!?]?$').hasMatch(words.last)) {
+            words[words.length - 2] = '${words[words.length - 2]} ${words.last}';
+            words.removeLast();
+          }
+          var line = '';
+          for (final word in words) {
+            final candidate = line.isEmpty ? word : '$line $word';
+            painter.text = TextSpan(text: candidate, style: style);
+            painter.layout();
+            // SelectableText reserves a 2px cursor plus a 1px caret gap.
+            if (painter.width > constraints.maxWidth - 3 && line.isNotEmpty) {
+              lines.add(line);
+              line = word;
+            } else {
+              line = candidate;
+            }
+          }
+          lines.add(line);
+        }
+        painter.dispose();
+        return SelectableText(lines.join('\n'), style: style);
       },
     );
   }
@@ -282,9 +432,8 @@ class _ProxyPickerState extends State<_ProxyPicker> {
                       final selected = proxy == current.selected;
                       final working =
                           _working == proxy || _testing.contains(proxy);
-                      return AnimatedContainer(
-                        duration: AppMotion.short(context),
-                        curve: Curves.easeInOutCubic,
+                      return Material(
+                        animationDuration: AppMotion.short(context),
                         color: selected
                             ? Theme.of(context).colorScheme.primaryContainer
                                   .withValues(alpha: 0.35)

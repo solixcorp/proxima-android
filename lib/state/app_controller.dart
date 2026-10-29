@@ -28,6 +28,7 @@ class AppController extends ChangeNotifier {
   );
   List<VpnProfile> profiles = const [];
   List<ProxyGroup> proxyGroups = const [];
+  List<RoutingRule> routingRules = const [];
   ConnectionOverview connectionOverview = const ConnectionOverview();
   List<CoreProvider> providers = const [];
   PublicIpInfo? publicIp;
@@ -41,7 +42,11 @@ class AppController extends ChangeNotifier {
   bool loadingProviders = false;
   bool loadingPublicIp = false;
   bool loadingNetwork = false;
+  bool preparingConnection = false;
+  int _connectionAttempt = 0;
+  int _proxyLoadGeneration = 0;
   bool _proxyReloadPending = false;
+  String? proxyError;
   String? message;
 
   VpnProfile? get activeProfile {
@@ -115,8 +120,10 @@ class AppController extends ChangeNotifier {
   }
 
   void _handleSnapshot(VpnSnapshot next) {
+    final previousProfileId = activeProfile?.id;
     final becameConnected = !snapshot.isConnected && next.isConnected;
     snapshot = next;
+    if (activeProfile?.id != previousProfileId) _invalidateProxyData();
     if (becameConnected) {
       _beginConnectedRefresh();
     } else if (next.state == VpnConnectionState.disconnected ||
@@ -138,29 +145,56 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> toggleVpn() async {
-    if (snapshot.isBusy) return;
+    if (snapshot.isBusy || preparingConnection) return;
+    final attempt = ++_connectionAttempt;
     message = null;
+    preparingConnection = !snapshot.isConnected;
+    notifyListeners();
     try {
       if (snapshot.isConnected) {
         await bridge.stopVpn();
         return;
       }
-      var profile = activeProfile;
+      final profile = activeProfile;
       if (profile == null) throw StateError('먼저 프로필을 추가해 주세요.');
-      profile = await _refreshRuleSubscriptionIfNeeded(profile);
+      if (settings.mode != OutboundMode.direct &&
+          profile.sourceUrl?.trim().isNotEmpty == true) {
+        await refreshProfile(profile, connectionAttempt: attempt);
+      }
+      if (attempt != _connectionAttempt) return;
       final granted = await bridge.requestVpnPermission();
+      if (attempt != _connectionAttempt) return;
       if (!granted) throw StateError('VPN 권한이 필요합니다.');
+      if (activeProfile?.id != profile.id) {
+        throw StateError('프로필이 변경되었습니다. 다시 연결해 주세요.');
+      }
       await bridge.startVpn(profile.id);
     } catch (error) {
-      _report(error);
+      if (attempt == _connectionAttempt) _report(error);
+    } finally {
+      if (attempt == _connectionAttempt) {
+        preparingConnection = false;
+        notifyListeners();
+      }
     }
   }
 
+  void cancelConnectionPreparation() {
+    if (!preparingConnection) return;
+    _connectionAttempt++;
+    preparingConnection = false;
+    notifyListeners();
+  }
+
   Future<void> reloadProfiles() async {
+    final previousProfileId = activeProfile?.id;
     loadingProfiles = true;
     notifyListeners();
     try {
       profiles = await bridge.listProfiles();
+      if (activeProfile?.id != previousProfileId) {
+        _invalidateProxyData();
+      }
     } finally {
       loadingProfiles = false;
       notifyListeners();
@@ -176,6 +210,7 @@ class AppController extends ChangeNotifier {
     String? sourceUrl,
     required String content,
     SubscriptionInfo? subscriptionInfo,
+    int? connectionAttempt,
   }) async {
     if (snapshot.isBusy) {
       throw StateError('연결 상태가 바뀐 뒤 프로필을 저장해 주세요.');
@@ -199,6 +234,10 @@ class AppController extends ChangeNotifier {
       sourceUrl,
     );
     final validationError = await validateProfile(generatedConfig);
+    if (connectionAttempt != null &&
+        (connectionAttempt != _connectionAttempt || id != activeProfile?.id)) {
+      return;
+    }
     if (validationError != null && validationError.isNotEmpty) {
       throw FormatException(validationError);
     }
@@ -458,10 +497,18 @@ class AppController extends ChangeNotifier {
     return SubscriptionFetchResult(content: utf8.decode(chunks), info: info);
   }
 
-  Future<void> refreshProfile(VpnProfile profile) async {
+  Future<void> refreshProfile(
+    VpnProfile profile, {
+    int? connectionAttempt,
+  }) async {
     final source = profile.sourceUrl;
     if (source == null || source.isEmpty) return;
     final subscription = await fetchSubscriptionDetails(source);
+    if (connectionAttempt != null &&
+        (connectionAttempt != _connectionAttempt ||
+            profile.id != activeProfile?.id)) {
+      return;
+    }
     // Preserve Clash.Meta groups/rules. saveProfile normalizes them into the
     // compact metadata consumed by the native Xray runtime.
     final content = subscription.content;
@@ -470,6 +517,7 @@ class AppController extends ChangeNotifier {
       name: profile.name,
       sourceUrl: source,
       content: content,
+      connectionAttempt: connectionAttempt,
       // Some providers omit usage headers on otherwise valid refreshes. Keep
       // the last known quota instead of replacing it with an empty value.
       subscriptionInfo: subscription.info ?? profile.subscriptionInfo,
@@ -550,24 +598,50 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> loadProxyGroups() async {
+    final generation = ++_proxyLoadGeneration;
     if (loadingProxies) {
       _proxyReloadPending = true;
       return;
     }
+    final profile = activeProfile;
+    bool isCurrent() =>
+        generation == _proxyLoadGeneration && activeProfile?.id == profile?.id;
     loadingProxies = true;
     notifyListeners();
     try {
+      var content = profile == null ? '' : await bridge.readProfile(profile.id);
+      if (!isCurrent()) return;
+      List<RoutingRule> rules = profile == null
+          ? const []
+          : VlessRealityProfile.routingRulesFromStoredConfig(content);
+      if (profile != null &&
+          !snapshot.isConnected &&
+          settings.mode == OutboundMode.rule &&
+          profile.sourceUrl?.trim().isNotEmpty == true &&
+          VlessRealityProfile.needsRoutingListRefresh(content)) {
+        await refreshProfile(profile);
+        content = await bridge.readProfile(profile.id);
+        rules = VlessRealityProfile.routingRulesFromStoredConfig(content);
+      }
+      final List<ProxyGroup> groups;
       if (snapshot.isConnected) {
-        proxyGroups = parseProxyGroups(
+        groups = parseProxyGroups(
           await bridge.invokeCore('getProxies'),
           mode: settings.mode,
         );
       } else {
-        proxyGroups = await _offlineProxyGroups();
+        groups = await _offlineProxyGroups();
       }
+      if (!isCurrent()) return;
+      routingRules = rules;
+      proxyGroups = groups;
       _clearProxyMessage();
+      proxyError = null;
     } catch (error) {
-      message = '노드 목록을 불러오지 못했습니다: $error';
+      if (isCurrent()) {
+        proxyError = '노드 목록을 불러오지 못했습니다: $error';
+        message = proxyError;
+      }
     } finally {
       loadingProxies = false;
       notifyListeners();
@@ -641,6 +715,14 @@ class AppController extends ChangeNotifier {
               : item,
         )
         .toList(growable: false);
+  }
+
+  void _invalidateProxyData() {
+    _proxyLoadGeneration++;
+    routingRules = const [];
+    proxyGroups = const [];
+    proxyError = null;
+    _clearProxyMessage();
   }
 
   void _clearProxyMessage() {
@@ -872,6 +954,7 @@ class AppController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _connectionAttempt++;
     _snapshotSubscription?.cancel();
     super.dispose();
   }

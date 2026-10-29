@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../models/vpn_models.dart';
 import 'clash_subscription.dart';
 
 /// A VLESS share link using plain, TLS, or REALITY transport security.
@@ -201,15 +202,9 @@ class VlessRealityProfile {
       config = '$routingMetadataPrefix $encoded\n$config';
     }
     if (inlineRouting != null) {
-      final lines = input
-          .split(RegExp(r'\r?\n'))
-          .map((line) => line.trim())
-          .where(
-            (line) => RegExp(
-              r'^(?:AND|DOMAIN|DOMAIN-SUFFIX|DOMAIN-KEYWORD|IP-CIDR|IP-CIDR6|GEOIP|GEOSITE|MATCH),',
-              caseSensitive: false,
-            ).hasMatch(line),
-          )
+      final lines = (inlineRouting['displayRules'] as List)
+          .cast<Map<String, Object?>>()
+          .map((rule) => rule['raw'] as String)
           .join('\n');
       final encoded = base64UrlEncode(utf8.encode(lines)).replaceAll('=', '');
       config = '$inlineRulesPrefix $encoded\n$config';
@@ -243,7 +238,43 @@ class VlessRealityProfile {
   static bool hasCurrentRoutingMetadata(String content) =>
       (routingMetadataVersion(content) ?? 0) >= 2;
 
-  static int? routingMetadataVersion(String content) {
+  static int? routingMetadataVersion(String content) =>
+      _routingMetadata(content)?['version'] as int?;
+
+  static bool needsRoutingListRefresh(String content) {
+    final metadata = _routingMetadata(content);
+    return metadata?['source'] == 'clash-meta' &&
+        metadata?['displayRules'] == null;
+  }
+
+  static List<RoutingRule> routingRulesFromStoredConfig(String content) {
+    final metadata = _routingMetadata(content);
+    if (metadata == null) {
+      return linksFromStoredConfig(content).isEmpty
+          ? const []
+          : const [
+              RoutingRule(
+                destination: '나머지 모든 트래픽',
+                target: '자동 선택',
+                candidates: [],
+              ),
+            ];
+    }
+    return (metadata['displayRules'] as List? ??
+            metadata['rules'] as List? ??
+            const [])
+        .whereType<Map>()
+        .map((rule) {
+          final source = rule.cast<String, Object?>();
+          return RoutingRule.fromMap({
+            ...source,
+            'supported': ClashSubscriptionParser.supportsRule(source),
+          });
+        })
+        .toList(growable: false);
+  }
+
+  static Map<String, Object?>? _routingMetadata(String content) {
     final metadataLine = content
         .split(RegExp(r'\r?\n'))
         .map((line) => line.trim())
@@ -257,7 +288,7 @@ class VlessRealityProfile {
     try {
       final padded = encoded.padRight((encoded.length + 3) ~/ 4 * 4, '=');
       final decoded = jsonDecode(utf8.decode(base64Url.decode(padded)));
-      return decoded is Map ? decoded['version'] as int? : null;
+      return decoded is Map ? decoded.cast<String, Object?>() : null;
     } on FormatException {
       return null;
     }

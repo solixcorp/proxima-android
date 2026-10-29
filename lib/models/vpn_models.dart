@@ -252,6 +252,62 @@ class VpnSettings {
   };
 }
 
+class RoutingRule {
+  const RoutingRule({
+    required this.destination,
+    required this.target,
+    required this.candidates,
+    this.network,
+    this.port,
+    this.supported = true,
+  });
+
+  factory RoutingRule.fromMap(Map<String, Object?> map) {
+    final raw = map['raw']?.toString();
+    final parts = raw?.split(',');
+    final compoundRule = parts != null &&
+        const {'AND', 'OR', 'NOT'}.contains(parts.first.toUpperCase());
+    final simpleRule = parts != null &&
+        parts.length >= 3 &&
+        !compoundRule;
+    final destinations = [
+      ...?map['domain'] as List?,
+      ...?map['ip'] as List?,
+    ];
+    final policy = simpleRule
+        ? parts[2].trim()
+        : map['policy']?.toString() ?? (compoundRule ? parts.last.trim() : null);
+    final target = switch (map['target'] ?? policy) {
+      'direct' || 'DIRECT' => '직접 연결',
+      'block' || 'REJECT' || 'REJECT-DROP' => '차단',
+      _ => policy ?? '자동 선택',
+    };
+    return RoutingRule(
+      destination: destinations.isNotEmpty
+          ? destinations.join('\n')
+          : map['match'] == true
+          ? '나머지 모든 트래픽'
+          : simpleRule
+          ? [...parts.take(2), ...parts.skip(3)].join(',')
+          : raw ?? '',
+      target: target,
+      candidates: (map['candidates'] as List? ?? const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
+      network: map['network']?.toString(),
+      port: map['port']?.toString(),
+      supported: map['supported'] != false,
+    );
+  }
+
+  final String destination;
+  final String target;
+  final List<String> candidates;
+  final String? network;
+  final String? port;
+  final bool supported;
+}
+
 class ProxyGroup {
   const ProxyGroup({
     required this.name,
