@@ -9,12 +9,14 @@ import '../screens/proxies_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/subscription_screen.dart';
 import '../state/app_controller.dart';
+import '../core/proxima_account.dart';
 import '../widgets/app_motion.dart';
 
 class ProximaShell extends StatefulWidget {
-  const ProximaShell({super.key, required this.controller});
+  const ProximaShell({super.key, required this.controller, this.account});
 
   final AppController controller;
+  final ProximaAccount? account;
 
   @override
   State<ProximaShell> createState() => _ProximaShellState();
@@ -106,7 +108,10 @@ class _ProximaShellState extends State<ProximaShell>
               );
             },
           ),
-          SubscriptionScreen(controller: widget.controller),
+          SubscriptionScreen(
+            controller: widget.controller,
+            account: widget.account,
+          ),
           ProfilesScreen(controller: widget.controller),
           SettingsScreen(controller: widget.controller),
         ];

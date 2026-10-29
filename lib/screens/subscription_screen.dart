@@ -4,11 +4,18 @@ import '../models/vpn_models.dart';
 import '../state/app_controller.dart';
 import '../widgets/app_page.dart';
 import '../widgets/app_motion.dart';
+import '../core/proxima_account.dart';
+import '../widgets/proxima_account_card.dart';
 
 class SubscriptionScreen extends StatelessWidget {
-  const SubscriptionScreen({super.key, required this.controller});
+  const SubscriptionScreen({
+    super.key,
+    required this.controller,
+    this.account,
+  });
 
   final AppController controller;
+  final ProximaAccount? account;
 
   Future<void> _refresh(BuildContext context) async {
     final profile = controller.activeProfile;
@@ -49,6 +56,15 @@ class SubscriptionScreen extends StatelessWidget {
         ),
       ],
       children: [
+        if (account case final account?) ...[
+          const SectionHeader('Proxima 계정'),
+          ProximaAccountCard(
+            account: account,
+            canImport: !controller.snapshot.isBusy,
+            onImport: controller.importAccountSubscription,
+          ),
+          const SizedBox(height: 16),
+        ],
         _ConnectionStatusCard(controller: controller),
         const SectionHeader('현재 프로필'),
         if (profile == null)

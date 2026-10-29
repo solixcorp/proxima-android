@@ -768,6 +768,70 @@ rules:
     expect(overview.connections.single.route, 'Proxy');
     expect(overview.memory, 56);
   });
+
+  test('account subscription import updates rather than duplicates a profile', () async {
+    final bridge = _AccountImportBridge();
+    final controller = _AccountImportController(bridge);
+    await controller.initialize();
+
+    await controller.importAccountSubscription('https://sub.example.com/sub/account');
+    expect(bridge.savedProfiles, hasLength(2));
+    expect(bridge.selectedId, 'account-profile');
+    expect(bridge.startedProfileId, isNull);
+    expect(bridge.savedProfiles.last.subscriptionInfo?.planName, 'Standard');
+
+    await controller.importAccountSubscription('https://sub.example.com/sub/account');
+    expect(bridge.savedProfiles, hasLength(2));
+    expect(bridge.savedIds, [null, 'account-profile']);
+    expect(bridge.selectedId, 'account-profile');
+    controller.dispose();
+  });
+}
+
+class _AccountImportController extends AppController {
+  _AccountImportController(super.bridge);
+
+  @override
+  Future<SubscriptionFetchResult> fetchSubscriptionDetails(String source) async =>
+      const SubscriptionFetchResult(
+        content:
+            'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=tls&type=tcp#Account',
+        info: SubscriptionInfo(planName: 'Standard'),
+      );
+}
+
+class _AccountImportBridge extends _FakeBridge {
+  late final savedProfiles = <VpnProfile>[profile];
+  final savedIds = <String?>[];
+  String? selectedId;
+
+  @override
+  Future<List<VpnProfile>> listProfiles() async => List.of(savedProfiles);
+
+  @override
+  Future<VpnProfile> saveProfile({
+    String? id,
+    required String name,
+    String? sourceUrl,
+    required String content,
+    SubscriptionInfo? subscriptionInfo,
+  }) async {
+    savedIds.add(id);
+    final saved = VpnProfile(
+      id: id ?? 'account-profile',
+      name: name,
+      sourceUrl: sourceUrl,
+      updatedAt: DateTime.utc(2026),
+      isActive: false,
+      subscriptionInfo: subscriptionInfo,
+    );
+    savedProfiles.removeWhere((profile) => profile.id == saved.id);
+    savedProfiles.add(saved);
+    return saved;
+  }
+
+  @override
+  Future<void> selectProfile(String id) async => selectedId = id;
 }
 
 class _FakeBridge implements VpnBridge {

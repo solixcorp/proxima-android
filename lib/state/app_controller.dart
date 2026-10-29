@@ -275,6 +275,31 @@ class AppController extends ChangeNotifier {
   Future<String> fetchSubscription(String source) async =>
       (await fetchSubscriptionDetails(source)).content;
 
+  Future<void> importAccountSubscription(String source) async {
+    if (snapshot.isBusy) {
+      throw StateError('연결 상태가 바뀐 뒤 구독을 가져와 주세요.');
+    }
+    final subscription = await fetchSubscriptionDetails(source);
+    VpnProfile? existing;
+    for (final profile in profiles) {
+      if (profile.sourceUrl == source) {
+        existing = profile;
+        break;
+      }
+    }
+    await saveProfile(
+      id: existing?.id,
+      name: existing?.name ?? 'Proxima',
+      sourceUrl: source,
+      content: subscription.content,
+      subscriptionInfo: subscription.info ?? existing?.subscriptionInfo,
+    );
+    final imported = profiles.firstWhere(
+      (profile) => profile.sourceUrl == source,
+    );
+    await selectProfile(imported.id);
+  }
+
   Future<QrProfileResult> resolveQrPayload(
     String value, {
     Future<SubscriptionFetchResult> Function(String source)?

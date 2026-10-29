@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../state/app_controller.dart';
+import '../core/proxima_account.dart';
 import 'proxima_shell.dart';
 
 class ProximaApp extends StatelessWidget {
-  const ProximaApp({super.key, required this.controller});
+  const ProximaApp({super.key, required this.controller, this.account});
 
   final AppController controller;
+  final ProximaAccount? account;
 
   ThemeData _theme(Brightness brightness) {
     final scheme = ColorScheme.fromSeed(
@@ -59,7 +61,7 @@ class ProximaApp extends StatelessWidget {
       themeMode: ThemeMode.system,
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),
-      home: ProximaShell(controller: controller),
+      home: ProximaShell(controller: controller, account: account),
     );
   }
 }
