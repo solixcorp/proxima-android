@@ -8,11 +8,7 @@ import '../core/proxima_account.dart';
 import '../widgets/proxima_account_card.dart';
 
 class SubscriptionScreen extends StatelessWidget {
-  const SubscriptionScreen({
-    super.key,
-    required this.controller,
-    this.account,
-  });
+  const SubscriptionScreen({super.key, required this.controller, this.account});
 
   final AppController controller;
   final ProximaAccount? account;
@@ -37,7 +33,6 @@ class SubscriptionScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final profile = controller.activeProfile;
-    final info = profile?.subscriptionInfo;
     final hasSubscription = profile?.isSubscription == true;
     final canRefresh =
         profile?.sourceUrl?.trim().isNotEmpty == true &&
@@ -61,7 +56,10 @@ class SubscriptionScreen extends StatelessWidget {
           ProximaAccountCard(
             account: account,
             canImport: !controller.snapshot.isBusy,
-            onImport: controller.importAccountSubscription,
+            onImport: (source) => controller.importAccountSubscription(
+              source,
+              planName: account.planName,
+            ),
           ),
           const SizedBox(height: 16),
         ],
@@ -76,23 +74,40 @@ class SubscriptionScreen extends StatelessWidget {
         else ...[
           _ProfileCard(profile: profile),
           const SectionHeader('사용량'),
-          if (info == null || !info.hasDetails)
-            PageEmptyState(
-              icon: Icons.query_stats_outlined,
-              title: hasSubscription ? '구독 정보가 없습니다' : '사용량 정보가 없습니다',
-              message: hasSubscription
-                  ? canRefresh
-                        ? '업데이트를 눌러 구독 서버의 사용량 정보를 가져와 주세요.'
-                        : '이전 버전에서 가져온 구독입니다. 프로필 편집에서 HTTPS 구독 주소를 연결하면 업데이트할 수 있습니다.'
-                  : '이 VLESS 링크는 사용량 정보를 제공하지 않습니다.',
-              action: FilledButton.icon(
-                onPressed: canRefresh ? () => _refresh(context) : null,
-                icon: const Icon(Icons.refresh_rounded),
-                label: Text(hasSubscription ? '구독 업데이트' : '구독 주소 필요'),
-              ),
-            )
-          else
-            _UsageCard(info: info),
+          ListenableBuilder(
+            listenable: account ?? controller,
+            builder: (context, _) {
+              final storedInfo = profile.subscriptionInfo;
+              final info =
+                  account?.summary != null &&
+                      account!.ownsSubscription(profile.sourceUrl)
+                  ? SubscriptionInfo(
+                      upload: storedInfo?.upload ?? 0,
+                      download: storedInfo?.download ?? 0,
+                      total: storedInfo?.total ?? 0,
+                      expire: storedInfo?.expire,
+                      planName: account!.planName,
+                    )
+                  : storedInfo;
+              if (info != null && info.hasDetails) {
+                return _UsageCard(info: info);
+              }
+              return PageEmptyState(
+                icon: Icons.query_stats_outlined,
+                title: hasSubscription ? '구독 정보가 없습니다' : '사용량 정보가 없습니다',
+                message: hasSubscription
+                    ? canRefresh
+                          ? '업데이트를 눌러 구독 서버의 사용량 정보를 가져와 주세요.'
+                          : '이전 버전에서 가져온 구독입니다. 프로필 편집에서 HTTPS 구독 주소를 연결하면 업데이트할 수 있습니다.'
+                    : '이 VLESS 링크는 사용량 정보를 제공하지 않습니다.',
+                action: FilledButton.icon(
+                  onPressed: canRefresh ? () => _refresh(context) : null,
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: Text(hasSubscription ? '구독 업데이트' : '구독 주소 필요'),
+                ),
+              );
+            },
+          ),
         ],
       ],
     );
@@ -254,11 +269,11 @@ class _InfoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
+    return AppValueTile(
       leading: Icon(icon),
-      title: Text(label),
-      subtitle: detail == null ? null : Text(detail!),
-      trailing: ListTileValueText(value),
+      title: label,
+      subtitle: detail,
+      value: value,
     );
   }
 }

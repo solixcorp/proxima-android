@@ -69,6 +69,17 @@ class ProximaAccount extends ChangeNotifier {
   bool get signedIn => _session != null;
   bool get configured => clientId.isNotEmpty;
 
+  String? get planName {
+    final value = summary?['plan_name'];
+    return value is String && value.trim().isNotEmpty ? value.trim() : null;
+  }
+
+  bool ownsSubscription(String? source) =>
+      signedIn &&
+      source != null &&
+      source.isNotEmpty &&
+      (source == subscriptionUrl || _subscriptionAlternates.contains(source));
+
   AuthorizationServiceConfiguration get _configuration =>
       AuthorizationServiceConfiguration(
         authorizationEndpoint: _server.resolve('/oauth/authorize').toString(),
@@ -163,6 +174,9 @@ class ProximaAccount extends ChangeNotifier {
       try {
         await import(candidate);
         subscriptionUrl = candidate;
+        _subscriptionAlternates = candidates
+            .where((url) => url != candidate)
+            .toList();
         return;
       } on SocketException {
         if (index == candidates.length - 1) rethrow;

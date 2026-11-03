@@ -243,15 +243,26 @@ class _ConnectionCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-            Row(
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
               children: [
-                Icon(Icons.alt_route_rounded, size: 18, color: colors.primary),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    connection.route,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      WidgetSpan(
+                        alignment: PlaceholderAlignment.middle,
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Icon(
+                            Icons.alt_route_rounded,
+                            size: 18,
+                            color: colors.primary,
+                          ),
+                        ),
+                      ),
+                      TextSpan(text: connection.route),
+                    ],
                   ),
                 ),
                 Text(

@@ -5,17 +5,399 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proxima/app/proxima_app.dart';
+import 'package:proxima/app/proxima_shell.dart';
 import 'package:proxima/core/native_vpn_bridge.dart';
+import 'package:proxima/core/proxima_account.dart';
 import 'package:proxima/core/vless_reality_profile.dart';
 import 'package:proxima/models/vpn_models.dart';
 import 'package:proxima/screens/home_screen.dart';
+import 'package:proxima/screens/connections_screen.dart';
 import 'package:proxima/screens/profiles_screen.dart';
 import 'package:proxima/screens/proxies_screen.dart';
 import 'package:proxima/screens/subscription_screen.dart';
+import 'package:proxima/screens/settings_screen.dart';
 import 'package:proxima/state/app_controller.dart';
 import 'package:proxima/widgets/app_page.dart';
 
 void main() {
+  testWidgets('short pages keep the last action visible at the scroll end', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(568, 320)
+      ..devicePixelRatio = 1
+      ..padding = const FakeViewPadding(top: 24, bottom: 24);
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AppPage(
+            title: 'Profiles',
+            floatingActionButton: FloatingActionButton.extended(
+              onPressed: () {},
+              icon: const Icon(Icons.add),
+              label: const Text('Add'),
+            ),
+            children: [
+              for (var i = 0; i < 20; i++) ListTile(title: Text('Item $i')),
+              FilledButton(
+                key: const Key('last_action'),
+                onPressed: () {},
+                child: const Text('Last action'),
+              ),
+            ],
+          ),
+          bottomNavigationBar: NavigationBar(
+            height: 72,
+            destinations: const [
+              NavigationDestination(icon: Icon(Icons.home), label: 'Home'),
+              NavigationDestination(
+                icon: Icon(Icons.settings),
+                label: 'Settings',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    final scroll = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    // The first pass materializes the lazy list's final extent.
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('last_action')),
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    scroll.position.jumpTo(scroll.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('last_action')).hitTestable(), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const Key('last_action'))).dy,
+      greaterThanOrEqualTo(tester.getBottomRight(find.byType(AppBar)).dy),
+    );
+    expect(
+      tester
+          .getRect(find.byType(FloatingActionButton))
+          .overlaps(tester.getRect(find.byKey(const Key('last_action')))),
+      isFalse,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final size in [
+    const Size(320, 480),
+    const Size(568, 320),
+    const Size(640, 320),
+    const Size(800, 1280),
+  ]) {
+    for (final scale in [1.0, 2.0]) {
+      testWidgets('all tabs fit $size at text scale $scale', (tester) async {
+        tester.view
+          ..physicalSize = size
+          ..devicePixelRatio = 1
+          ..padding = const FakeViewPadding(top: 24, bottom: 24);
+        addTearDown(tester.view.reset);
+        final bridge = _FakeBridge();
+        final controller = AppController(bridge);
+        addTearDown(controller.dispose);
+        await controller.initialize();
+        await tester.pumpWidget(
+          MaterialApp(
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(scale),
+                disableAnimations: true,
+              ),
+              child: child!,
+            ),
+            home: ProximaShell(controller: controller),
+          ),
+        );
+        await tester.pumpAndSettle();
+        for (final screen in [
+          HomeScreen,
+          SubscriptionScreen,
+          ProfilesScreen,
+          SettingsScreen,
+        ]) {
+          if (screen != HomeScreen) {
+            final icon = switch (screen) {
+              SubscriptionScreen => Icons.data_usage_outlined,
+              ProfilesScreen => Icons.description_outlined,
+              _ => Icons.more_horiz_rounded,
+            };
+            final destination = find.descendant(
+              of: find.byType(
+                size.width >= 600 ? NavigationRail : NavigationBar,
+              ),
+              matching: find.byIcon(icon),
+            );
+            await tester.ensureVisible(destination);
+            await tester.tap(destination);
+            await tester.pumpAndSettle();
+          }
+          final scroller = find.descendant(
+            of: find.byType(screen),
+            matching: find.byType(CustomScrollView),
+          );
+          final bottom = switch (screen) {
+            HomeScreen => '이번 연결',
+            SubscriptionScreen => '구독 주소 필요',
+            ProfilesScreen => 'VLESS REALITY',
+            _ => '오픈소스 라이선스',
+          };
+          await tester.scrollUntilVisible(
+            find.text(bottom),
+            120,
+            scrollable: find
+                .descendant(of: scroller, matching: find.byType(Scrollable))
+                .first,
+          );
+          await tester.pumpAndSettle();
+          expect(
+            tester.takeException(),
+            isNull,
+            reason: '$screen, $size, $scale',
+          );
+          expect(find.text(bottom).hitTestable(), findsOneWidget);
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+      });
+    }
+  }
+
+  testWidgets('short profile menu can reach every import method', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(320, 480)
+      ..devicePixelRatio = 1
+      ..padding = const FakeViewPadding(top: 24, bottom: 24);
+    addTearDown(tester.view.reset);
+    final controller = AppController(_FakeBridge());
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: ProfilesScreen(controller: controller),
+      ),
+    );
+    await tester.tap(find.byType(FloatingActionButton));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    final menu = find.descendant(
+      of: find.byType(BottomSheet),
+      matching: find.byType(SingleChildScrollView),
+    );
+    await tester.scrollUntilVisible(
+      find.text('solix.kr을 앱 안에서 엽니다.'),
+      120,
+      scrollable: find.descendant(of: menu, matching: find.byType(Scrollable)),
+    );
+    expect(find.text('Proxima').hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('profile save stays reachable above the keyboard', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(320, 480)
+      ..devicePixelRatio = 1
+      ..padding = const FakeViewPadding(top: 24, bottom: 24);
+    addTearDown(tester.view.reset);
+    final controller = AppController(_FakeBridge());
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await tester.pumpWidget(
+      MaterialApp(home: ProfilesScreen(controller: controller)),
+    );
+    await tester.tap(find.byType(FloatingActionButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('URL'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(TextField).last);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 220);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byIcon(Icons.save_outlined));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.save_outlined).hitTestable(), findsOneWidget);
+    expect(
+      tester.getBottomRight(find.byType(FilledButton)).dy,
+      lessThanOrEqualTo(260),
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('node picker scrolls its header and last node on short screens', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(640, 320)
+      ..devicePixelRatio = 1
+      ..padding = const FakeViewPadding(top: 24, bottom: 24);
+    addTearDown(tester.view.reset);
+    final controller = AppController(_FakeBridge())
+      ..settings = const VpnSettings(mode: OutboundMode.global)
+      ..proxyGroups = [
+        ProxyGroup(
+          name: 'GLOBAL',
+          type: 'Selector',
+          selected: 'Node 0',
+          proxies: List.generate(20, (index) => 'Node $index'),
+        ),
+      ];
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: ProxiesScreen(controller: controller),
+      ),
+    );
+    await tester.scrollUntilVisible(
+      find.text('GLOBAL'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('GLOBAL'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.scrollUntilVisible(
+      find.text('Node 19'),
+      100,
+      scrollable: find.descendant(
+        of: find.byType(BottomSheet),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await Scrollable.ensureVisible(
+      tester.element(find.text('Node 19')),
+      alignment: 1,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Node 19').hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('long subscription values fit with large text', (tester) async {
+    tester.view
+      ..physicalSize = const Size(320, 480)
+      ..devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final controller = AppController(_FakeBridge())
+      ..profiles = [
+        VpnProfile(
+          id: 'layout',
+          name: 'Long subscription profile',
+          sourceUrl: 'https://example.com/subscription',
+          updatedAt: DateTime.utc(2026),
+          isActive: true,
+          subscriptionInfo: SubscriptionInfo(
+            planName: 'A very long subscription plan name for a narrow screen',
+            total: 999999999999,
+            expire: DateTime.utc(2027),
+          ),
+        ),
+      ];
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: SubscriptionScreen(controller: controller),
+      ),
+    );
+    await tester.scrollUntilVisible(
+      find.text('만료일'),
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await Scrollable.ensureVisible(
+      tester.element(find.text('만료일')),
+      alignment: 1,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('만료일').hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('connection details wrap on a narrow large-text screen', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(320, 480)
+      ..devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final bridge = _FakeBridge()
+      ..connectionsResponse = jsonEncode({
+        'code': 0,
+        'data': {
+          'connections': [
+            {
+              'id': 'layout',
+              'metadata': {
+                'host': 'long-destination.example.com',
+                'network': 'tcp',
+              },
+              'chains': ['Long proxy route', 'Tokyo'],
+              'upload': 999999999,
+              'download': 999999999,
+            },
+          ],
+        },
+      });
+    final controller = AppController(bridge)
+      ..snapshot = const VpnSnapshot(state: VpnConnectionState.connected);
+    addTearDown(controller.dispose);
+    await controller.loadConnections();
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: ConnectionsScreen(controller: controller),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final scroll = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    scroll.position.jumpTo(scroll.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Long proxy route'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('renders the disconnected dashboard', (tester) async {
     final controller = AppController(_FakeBridge());
     await controller.initialize();
@@ -155,10 +537,12 @@ void main() {
     );
     await tester.pumpAndSettle();
     final scroll = tester.state<ScrollableState>(
-      find.descendant(
-        of: find.byType(CustomScrollView),
-        matching: find.byType(Scrollable),
-      ).first,
+      find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
     expect(scroll.position.pixels, 0);
     await tester.dragFrom(
@@ -170,35 +554,41 @@ void main() {
   });
 
   for (final mode in [OutboundMode.rule, OutboundMode.global]) {
-    test('refreshes current subscription servers before connecting in $mode', () async {
-      final bridge = _AccountImportBridge();
-      final controller = _AccountImportController(bridge);
-      addTearDown(controller.dispose);
-      await controller.initialize();
-      await controller.importAccountSubscription(
-        'https://sub.example.com/sub/account',
-      );
-      // Current routing metadata must not suppress a fresh server-list fetch.
-      bridge.profileContent = VlessRealityProfile.storedConfigFromInput(
-        '${controller.subscriptionContent}\nMATCH,PROXY',
-        profileName: 'Proxima',
-      );
-      controller.settings = VpnSettings(mode: mode);
-      controller.subscriptionContent =
-          'vless://123e4567-e89b-42d3-a456-426614174000@new-edge.example.com:443?security=tls&type=tcp#Active';
+    test(
+      'refreshes current subscription servers before connecting in $mode',
+      () async {
+        final bridge = _AccountImportBridge();
+        final controller = _AccountImportController(bridge);
+        addTearDown(controller.dispose);
+        await controller.initialize();
+        await controller.importAccountSubscription(
+          'https://sub.example.com/sub/account',
+        );
+        // Current routing metadata must not suppress a fresh server-list fetch.
+        bridge.profileContent = VlessRealityProfile.storedConfigFromInput(
+          '${controller.subscriptionContent}\nMATCH,PROXY',
+          profileName: 'Proxima',
+        );
+        controller.settings = VpnSettings(mode: mode);
+        controller.subscriptionContent = 'vless://123e4567-e89b-42d3-a456-426614174000@new-edge.example.com:443?security=tls&type=tcp#Active';
 
-      await controller.toggleVpn();
+        await controller.toggleVpn();
 
-      final links = VlessRealityProfile.linksFromStoredConfig(
-        bridge.profileContent,
-      );
-      expect(links.map((link) => Uri.parse(link).host), ['new-edge.example.com']);
-      expect(bridge.startedProfileId, 'account-profile');
-    });
+        final links = VlessRealityProfile.linksFromStoredConfig(
+          bridge.profileContent,
+        );
+        expect(links.map((link) => Uri.parse(link).host), [
+          'new-edge.example.com',
+        ]);
+        expect(bridge.startedProfileId, 'account-profile');
+      },
+    );
   }
 
-  test('preserves rule-set and process rules in subscription display order', () {
-    const yaml = '''
+  test(
+    'preserves rule-set and process rules in subscription display order',
+    () {
+      const yaml = '''
 proxies:
   - {name: Seoul, type: vless, server: edge.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000}
 proxy-groups:
@@ -209,21 +599,22 @@ rules:
   - PROCESS-NAME,game.exe,PROXY
   - MATCH,PROXY
 ''';
-    final content = VlessRealityProfile.storedConfigFromInput(
-      yaml,
-      profileName: 'Proxima',
-    );
+      final content = VlessRealityProfile.storedConfigFromInput(
+        yaml,
+        profileName: 'Proxima',
+      );
 
-    final rules = VlessRealityProfile.routingRulesFromStoredConfig(content);
+      final rules = VlessRealityProfile.routingRulesFromStoredConfig(content);
 
-    expect(rules.map((rule) => rule.destination), [
-      'RULE-SET,private_domain',
-      'domain:example.com',
-      'PROCESS-NAME,game.exe',
-      '나머지 모든 트래픽',
-    ]);
-    expect(rules.map((rule) => rule.supported), [false, true, false, true]);
-  });
+      expect(rules.map((rule) => rule.destination), [
+        'RULE-SET,private_domain',
+        'domain:example.com',
+        'PROCESS-NAME,game.exe',
+        '나머지 모든 트래픽',
+      ]);
+      expect(rules.map((rule) => rule.supported), [false, true, false, true]);
+    },
+  );
 
   test('does not offer Proxima quota placeholders as connection servers', () {
     const yaml = '''
@@ -247,24 +638,27 @@ rules:
     expect(Uri.parse(links.single).fragment, 'Seoul');
   });
 
-  test('does not connect stale servers when subscription refresh fails', () async {
-    final bridge = _AccountImportBridge();
-    final controller = _AccountImportController(bridge);
-    addTearDown(controller.dispose);
-    await controller.initialize();
-    await controller.importAccountSubscription(
-      'https://sub.example.com/sub/account',
-    );
-    final originalContent = bridge.profileContent;
-    controller.failFetch = true;
+  test(
+    'does not connect stale servers when subscription refresh fails',
+    () async {
+      final bridge = _AccountImportBridge();
+      final controller = _AccountImportController(bridge);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.importAccountSubscription(
+        'https://sub.example.com/sub/account',
+      );
+      final originalContent = bridge.profileContent;
+      controller.failFetch = true;
 
-    await controller.toggleVpn();
+      await controller.toggleVpn();
 
-    expect(bridge.startedProfileId, isNull);
-    expect(bridge.profileContent, originalContent);
-    expect(controller.message, isNotNull);
-    expect(controller.preparingConnection, isFalse);
-  });
+      expect(bridge.startedProfileId, isNull);
+      expect(bridge.profileContent, originalContent);
+      expect(controller.message, isNotNull);
+      expect(controller.preparingConnection, isFalse);
+    },
+  );
 
   test('local profiles connect without a subscription fetch', () async {
     final bridge = _FakeBridge();
@@ -278,36 +672,43 @@ rules:
     expect(controller.message, isNull);
   });
 
-  test('does not connect a different profile selected during server refresh', () async {
-    final bridge = _AccountImportBridge();
-    final controller = _AccountImportController(bridge);
-    addTearDown(controller.dispose);
-    await controller.initialize();
-    await controller.importAccountSubscription('https://sub.example.com/first');
-    bridge.savedProfiles.add(
-      VpnProfile(
-        id: 'second-subscription',
-        name: 'Second',
-        sourceUrl: 'https://sub.example.com/second',
-        updatedAt: DateTime.utc(2026),
-        isActive: false,
-      ),
-    );
-    final requested = Completer<void>();
-    final response = Completer<SubscriptionFetchResult>();
-    controller
-      ..fetchRequested = requested
-      ..pendingFetch = response.future;
+  test(
+    'does not connect a different profile selected during server refresh',
+    () async {
+      final bridge = _AccountImportBridge();
+      final controller = _AccountImportController(bridge);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.importAccountSubscription(
+        'https://sub.example.com/first',
+      );
+      bridge.savedProfiles.add(
+        VpnProfile(
+          id: 'second-subscription',
+          name: 'Second',
+          sourceUrl: 'https://sub.example.com/second',
+          updatedAt: DateTime.utc(2026),
+          isActive: false,
+        ),
+      );
+      final requested = Completer<void>();
+      final response = Completer<SubscriptionFetchResult>();
+      controller
+        ..fetchRequested = requested
+        ..pendingFetch = response.future;
 
-    final connection = controller.toggleVpn();
-    await requested.future.timeout(const Duration(seconds: 5));
-    await controller.selectProfile('second-subscription');
-    response.complete(SubscriptionFetchResult(content: controller.subscriptionContent));
-    await connection;
+      final connection = controller.toggleVpn();
+      await requested.future.timeout(const Duration(seconds: 5));
+      await controller.selectProfile('second-subscription');
+      response.complete(
+        SubscriptionFetchResult(content: controller.subscriptionContent),
+      );
+      await connection;
 
-    expect(bridge.startedProfileId, isNull);
-    expect(controller.activeProfile?.id, 'second-subscription');
-  });
+      expect(bridge.startedProfileId, isNull);
+      expect(controller.activeProfile?.id, 'second-subscription');
+    },
+  );
 
   for (final failOldRead in [false, true]) {
     test('discards stale rule reads after switching profiles ($failOldRead)', () async {
@@ -353,6 +754,7 @@ rules:
           finished.complete();
         }
       }
+
       controller.addListener(observe);
       addTearDown(() => controller.removeListener(observe));
       await controller.selectProfile('second-profile');
@@ -410,7 +812,9 @@ rules:
     expect(controller.proxyError, isNull);
   });
 
-  testWidgets('rule errors survive dismissal of the shell message', (tester) async {
+  testWidgets('rule errors survive dismissal of the shell message', (
+    tester,
+  ) async {
     final bridge = _FakeBridge()..profileReadError = 'rule_read_failed';
     final controller = AppController(bridge);
     addTearDown(controller.dispose);
@@ -425,74 +829,83 @@ rules:
     expect(find.textContaining('rule_read_failed'), findsOneWidget);
   });
 
-  test('cancelling server preparation discards a late subscription response', () async {
-    final bridge = _AccountImportBridge();
-    final controller = _AccountImportController(bridge);
-    addTearDown(controller.dispose);
-    await controller.initialize();
-    await controller.importAccountSubscription('https://sub.example.com/account');
-    final originalContent = bridge.profileContent;
-    final requested = Completer<void>();
-    final response = Completer<SubscriptionFetchResult>();
-    controller
-      ..fetchRequested = requested
-      ..pendingFetch = response.future;
-
-    final connection = controller.toggleVpn();
-    await requested.future.timeout(const Duration(seconds: 5));
-    controller.cancelConnectionPreparation();
-    response.complete(
-      const SubscriptionFetchResult(
-        content:
-            'vless://123e4567-e89b-42d3-a456-426614174000@late.example.com:443?security=tls&type=tcp#Late',
-      ),
-    );
-    await connection;
-
-    expect(bridge.startedProfileId, isNull);
-    expect(bridge.profileContent, originalContent);
-    expect(controller.preparingConnection, isFalse);
-    expect(controller.message, isNull);
-  });
-
-  for (final reconnect in [false, true]) {
-    test('cancellation during validation discards its write ($reconnect)', () async {
+  test(
+    'cancelling server preparation discards a late subscription response',
+    () async {
       final bridge = _AccountImportBridge();
       final controller = _AccountImportController(bridge);
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.importAccountSubscription('https://sub.example.com/account');
-      controller.subscriptionContent =
-          'vless://123e4567-e89b-42d3-a456-426614174000@cancelled.example.com:443?security=tls&type=tcp#Cancelled';
+      await controller.importAccountSubscription(
+        'https://sub.example.com/account',
+      );
+      final originalContent = bridge.profileContent;
       final requested = Completer<void>();
-      final response = Completer<String?>();
-      bridge
-        ..validationRequested = requested
-        ..pendingValidation = response.future;
-      final cancelledConnection = controller.toggleVpn();
+      final response = Completer<SubscriptionFetchResult>();
+      controller
+        ..fetchRequested = requested
+        ..pendingFetch = response.future;
+
+      final connection = controller.toggleVpn();
       await requested.future.timeout(const Duration(seconds: 5));
       controller.cancelConnectionPreparation();
-      if (reconnect) {
-        controller.subscriptionContent =
-            'vless://123e4567-e89b-42d3-a456-426614174000@current.example.com:443?security=tls&type=tcp#Current';
-        await controller.toggleVpn();
-      }
-      final currentContent = bridge.profileContent;
-      final currentSaveCount = bridge.savedIds.length;
-      response.complete(null);
-      await cancelledConnection;
-      expect(bridge.profileContent, currentContent);
-      expect(bridge.savedIds, hasLength(currentSaveCount));
-      expect(
-        bridge.startedProfileId,
-        reconnect ? controller.activeProfile?.id : isNull,
+      response.complete(
+        const SubscriptionFetchResult(
+          content: 'vless://123e4567-e89b-42d3-a456-426614174000@late.example.com:443?security=tls&type=tcp#Late',
+        ),
       );
+      await connection;
+
+      expect(bridge.startedProfileId, isNull);
+      expect(bridge.profileContent, originalContent);
       expect(controller.preparingConnection, isFalse);
       expect(controller.message, isNull);
-    });
+    },
+  );
+
+  for (final reconnect in [false, true]) {
+    test(
+      'cancellation during validation discards its write ($reconnect)',
+      () async {
+        final bridge = _AccountImportBridge();
+        final controller = _AccountImportController(bridge);
+        addTearDown(controller.dispose);
+        await controller.initialize();
+        await controller.importAccountSubscription(
+          'https://sub.example.com/account',
+        );
+        controller.subscriptionContent = 'vless://123e4567-e89b-42d3-a456-426614174000@cancelled.example.com:443?security=tls&type=tcp#Cancelled';
+        final requested = Completer<void>();
+        final response = Completer<String?>();
+        bridge
+          ..validationRequested = requested
+          ..pendingValidation = response.future;
+        final cancelledConnection = controller.toggleVpn();
+        await requested.future.timeout(const Duration(seconds: 5));
+        controller.cancelConnectionPreparation();
+        if (reconnect) {
+          controller.subscriptionContent = 'vless://123e4567-e89b-42d3-a456-426614174000@current.example.com:443?security=tls&type=tcp#Current';
+          await controller.toggleVpn();
+        }
+        final currentContent = bridge.profileContent;
+        final currentSaveCount = bridge.savedIds.length;
+        response.complete(null);
+        await cancelledConnection;
+        expect(bridge.profileContent, currentContent);
+        expect(bridge.savedIds, hasLength(currentSaveCount));
+        expect(
+          bridge.startedProfileId,
+          reconnect ? controller.activeProfile?.id : isNull,
+        );
+        expect(controller.preparingConnection, isFalse);
+        expect(controller.message, isNull);
+      },
+    );
   }
 
-  testWidgets('progress appears only after a one-second operation', (tester) async {
+  testWidgets('progress appears only after a one-second operation', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       const MaterialApp(
         home: DelayedProgressIndicator(semanticsLabel: 'Loading rules'),
@@ -1171,23 +1584,147 @@ rules:
     expect(overview.memory, 56);
   });
 
-  test('account subscription import updates rather than duplicates a profile', () async {
-    final bridge = _AccountImportBridge();
-    final controller = _AccountImportController(bridge);
-    await controller.initialize();
+  test(
+    'account subscription import updates rather than duplicates a profile',
+    () async {
+      final bridge = _AccountImportBridge();
+      final controller = _AccountImportController(bridge);
+      await controller.initialize();
 
-    await controller.importAccountSubscription('https://sub.example.com/sub/account');
-    expect(bridge.savedProfiles, hasLength(2));
-    expect(bridge.selectedId, 'account-profile');
-    expect(bridge.startedProfileId, isNull);
-    expect(bridge.savedProfiles.last.subscriptionInfo?.planName, 'Standard');
+      await controller.importAccountSubscription(
+        'https://sub.example.com/sub/account',
+      );
+      expect(bridge.savedProfiles, hasLength(2));
+      expect(bridge.selectedId, 'account-profile');
+      expect(bridge.startedProfileId, isNull);
+      expect(bridge.savedProfiles.last.subscriptionInfo?.planName, 'Standard');
 
-    await controller.importAccountSubscription('https://sub.example.com/sub/account');
-    expect(bridge.savedProfiles, hasLength(2));
-    expect(bridge.savedIds, [null, 'account-profile']);
-    expect(bridge.selectedId, 'account-profile');
-    controller.dispose();
+      await controller.importAccountSubscription(
+        'https://sub.example.com/sub/account',
+      );
+      expect(bridge.savedProfiles, hasLength(2));
+      expect(bridge.savedIds, [null, 'account-profile']);
+      expect(bridge.selectedId, 'account-profile');
+      controller.dispose();
+    },
+  );
+
+  testWidgets('account plan overrides the subscription provider title', (
+    tester,
+  ) async {
+    const source = 'https://sub.example.com/sub/account';
+    final account = _PlanAccount()
+      ..summary = {'plan_name': 'Everyday Plus'}
+      ..subscriptionUrl = source;
+    final controller = AppController(_FakeBridge())
+      ..profiles = [
+        VpnProfile(
+          id: 'account-profile',
+          name: 'Imported account',
+          sourceUrl: source,
+          updatedAt: DateTime.utc(2026),
+          isActive: true,
+          subscriptionInfo: const SubscriptionInfo(
+            total: 1024,
+            planName: 'Proxima',
+          ),
+        ),
+      ];
+    addTearDown(account.dispose);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SubscriptionScreen(controller: controller, account: account),
+      ),
+    );
+    await tester.scrollUntilVisible(
+      find.byIcon(Icons.data_usage_outlined),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Everyday Plus'), findsOneWidget);
+    expect(find.text('Proxima'), findsNothing);
+
+    account.summary = {'plan_name': 'Premium'};
+    account.changed();
+    await tester.pump();
+    expect(find.text('Premium'), findsOneWidget);
+    expect(find.text('Everyday Plus'), findsNothing);
+
+    account.summary = {'plan_name': null};
+    account.changed();
+    await tester.pump();
+    expect(find.text('Premium'), findsNothing);
+    expect(find.text('Proxima'), findsNothing);
   });
+
+  testWidgets('account plan does not override another subscription', (
+    tester,
+  ) async {
+    final account = _PlanAccount()
+      ..summary = {'plan_name': 'Everyday Plus'}
+      ..subscriptionUrl = 'https://sub.example.com/sub/account';
+    final controller = AppController(_FakeBridge())
+      ..profiles = [
+        VpnProfile(
+          id: 'other-profile',
+          name: 'Other subscription',
+          sourceUrl: 'https://other.example.com/subscription',
+          updatedAt: DateTime.utc(2026),
+          isActive: true,
+          subscriptionInfo: const SubscriptionInfo(
+            total: 1024,
+            planName: 'Other plan',
+          ),
+        ),
+      ];
+    addTearDown(account.dispose);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SubscriptionScreen(controller: controller, account: account),
+      ),
+    );
+    await tester.scrollUntilVisible(
+      find.byIcon(Icons.data_usage_outlined),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Other plan'), findsOneWidget);
+    expect(find.text('Everyday Plus'), findsNothing);
+  });
+
+  test('account import persists the API plan without replacing usage', () async {
+    final expiry = DateTime.utc(2027);
+    final bridge = _AccountImportBridge();
+    final controller = _AccountImportController(bridge)
+      ..subscriptionInfo = SubscriptionInfo(
+        upload: 12,
+        download: 34,
+        total: 1024,
+        expire: expiry,
+        planName: 'Proxima',
+      );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.importAccountSubscription(
+      'https://sub.example.com/sub/account',
+      planName: 'Everyday Plus',
+    );
+    final info = bridge.savedProfiles.last.subscriptionInfo!;
+    expect(info.planName, 'Everyday Plus');
+    expect(info.upload, 12);
+    expect(info.download, 34);
+    expect(info.total, 1024);
+    expect(info.expire, expiry);
+  });
+}
+
+class _PlanAccount extends ProximaAccount {
+  @override
+  bool get signedIn => true;
+
+  void changed() => notifyListeners();
 }
 
 class _AccountImportController extends AppController {
@@ -1196,11 +1733,16 @@ class _AccountImportController extends AppController {
   bool failFetch = false;
   Completer<void>? fetchRequested;
   Future<SubscriptionFetchResult>? pendingFetch;
+  SubscriptionInfo? subscriptionInfo = const SubscriptionInfo(
+    planName: 'Standard',
+  );
   String subscriptionContent =
       'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=tls&type=tcp#Account';
 
   @override
-  Future<SubscriptionFetchResult> fetchSubscriptionDetails(String source) async {
+  Future<SubscriptionFetchResult> fetchSubscriptionDetails(
+    String source,
+  ) async {
     fetchRequested?.complete();
     fetchRequested = null;
     final pending = pendingFetch;
@@ -1208,7 +1750,7 @@ class _AccountImportController extends AppController {
     if (failFetch) throw const SocketException('subscription unavailable');
     return SubscriptionFetchResult(
       content: subscriptionContent,
-      info: const SubscriptionInfo(planName: 'Standard'),
+      info: subscriptionInfo,
     );
   }
 }
@@ -1262,6 +1804,7 @@ class _AccountImportBridge extends _FakeBridge {
 }
 
 class _FakeBridge implements VpnBridge {
+  String? connectionsResponse;
   String? lastMethod;
   String? lastData;
   final invokedMethods = <String>[];
@@ -1313,6 +1856,9 @@ class _FakeBridge implements VpnBridge {
     lastMethod = method;
     lastData = data;
     invokedMethods.add(method);
+    if (method == 'getConnections' && connectionsResponse != null) {
+      return connectionsResponse!;
+    }
     return '{"code":0,"data":""}';
   }
 

@@ -81,48 +81,87 @@ class AppPage extends StatelessWidget {
     final double expandedHeight =
         (subtitle != null ? 132.0 : 108.0) +
         (extraTitleHeight + extraSubtitleHeight).clamp(0, double.infinity);
+    final toolbarHeight =
+        kToolbarHeight + extraTitleHeight.clamp(0, double.infinity);
 
-    final scrollView = CustomScrollView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      slivers: [
-        SliverAppBar(
-          pinned: true,
-          expandedHeight: expandedHeight,
-          scrolledUnderElevation: 0,
-          actions: actions,
-          flexibleSpace: _AppPageFlexibleTitle(
-            title: title,
-            subtitle: subtitle,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxHeight < 400;
+        final scrollView = CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverAppBar(
+              pinned: true,
+              toolbarHeight: toolbarHeight,
+              expandedHeight: compact ? toolbarHeight : expandedHeight,
+              scrolledUnderElevation: 0,
+              title: compact
+                  ? Text(
+                      title,
+                      style: textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    )
+                  : null,
+              actions: [
+                ...actions,
+                if (compact && floatingActionButton != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: floatingActionButton!,
+                  ),
+              ],
+              flexibleSpace: compact
+                  ? null
+                  : _AppPageFlexibleTitle(title: title, subtitle: subtitle),
+            ),
+            if (compact && subtitle != null)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                  child: Text(
+                    subtitle!,
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                8,
+                16,
+                !compact && floatingActionButton != null ? 104 : 24,
+              ),
+              sliver: SliverList.list(children: children),
+            ),
+          ],
+        );
+        return Scaffold(
+          body: SafeArea(
+            top: false,
+            child: onRefresh == null
+                ? scrollView
+                : RefreshIndicator(onRefresh: onRefresh!, child: scrollView),
           ),
-        ),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 104),
-          sliver: SliverList.list(children: children),
-        ),
-      ],
-    );
-    return Scaffold(
-      body: onRefresh == null
-          ? scrollView
-          : RefreshIndicator(onRefresh: onRefresh!, child: scrollView),
-      floatingActionButton: floatingActionButton,
+          floatingActionButton: compact ? null : floatingActionButton,
+        );
+      },
     );
   }
 }
 
 class _AppPageFlexibleTitle extends StatelessWidget {
-  const _AppPageFlexibleTitle({
-    required this.title,
-    this.subtitle,
-  });
+  const _AppPageFlexibleTitle({required this.title, this.subtitle});
 
   final String title;
   final String? subtitle;
 
   @override
   Widget build(BuildContext context) {
-    final settings =
-        context.dependOnInheritedWidgetOfExactType<FlexibleSpaceBarSettings>();
+    final settings = context
+        .dependOnInheritedWidgetOfExactType<FlexibleSpaceBarSettings>();
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final textTheme = theme.textTheme;
@@ -133,7 +172,10 @@ class _AppPageFlexibleTitle extends StatelessWidget {
 
     final double delta = settings.maxExtent - settings.minExtent;
     final double t = delta > 0
-        ? ((settings.currentExtent - settings.minExtent) / delta).clamp(0.0, 1.0)
+        ? ((settings.currentExtent - settings.minExtent) / delta).clamp(
+            0.0,
+            1.0,
+          )
         : 0.0;
 
     final bool hasLeading = ModalRoute.of(context)?.canPop ?? false;
@@ -153,11 +195,11 @@ class _AppPageFlexibleTitle extends StatelessWidget {
       textTheme.titleMedium?.fontSize ?? 16,
     );
     final titleLineHeight = fontHeight * (textTheme.titleMedium?.height ?? 1.5);
-    final subtitleLineHeight = scaler.scale(
-      textTheme.bodyMedium?.fontSize ?? 14,
-    ) * (textTheme.bodyMedium?.height ?? 1.5);
+    final subtitleLineHeight =
+        scaler.scale(textTheme.bodyMedium?.fontSize ?? 14) *
+        (textTheme.bodyMedium?.height ?? 1.5);
     final double collapsedTop =
-        topPadding + (kToolbarHeight - titleLineHeight) / 2;
+        topPadding + (settings.minExtent - topPadding - titleLineHeight) / 2;
     final double expandedTop =
         settings.maxExtent -
         (titleLineHeight * 1.1 +
@@ -188,18 +230,16 @@ class _AppPageFlexibleTitle extends StatelessWidget {
           ),
         Positioned(
           left: currentLeft,
+          right: 20 + (1 - t) * 56,
           top: currentTop,
-          child: Transform.scale(
-            scale: scale,
-            alignment: Alignment.centerLeft,
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: textTheme.titleMedium?.copyWith(
-                color: colorScheme.onSurface,
-                fontWeight: FontWeight.bold,
-              ),
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: textTheme.titleMedium?.copyWith(
+              fontSize: (textTheme.titleMedium?.fontSize ?? 16) * scale,
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ),
@@ -245,6 +285,58 @@ class ListTileValueText extends StatelessWidget {
   }
 }
 
+class AppValueTile extends StatelessWidget {
+  const AppValueTile({
+    super.key,
+    required this.leading,
+    required this.title,
+    required this.value,
+    this.subtitle,
+    this.onTap,
+  });
+
+  final Widget leading;
+  final String title;
+  final String value;
+  final String? subtitle;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stacked =
+            constraints.maxWidth < 360 ||
+            MediaQuery.textScalerOf(context).scale(14) > 18;
+        return ListTile(
+          leading: leading,
+          title: Text(title),
+          subtitle: stacked
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(value, style: Theme.of(context).textTheme.bodyLarge),
+                    if (subtitle != null) Text(subtitle!),
+                  ],
+                )
+              : subtitle == null
+              ? null
+              : Text(subtitle!),
+          trailing: stacked
+              ? null
+              : ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: constraints.maxWidth * 0.45,
+                  ),
+                  child: ListTileValueText(value),
+                ),
+          onTap: onTap,
+        );
+      },
+    );
+  }
+}
+
 class PageEmptyState extends StatelessWidget {
   const PageEmptyState({
     super.key,
@@ -262,7 +354,10 @@ class PageEmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 56, horizontal: 24),
+      padding: EdgeInsets.symmetric(
+        vertical: MediaQuery.sizeOf(context).height < 500 ? 16 : 56,
+        horizontal: 24,
+      ),
       child: Column(
         children: [
           Icon(icon, size: 48, color: Theme.of(context).colorScheme.secondary),

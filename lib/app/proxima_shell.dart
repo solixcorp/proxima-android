@@ -136,16 +136,17 @@ class _ProximaShellState extends State<ProximaShell>
                     switchInCurve: Curves.easeOutCubic,
                     switchOutCurve: Curves.easeInCubic,
                     transitionBuilder: (child, animation) {
-                      final slide = Tween<Offset>(
-                        begin: const Offset(0, -1),
-                        end: Offset.zero,
-                      ).animate(
-                        CurvedAnimation(
-                          parent: animation,
-                          curve: Curves.easeOutCubic,
-                          reverseCurve: Curves.easeInCubic,
-                        ),
-                      );
+                      final slide =
+                          Tween<Offset>(
+                            begin: const Offset(0, -1),
+                            end: Offset.zero,
+                          ).animate(
+                            CurvedAnimation(
+                              parent: animation,
+                              curve: Curves.easeOutCubic,
+                              reverseCurve: Curves.easeInCubic,
+                            ),
+                          );
                       return SizeTransition(
                         sizeFactor: animation,
                         alignment: AlignmentDirectional.topStart,
@@ -164,7 +165,9 @@ class _ProximaShellState extends State<ProximaShell>
                         message: message,
                         onClose: widget.controller.clearMessage,
                       ),
-                      null => const SizedBox.shrink(key: ValueKey('no-message')),
+                      null => const SizedBox.shrink(
+                        key: ValueKey('no-message'),
+                      ),
                     },
                   ),
                 ),
@@ -176,23 +179,27 @@ class _ProximaShellState extends State<ProximaShell>
                 child: useRail
                     ? Row(
                         children: [
-                          NavigationRail(
-                            selectedIndex: _index,
-                            onDestinationSelected: _select,
-                            labelType: NavigationRailLabelType.all,
-                            leading: const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 20),
-                              child: _AppMark(),
+                          SafeArea(
+                            bottom: false,
+                            child: NavigationRail(
+                              scrollable: true,
+                              selectedIndex: _index,
+                              onDestinationSelected: _select,
+                              labelType: NavigationRailLabelType.all,
+                              leading: const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 20),
+                                child: _AppMark(),
+                              ),
+                              destinations: _destinations
+                                  .map(
+                                    (item) => NavigationRailDestination(
+                                      icon: item.icon,
+                                      selectedIcon: item.selectedIcon,
+                                      label: Text(item.label),
+                                    ),
+                                  )
+                                  .toList(),
                             ),
-                            destinations: _destinations
-                                .map(
-                                  (item) => NavigationRailDestination(
-                                    icon: item.icon,
-                                    selectedIcon: item.selectedIcon,
-                                    label: Text(item.label),
-                                  ),
-                                )
-                                .toList(),
                           ),
                           const VerticalDivider(width: 1),
                           Expanded(child: body),
@@ -304,7 +311,10 @@ class _MessageBannerState extends State<_MessageBanner> {
               child: SafeArea(
                 bottom: false,
                 child: ListTile(
-                  leading: Icon(Icons.error_outline, color: colors.onErrorContainer),
+                  leading: Icon(
+                    Icons.error_outline,
+                    color: colors.onErrorContainer,
+                  ),
                   title: Text(
                     widget.message,
                     maxLines: 2,

@@ -158,11 +158,13 @@ class HomeScreen extends StatelessWidget {
                           child: showingActiveConnection
                               ? OutlinedButton.icon(
                                   key: const Key('connect_button'),
-                                  onPressed: snapshot.isBusy ||
+                                  onPressed:
+                                      snapshot.isBusy ||
                                           controller.preparingConnection
                                       ? null
                                       : controller.toggleVpn,
-                                  icon: snapshot.isBusy ||
+                                  icon:
+                                      snapshot.isBusy ||
                                           controller.preparingConnection
                                       ? const SizedBox.square(
                                           dimension: 18,
@@ -180,7 +182,8 @@ class HomeScreen extends StatelessWidget {
                                   style: FilledButton.styleFrom(
                                     disabledForegroundColor: colors.onSurface,
                                   ),
-                                  onPressed: snapshot.isBusy ||
+                                  onPressed:
+                                      snapshot.isBusy ||
                                           controller.preparingConnection
                                       ? null
                                       : controller.toggleVpn,
@@ -224,6 +227,11 @@ class HomeScreen extends StatelessWidget {
         ),
         const SectionHeader('작동 모드'),
         SegmentedButton<OutboundMode>(
+          direction:
+              MediaQuery.sizeOf(context).width < 360 ||
+                  MediaQuery.textScalerOf(context).scale(14) > 18
+              ? Axis.vertical
+              : Axis.horizontal,
           // Keep every segment's icon slot the same size during selection.
           showSelectedIcon: false,
           style: ButtonStyle(animationDuration: AppMotion.medium(context)),
@@ -353,28 +361,25 @@ class HomeScreen extends StatelessWidget {
         Card(
           child: Column(
             children: [
-              ListTile(
+              AppValueTile(
                 leading: const Icon(Icons.schedule_outlined),
-                title: const Text('연결 시간'),
-                trailing: ListTileValueText(_uptime()),
+                title: '연결 시간',
+                value: _uptime(),
               ),
               const Divider(height: 1, indent: 56),
-              ListTile(
+              AppValueTile(
                 leading: const Icon(Icons.swap_horiz_rounded),
-                title: const Text('Xray 코어'),
-                subtitle: const Text('최근 Xray 연결과 사용 중인 메모리 확인'),
-                trailing: ListTileValueText(
-                  snapshot.isConnected ? '실행 중' : '정지됨',
-                ),
+                title: 'Xray 코어',
+                subtitle: '최근 Xray 연결과 사용 중인 메모리 확인',
+                value: snapshot.isConnected ? '실행 중' : '정지됨',
                 onTap: snapshot.isConnected ? openConnections : null,
               ),
               const Divider(height: 1, indent: 56),
-              ListTile(
+              AppValueTile(
                 leading: const Icon(Icons.data_usage_outlined),
-                title: const Text('이번 연결'),
-                trailing: ListTileValueText(
-                  '↑ ${formatBytes(snapshot.totalUpload)}  ↓ ${formatBytes(snapshot.totalDownload)}',
-                ),
+                title: '이번 연결',
+                value:
+                    '↑ ${formatBytes(snapshot.totalUpload)}  ↓ ${formatBytes(snapshot.totalDownload)}',
               ),
             ],
           ),

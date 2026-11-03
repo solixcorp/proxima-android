@@ -163,7 +163,7 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                   if (summary != null) ...[
                     const SizedBox(height: 16),
                     Text(
-                      '플랜 · ${summary['plan_name'] ?? '이용 중인 플랜 없음'}',
+                      '플랜 · ${account.planName ?? '이용 중인 플랜 없음'}',
                       style: textTheme.titleMedium,
                     ),
                     if (used != null)

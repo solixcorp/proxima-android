@@ -314,7 +314,10 @@ class AppController extends ChangeNotifier {
   Future<String> fetchSubscription(String source) async =>
       (await fetchSubscriptionDetails(source)).content;
 
-  Future<void> importAccountSubscription(String source) async {
+  Future<void> importAccountSubscription(
+    String source, {
+    String? planName,
+  }) async {
     if (snapshot.isBusy) {
       throw StateError('연결 상태가 바뀐 뒤 구독을 가져와 주세요.');
     }
@@ -326,12 +329,22 @@ class AppController extends ChangeNotifier {
         break;
       }
     }
+    final info = subscription.info ?? existing?.subscriptionInfo;
+    final accountPlanName = planName?.trim();
     await saveProfile(
       id: existing?.id,
       name: existing?.name ?? 'Proxima',
       sourceUrl: source,
       content: subscription.content,
-      subscriptionInfo: subscription.info ?? existing?.subscriptionInfo,
+      subscriptionInfo: accountPlanName?.isNotEmpty == true
+          ? SubscriptionInfo(
+              upload: info?.upload ?? 0,
+              download: info?.download ?? 0,
+              total: info?.total ?? 0,
+              expire: info?.expire,
+              planName: accountPlanName,
+            )
+          : info,
     );
     final imported = profiles.firstWhere(
       (profile) => profile.sourceUrl == source,

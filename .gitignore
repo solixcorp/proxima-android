@@ -87,6 +87,10 @@ Testing/
 .rcc/
 /dist/
 
+# Local screenshots and verification artifacts
+/docs/screenshots/
+/.omo/evidence/
+
 # Existing local tooling folders
 .atom/
 .build/
@@ -94,3 +98,4 @@ Testing/
 .svn/
 .swiftpm/
 /migrate_working_dir/
+.omo

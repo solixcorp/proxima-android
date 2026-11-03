@@ -40,20 +40,22 @@ class ProxiesScreen extends StatelessWidget {
           actions: [
             IconButton.filled(
               tooltip: '새로고침',
-              style: IconButton.styleFrom(
-                foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                disabledForegroundColor:
-                    Theme.of(context).colorScheme.onSurfaceVariant,
-              ).copyWith(
-                side: WidgetStateProperty.resolveWith((states) {
-                  return states.contains(WidgetState.focused)
-                      ? BorderSide(
-                          color: Theme.of(context).colorScheme.onSurface,
-                          width: 2,
-                        )
-                      : BorderSide.none;
-                }),
-              ),
+              style:
+                  IconButton.styleFrom(
+                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                    disabledForegroundColor: Theme.of(context)
+                        .colorScheme
+                        .onSurfaceVariant,
+                  ).copyWith(
+                    side: WidgetStateProperty.resolveWith((states) {
+                      return states.contains(WidgetState.focused)
+                          ? BorderSide(
+                              color: Theme.of(context).colorScheme.onSurface,
+                              width: 2,
+                            )
+                          : BorderSide.none;
+                    }),
+                  ),
               onPressed:
                   !controller.loadingProxies && mode != OutboundMode.direct
                   ? controller.loadProxyGroups
@@ -75,9 +77,7 @@ class ProxiesScreen extends StatelessWidget {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        DelayedProgressIndicator(
-                          semanticsLabel: '규칙 확인 중',
-                        ),
+                        DelayedProgressIndicator(semanticsLabel: '규칙 확인 중'),
                         SizedBox(height: 12),
                         Text('규칙 확인 중'),
                       ],
@@ -113,18 +113,19 @@ class ProxiesScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 6),
                           if (rule.network != null || rule.port != null)
-                          Text(
-                            [
-                              if (rule.network != null)
-                                rule.network!.toUpperCase(),
-                              if (rule.port != null) '포트 ${rule.port}',
-                            ].join(' · '),
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme.onSurfaceVariant,
-                                ),
-                          ),
+                            Text(
+                              [
+                                if (rule.network != null)
+                                  rule.network!.toUpperCase(),
+                                if (rule.port != null) '포트 ${rule.port}',
+                              ].join(' · '),
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                            ),
                           Text(
                             rule.target,
                             style: Theme.of(context).textTheme.bodyMedium,
@@ -136,7 +137,8 @@ class ProxiesScreen extends StatelessWidget {
                               style: Theme.of(context).textTheme.bodySmall
                                   ?.copyWith(
                                     color: Theme.of(context)
-                                        .colorScheme.onSurfaceVariant,
+                                        .colorScheme
+                                        .onSurfaceVariant,
                                   ),
                             ),
                           ],
@@ -155,72 +157,75 @@ class ProxiesScreen extends StatelessWidget {
                 ],
               ],
             ] else
-            AnimatedSwitcher(
-              duration: AppMotion.medium(context),
-              layoutBuilder: (currentChild, previousChildren) => Stack(
-                alignment: Alignment.topCenter,
-                children: [...previousChildren, ?currentChild],
-              ),
-              child: mode == OutboundMode.direct
-                  ? const PageEmptyState(
-                      key: ValueKey('direct-mode'),
-                      icon: Icons.arrow_forward_rounded,
-                      title: '직접 연결 모드입니다',
-                      message: '전역 모드를 선택하면 사용할 노드를 지정할 수 있습니다.',
-                    )
-                  : controller.loadingProxies && controller.proxyGroups.isEmpty
-                  ? const Padding(
-                      key: ValueKey('loading-proxies'),
-                      padding: EdgeInsets.all(56),
-                      child: Center(child: CircularProgressIndicator()),
-                    )
-                  : controller.proxyGroups.isEmpty
-                  ? const PageEmptyState(
-                      key: ValueKey('empty-proxies'),
-                      icon: Icons.layers_clear_outlined,
-                      title: '선택할 전역 노드가 없습니다',
-                      message: '프로필에 사용할 수 있는 노드가 있는지 확인해 주세요.',
-                    )
-                  : Column(
-                      key: const ValueKey('proxy-groups'),
-                      children: [
-                        for (final group in controller.proxyGroups) ...[
-                          Card(
-                            key: ValueKey(group.name),
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 10,
-                              ),
-                              leading: CircleAvatar(
-                                child: Icon(
-                                  group.type.toLowerCase().contains('urltest')
-                                      ? Icons.speed_rounded
-                                      : Icons.alt_route_rounded,
+              AnimatedSwitcher(
+                duration: AppMotion.medium(context),
+                layoutBuilder: (currentChild, previousChildren) => Stack(
+                  alignment: Alignment.topCenter,
+                  children: [...previousChildren, ?currentChild],
+                ),
+                child: mode == OutboundMode.direct
+                    ? const PageEmptyState(
+                        key: ValueKey('direct-mode'),
+                        icon: Icons.arrow_forward_rounded,
+                        title: '직접 연결 모드입니다',
+                        message: '전역 모드를 선택하면 사용할 노드를 지정할 수 있습니다.',
+                      )
+                    : controller.loadingProxies &&
+                          controller.proxyGroups.isEmpty
+                    ? const Padding(
+                        key: ValueKey('loading-proxies'),
+                        padding: EdgeInsets.all(56),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    : controller.proxyGroups.isEmpty
+                    ? const PageEmptyState(
+                        key: ValueKey('empty-proxies'),
+                        icon: Icons.layers_clear_outlined,
+                        title: '선택할 전역 노드가 없습니다',
+                        message: '프로필에 사용할 수 있는 노드가 있는지 확인해 주세요.',
+                      )
+                    : Column(
+                        key: const ValueKey('proxy-groups'),
+                        children: [
+                          for (final group in controller.proxyGroups) ...[
+                            Card(
+                              key: ValueKey(group.name),
+                              child: ListTile(
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 10,
                                 ),
+                                leading: CircleAvatar(
+                                  child: Icon(
+                                    group.type.toLowerCase().contains('urltest')
+                                        ? Icons.speed_rounded
+                                        : Icons.alt_route_rounded,
+                                  ),
+                                ),
+                                title: Text(group.name),
+                                subtitle: Text(
+                                  displayProxyName(group.selected),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    ListTileValueText(
+                                      '${group.proxies.length}',
+                                    ),
+                                    const SizedBox(width: 4),
+                                    const Icon(Icons.chevron_right_rounded),
+                                  ],
+                                ),
+                                onTap: () => _openGroup(context, group),
                               ),
-                              title: Text(group.name),
-                              subtitle: Text(
-                                displayProxyName(group.selected),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  ListTileValueText('${group.proxies.length}'),
-                                  const SizedBox(width: 4),
-                                  const Icon(Icons.chevron_right_rounded),
-                                ],
-                              ),
-                              onTap: () => _openGroup(context, group),
                             ),
-                          ),
-                          const SizedBox(height: 10),
+                            const SizedBox(height: 10),
+                          ],
                         ],
-                      ],
-                    ),
-            ),
+                      ),
+              ),
           ],
         );
       },
@@ -235,9 +240,8 @@ class _RuleError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = Theme.of(context).textTheme.bodyMedium?.copyWith(
-      color: Theme.of(context).colorScheme.error,
-    );
+    final style = Theme.of(context).textTheme.bodyMedium
+        ?.copyWith(color: Theme.of(context).colorScheme.error);
     return LayoutBuilder(
       builder: (context, constraints) {
         final painter = TextPainter(
@@ -245,15 +249,14 @@ class _RuleError extends StatelessWidget {
           textScaler: MediaQuery.textScalerOf(context),
         );
         final lines = <String>[];
-        final paragraphs = message.replaceFirst(
-          '노드 목록을 불러오지 못했습니다: ',
-          '규칙 조회 실패\n',
-        ).split('\n');
+        final paragraphs = message
+            .replaceFirst('노드 목록을 불러오지 못했습니다: ', '규칙 조회 실패\n')
+            .split('\n');
         for (final paragraph in paragraphs) {
           final words = paragraph.split(' ');
-          if (words.length > 1 &&
-              RegExp(r'^주세요[.!?]?$').hasMatch(words.last)) {
-            words[words.length - 2] = '${words[words.length - 2]} ${words.last}';
+          if (words.length > 1 && RegExp(r'^주세요[.!?]?$').hasMatch(words.last)) {
+            words[words.length - 2] =
+                '${words[words.length - 2]} ${words.last}';
             words.removeLast();
           }
           var line = '';
@@ -384,112 +387,115 @@ class _ProxyPickerState extends State<_ProxyPicker> {
           final current = group ?? widget.group;
           final disabled = widget.controller.snapshot.isBusy;
           final connected = widget.controller.snapshot.isConnected;
-          return Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        current.name,
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                    ),
-                    TextButton.icon(
-                      onPressed: connected && !disabled && !_testingAll
-                          ? () => _testAll(current.proxies)
-                          : null,
-                      icon: _testingAll
-                          ? const SizedBox.square(
-                              dimension: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.speed_rounded),
-                      label: const Text('모두 측정'),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: RadioGroup<String>(
-                  groupValue: current.selected,
-                  onChanged: (value) {
-                    if (value != null &&
-                        _working == null &&
-                        _testing.isEmpty &&
-                        !disabled &&
-                        !_testingAll) {
-                      _choose(value);
-                    }
-                  },
-                  child: ListView.builder(
-                    controller: scrollController,
-                    itemCount: current.proxies.length,
-                    itemBuilder: (context, index) {
-                      final proxy = current.proxies[index];
-                      final selected = proxy == current.selected;
-                      final working =
-                          _working == proxy || _testing.contains(proxy);
-                      return Material(
-                        animationDuration: AppMotion.short(context),
-                        color: selected
-                            ? Theme.of(context).colorScheme.primaryContainer
-                                  .withValues(alpha: 0.35)
-                            : Colors.transparent,
-                        child: RadioListTile<String>(
-                          value: proxy,
-                          enabled: !working && !disabled && !_testingAll,
-                          title: Text(
-                            displayProxyName(proxy),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+          return SafeArea(
+            top: false,
+            child: RadioGroup<String>(
+              groupValue: current.selected,
+              onChanged: (value) {
+                if (value != null &&
+                    _working == null &&
+                    _testing.isEmpty &&
+                    !disabled &&
+                    !_testingAll) {
+                  _choose(value);
+                }
+              },
+              child: ListView.builder(
+                controller: scrollController,
+                itemCount: current.proxies.length + 1,
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    return Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  current.name,
+                                  style: Theme.of(context).textTheme.titleLarge,
+                                ),
+                              ),
+                              TextButton.icon(
+                                onPressed:
+                                    connected && !disabled && !_testingAll
+                                    ? () => _testAll(current.proxies)
+                                    : null,
+                                icon: _testingAll
+                                    ? const SizedBox.square(
+                                        dimension: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.speed_rounded),
+                                label: const Text('모두 측정'),
+                              ),
+                            ],
                           ),
-                          secondary: AnimatedSwitcher(
-                            duration: AppMotion.short(context),
-                            child: working
-                                ? const SizedBox.square(
-                                    key: ValueKey('working'),
-                                    dimension: 22,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : selected
-                                ? const Icon(
-                                    Icons.check_circle_rounded,
-                                    key: ValueKey('selected'),
-                                  )
-                                : IconButton(
-                                    key: const ValueKey('test'),
-                                    tooltip: '지연 시간 측정',
-                                    onPressed:
-                                        connected &&
-                                            !disabled &&
-                                            !_testingAll &&
-                                            _testing.isEmpty
-                                        ? () => _test(proxy)
-                                        : null,
-                                    icon: const Icon(
-                                      Icons.network_ping_rounded,
-                                    ),
-                                  ),
-                          ),
-                          subtitle: switch (_delays[proxy]) {
-                            final int delay => Text(
-                              delay < 0 ? '시간 초과' : '$delay ms',
-                            ),
-                            null => null,
-                          },
-                          selected: selected,
                         ),
-                      );
-                    },
-                  ),
-                ),
+                        const Divider(height: 1),
+                      ],
+                    );
+                  }
+                  final proxy = current.proxies[index - 1];
+                  final selected = proxy == current.selected;
+                  final working = _working == proxy || _testing.contains(proxy);
+                  return Material(
+                    animationDuration: AppMotion.short(context),
+                    color: selected
+                        ? Theme.of(context).colorScheme.primaryContainer
+                              .withValues(alpha: 0.35)
+                        : Colors.transparent,
+                    child: RadioListTile<String>(
+                      value: proxy,
+                      enabled: !working && !disabled && !_testingAll,
+                      title: Text(
+                        displayProxyName(proxy),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      secondary: AnimatedSwitcher(
+                        duration: AppMotion.short(context),
+                        child: working
+                            ? const SizedBox.square(
+                                key: ValueKey('working'),
+                                dimension: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : selected
+                            ? const Icon(
+                                Icons.check_circle_rounded,
+                                key: ValueKey('selected'),
+                              )
+                            : IconButton(
+                                key: const ValueKey('test'),
+                                tooltip: '지연 시간 측정',
+                                onPressed:
+                                    connected &&
+                                        !disabled &&
+                                        !_testingAll &&
+                                        _testing.isEmpty
+                                    ? () => _test(proxy)
+                                    : null,
+                                icon: const Icon(Icons.network_ping_rounded),
+                              ),
+                      ),
+                      subtitle: switch (_delays[proxy]) {
+                        final int delay => Text(
+                          delay < 0 ? '시간 초과' : '$delay ms',
+                        ),
+                        null => null,
+                      },
+                      selected: selected,
+                    ),
+                  );
+                },
               ),
-            ],
+            ),
           );
         },
       ),

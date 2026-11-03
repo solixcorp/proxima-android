@@ -45,11 +45,15 @@ class _ProximaWebScreenState extends State<ProximaWebScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          if (_progress < 100) LinearProgressIndicator(value: _progress / 100),
-          Expanded(child: WebViewWidget(controller: _controller)),
-        ],
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            if (_progress < 100)
+              LinearProgressIndicator(value: _progress / 100),
+            Expanded(child: WebViewWidget(controller: _controller)),
+          ],
+        ),
       ),
     );
   }

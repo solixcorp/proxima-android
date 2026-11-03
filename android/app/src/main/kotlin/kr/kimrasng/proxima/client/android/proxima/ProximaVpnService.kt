@@ -15,6 +15,7 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import java.io.File
 import java.net.InetAddress
 import java.net.Inet4Address
@@ -78,7 +79,7 @@ class ProximaVpnService : AndroidVpnService() {
         trafficTask?.cancel(false)
         trafficTask = null
         if (preserveSession) VpnRuntime.reconnecting(profile) else VpnRuntime.connecting(profile)
-        startForeground(NOTIFICATION_ID, notification("Proxima VPN", "${profile.name} · 연결 중"))
+        startForeground(NOTIFICATION_ID, notification("연결 중"))
         worker.execute {
             runCatching {
                 closeTunnel()
@@ -109,7 +110,7 @@ class ProximaVpnService : AndroidVpnService() {
             ?: systemDns.firstOrNull()
             ?: IPV4_DNS
         val descriptor = Builder()
-            .setSession("Proxima")
+            .setSession(profile.name)
             .setMtu(settings.mtu)
             .addAddress(IPV4_ADDRESS, IPV4_PREFIX)
             .addRoute("0.0.0.0", 0)
@@ -136,6 +137,9 @@ class ProximaVpnService : AndroidVpnService() {
                             excludeRoute(IpPrefix(address.address, address.prefixLength))
                         }
                 }
+                // More specific than the private LAN exclusions: app DNS must
+                // still reach Xray's synthetic resolver, not the Wi-Fi router.
+                addRoute(VPN_DNS, 32)
             }.establish() ?: error("Android가 VPN 인터페이스 생성을 거부했습니다.")
         if (token != generation.get() || stopping) {
             descriptor.close()
@@ -184,7 +188,7 @@ class ProximaVpnService : AndroidVpnService() {
             activeMode = settings.mode,
             preserveSession = preserveSession,
         )
-        updateNotification("${profile.name} · 보호됨")
+        updateNotification("보호됨")
         startTrafficUpdates(token, preserveSession, metricsPort)
     }
 
@@ -196,21 +200,30 @@ class ProximaVpnService : AndroidVpnService() {
         var previousUpload = 0L
         var previousDownload = 0L
         var samples = 0
+        var trafficReadFailed = false
         trafficTask = trafficScheduler.scheduleAtFixedRate({
             if (token != generation.get() || stopping) return@scheduleAtFixedRate
-            runCatching { readXrayTraffic(metricsPort) }.onSuccess { counters ->
-                val uploadSpeed = (counters.upload - previousUpload).coerceAtLeast(0)
-                val downloadSpeed = (counters.download - previousDownload).coerceAtLeast(0)
+            val counters = runCatching { readXrayTraffic(metricsPort) }
+                .onFailure { error ->
+                    if (!trafficReadFailed) Log.w("ProximaVpnService", "Unable to read Xray traffic counters", error)
+                    trafficReadFailed = true
+                }.getOrNull()
+            if (token != generation.get() || stopping) return@scheduleAtFixedRate
+            val uploadSpeed = counters?.let { (it.upload - previousUpload).coerceAtLeast(0) } ?: 0L
+            val downloadSpeed = counters?.let { (it.download - previousDownload).coerceAtLeast(0) } ?: 0L
+            if (counters != null) {
+                trafficReadFailed = false
                 previousUpload = counters.upload
                 previousDownload = counters.download
-                VpnRuntime.traffic(
-                    up = uploadSpeed,
-                    down = downloadSpeed,
-                    totalUp = uploadOffset + counters.upload,
-                    totalDown = downloadOffset + counters.download,
-                )
-                updateNotificationWithCurrentSnapshot()
             }
+            // Keep the UI clock ticking even when a metrics request fails.
+            VpnRuntime.traffic(
+                up = uploadSpeed,
+                down = downloadSpeed,
+                totalUp = uploadOffset + previousUpload,
+                totalDown = downloadOffset + previousDownload,
+            )
+            updateNotificationWithCurrentSnapshot()
             samples++
             if (samples % 5 == 0 && !runCatching { XrayCore.isRunning() }.getOrDefault(false)) {
                 worker.execute {
@@ -334,7 +347,7 @@ class ProximaVpnService : AndroidVpnService() {
     private fun updateNotification(text: String) {
         (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(
             NOTIFICATION_ID,
-            notification("Proxima VPN", text)
+            notification(text)
         )
     }
 
@@ -343,29 +356,20 @@ class ProximaVpnService : AndroidVpnService() {
         val state = snapshot["state"]?.toString()
         if (state != "connected") return
 
-        val profileName = snapshot["profileName"]?.toString()
-        val activeNode = snapshot["activeNode"]?.toString()
         val startedAt = (snapshot["startedAt"] as? Number)?.toLong() ?: 0L
         val uploadSpeed = (snapshot["uploadSpeed"] as? Number)?.toLong() ?: 0L
         val downloadSpeed = (snapshot["downloadSpeed"] as? Number)?.toLong() ?: 0L
 
-        val displayNode = when {
-            !activeNode.isNullOrEmpty() && !profileName.isNullOrEmpty() -> "$profileName · $activeNode"
-            !activeNode.isNullOrEmpty() -> activeNode
-            !profileName.isNullOrEmpty() -> profileName
-            else -> "VPN"
-        }
-
-        val title = "Proxima · $displayNode"
         val text = "↑ ${formatBytes(uploadSpeed)}  ↓ ${formatBytes(downloadSpeed)}  ·  ⏱ ${formatUptime(startedAt)}"
 
         (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(
             NOTIFICATION_ID,
-            notification(title, text)
+            notification(text)
         )
     }
 
-    private fun notification(title: String, text: String): Notification {
+    private fun notification(text: String): Notification {
+        val title = VpnRuntime.snapshot()["profileName"]?.toString()?.takeIf { it.isNotEmpty() } ?: "VPN"
         val openIntent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val stopIntent = PendingIntent.getService(this, 1, Intent(this, ProximaVpnService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, CHANNEL_ID) else @Suppress("DEPRECATION") Notification.Builder(this)
@@ -413,13 +417,11 @@ class ProximaVpnService : AndroidVpnService() {
         private const val IPV4_ADDRESS = "172.19.0.1"
         private const val IPV4_PREFIX = 30
         private const val IPV4_DNS = "1.1.1.1"
-        private const val VPN_DNS = "172.19.0.2"
+        private const val VPN_DNS = XrayConfig.VPN_DNS
         private const val IPV6_ADDRESS = "fdfe:dcba:9876::1"
         private const val IPV6_PREFIX = 126
-        private val LOCAL_BYPASS_ROUTES = listOf(
-            "169.254.0.0/16",
+        private val LOCAL_BYPASS_ROUTES = XrayConfig.LOCAL_NETWORK_ROUTES + listOf(
             "224.0.0.0/4",
-            "fe80::/10",
             "ff00::/8",
         )
     }

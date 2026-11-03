@@ -92,61 +92,64 @@ class ProfilesScreen extends StatelessWidget {
     return showModalBottomSheet<void>(
       context: context,
       useSafeArea: true,
-      builder: (sheetContext) => Padding(
-        padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.link_rounded),
-              title: const Text('URL'),
-              subtitle: const Text('HTTPS 구독 주소에서 노드를 가져옵니다.'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _openEditor(context, entryMode: _ProfileEntryMode.url);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.vpn_key_outlined),
-              title: const Text('VLESS 링크'),
-              subtitle: const Text('공유 링크 또는 여러 링크를 붙여넣습니다.'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _openEditor(context, entryMode: _ProfileEntryMode.link);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.qr_code_scanner_rounded),
-              title: const Text('QR 코드 스캔'),
-              subtitle: const Text('카메라로 VLESS 링크를 읽습니다.'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _scanQr(context);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.file_open_outlined),
-              title: const Text('파일'),
-              subtitle: const Text('저장된 VLESS 링크 파일을 가져옵니다.'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _import(context);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.language_rounded),
-              title: const Text('Proxima'),
-              subtitle: const Text('solix.kr을 앱 안에서 엽니다.'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => const ProximaWebScreen(),
-                  ),
-                );
-              },
-            ),
-          ],
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.link_rounded),
+                title: const Text('URL'),
+                subtitle: const Text('HTTPS 구독 주소에서 노드를 가져옵니다.'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _openEditor(context, entryMode: _ProfileEntryMode.url);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.vpn_key_outlined),
+                title: const Text('VLESS 링크'),
+                subtitle: const Text('공유 링크 또는 여러 링크를 붙여넣습니다.'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _openEditor(context, entryMode: _ProfileEntryMode.link);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.qr_code_scanner_rounded),
+                title: const Text('QR 코드 스캔'),
+                subtitle: const Text('카메라로 VLESS 링크를 읽습니다.'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _scanQr(context);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.file_open_outlined),
+                title: const Text('파일'),
+                subtitle: const Text('저장된 VLESS 링크 파일을 가져옵니다.'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _import(context);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.language_rounded),
+                title: const Text('Proxima'),
+                subtitle: const Text('solix.kr을 앱 안에서 엽니다.'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const ProximaWebScreen(),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -472,86 +475,85 @@ class _ProfileEditorState extends State<_ProfileEditor> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.fromLTRB(
-        20,
-        4,
-        20,
-        MediaQuery.viewInsetsOf(context).bottom + 24,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.profile == null ? '프로필 추가' : '프로필 편집',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 20),
-            TextField(
-              controller: _name,
-              decoration: const InputDecoration(
-                labelText: '이름 (선택)',
-                prefixIcon: Icon(Icons.label_outline),
-              ),
-            ),
-            const SizedBox(height: 12),
-            if (widget.entryMode != _ProfileEntryMode.link) ...[
-              TextField(
-                controller: _url,
-                keyboardType: TextInputType.url,
-                autocorrect: false,
-                decoration: InputDecoration(
-                  labelText: widget.entryMode == _ProfileEntryMode.url
-                      ? 'HTTPS 구독 주소'
-                      : 'HTTPS 구독 주소 (선택)',
-                  prefixIcon: const Icon(Icons.link_rounded),
-                ),
-              ),
-              const SizedBox(height: 12),
-            ],
-            if (widget.entryMode != _ProfileEntryMode.url)
-              TextField(
-                controller: _yaml,
-                minLines: 9,
-                maxLines: 16,
-                autocorrect: false,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  height: 1.35,
-                ),
-                decoration: const InputDecoration(
-                  labelText: 'VLESS 링크 목록',
-                  hintText:
-                      'vless://uuid@server:8080?security=none&type=ws&path=%2F\n'
-                      '여러 노드는 줄바꿈으로 붙여넣을 수 있습니다.\n'
-                      '선택: DOMAIN-SUFFIX,example.com,노드 이름\n'
-                      '선택: IP-CIDR,203.0.113.0/24,노드 이름',
-                  alignLabelWithHint: true,
-                ),
-              ),
-            if (_error case final error?) ...[
-              const SizedBox(height: 12),
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Text(
-                error,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                widget.profile == null ? '프로필 추가' : '프로필 편집',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 20),
+              TextField(
+                controller: _name,
+                decoration: const InputDecoration(
+                  labelText: '이름 (선택)',
+                  prefixIcon: Icon(Icons.label_outline),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (widget.entryMode != _ProfileEntryMode.link) ...[
+                TextField(
+                  controller: _url,
+                  keyboardType: TextInputType.url,
+                  autocorrect: false,
+                  decoration: InputDecoration(
+                    labelText: widget.entryMode == _ProfileEntryMode.url
+                        ? 'HTTPS 구독 주소'
+                        : 'HTTPS 구독 주소 (선택)',
+                    prefixIcon: const Icon(Icons.link_rounded),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              if (widget.entryMode != _ProfileEntryMode.url)
+                TextField(
+                  controller: _yaml,
+                  minLines: 9,
+                  maxLines: 16,
+                  autocorrect: false,
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    height: 1.35,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'VLESS 링크 목록',
+                    hintText:
+                        'vless://uuid@server:8080?security=none&type=ws&path=%2F\n'
+                        '여러 노드는 줄바꿈으로 붙여넣을 수 있습니다.\n'
+                        '선택: DOMAIN-SUFFIX,example.com,노드 이름\n'
+                        '선택: IP-CIDR,203.0.113.0/24,노드 이름',
+                    alignLabelWithHint: true,
+                  ),
+                ),
+              if (_error case final error?) ...[
+                const SizedBox(height: 12),
+                Text(
+                  error,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+              const SizedBox(height: 18),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _saving ? null : _save,
+                  icon: _saving
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save_outlined),
+                  label: Text(_saving ? '검증 및 저장 중…' : '검증 후 저장'),
+                ),
               ),
             ],
-            const SizedBox(height: 18),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: _saving ? null : _save,
-                icon: _saving
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.save_outlined),
-                label: Text(_saving ? '검증 및 저장 중…' : '검증 후 저장'),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

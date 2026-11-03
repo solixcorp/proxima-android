@@ -124,6 +124,41 @@ void main() {
     }
   });
 
+  test('plan name follows the authenticated API summary on reload', () async {
+    server.summary = {..._summary, 'plan_name': ' Everyday Plus '};
+    await account.signIn().timeout(_waitLimit);
+    expect(account.planName, 'Everyday Plus');
+
+    server.summary = {..._summary, 'plan_name': 'Premium'};
+    await account.reload().timeout(_waitLimit);
+    expect(account.planName, 'Premium');
+
+    for (final name in [null, '', '   ']) {
+      server.summary = {..._summary, 'plan_name': name};
+      await account.reload().timeout(_waitLimit);
+      expect(account.planName, isNull);
+    }
+  });
+
+  test('recognizes only this account subscription URLs and alternates', () async {
+    const alternate = 'https://alternate.example.com/client?token=private';
+    server.subscription = {
+      ..._subscription,
+      'domains': [
+        {'url': alternate},
+      ],
+    };
+    await account.signIn().timeout(_waitLimit);
+    expect(account.ownsSubscription(_subscriptionUrl), isTrue);
+    expect(account.ownsSubscription(alternate), isTrue);
+    expect(
+      account.ownsSubscription('https://subscriptions.example.com/other'),
+      isFalse,
+    );
+    expect(account.ownsSubscription(null), isFalse);
+    expect(account.ownsSubscription(''), isFalse);
+  });
+
   test('simultaneous expired resource loads refresh and persist once', () async {
     store.value = jsonEncode(_session(expiresAt: 0));
     final refreshArrived = Completer<void>();
@@ -381,6 +416,8 @@ void main() {
 
       expect(attempts, [_subscriptionUrl, alternate]);
       expect(account.subscriptionUrl, alternate);
+      expect(account.ownsSubscription(_subscriptionUrl), isTrue);
+      expect(account.ownsSubscription(alternate), isTrue);
       attempts.clear();
       await account.importSubscription((url) async => attempts.add(url));
       expect(attempts, [alternate]);
@@ -499,6 +536,7 @@ class _AccountServer {
 
   final HttpServer _server;
   final requests = <HttpRequest>[];
+  Map<String, dynamic> summary = _summary;
   Map<String, dynamic> subscription = _subscription;
   Future<void> Function(HttpRequest)? onRequest;
   var _closed = false;
@@ -520,7 +558,7 @@ class _AccountServer {
   Future<void> respondWithResource(HttpRequest request) async {
     final data = switch (request.uri.path) {
       '/api/v1/client/profile' => _profile,
-      '/api/v1/client/summary' => _summary,
+      '/api/v1/client/summary' => summary,
       '/api/v1/client/subscription' => subscription,
       _ => null,
     };

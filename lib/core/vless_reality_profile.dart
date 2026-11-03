@@ -189,15 +189,36 @@ class VlessRealityProfile {
     final profiles = sourceLinks
         .map(VlessRealityProfile.parse)
         .toList(growable: false);
+    final nodeNames = _uniqueNodeNames(profiles, profileName: profileName);
     var config = profilesToMihomoYaml(profiles, profileName: profileName);
     final inlineRouting = clash == null
         ? ClashSubscriptionParser.rulesForLinks(
             input,
-            _uniqueNodeNames(profiles, profileName: profileName),
+            nodeNames,
+            nodeAliases: profiles.length == 1
+                ? {profiles.single.name: nodeNames.single}
+                : const {},
           )
         : null;
     final routing = clash?.routing ?? inlineRouting;
     if (routing != null) {
+      // A single node is displayed under the profile name at runtime, while
+      // Clash rules refer to the provider's original node name.
+      if (clash != null && profiles.length == 1) {
+        for (final key in ['rules', 'displayRules']) {
+          for (final rule
+              in (routing[key] as List).cast<Map<String, Object?>>()) {
+            if (rule['candidates'] case final List candidates) {
+              rule['candidates'] = candidates
+                  .map(
+                    (name) =>
+                        name == profiles.single.name ? nodeNames.single : name,
+                  )
+                  .toList(growable: false);
+            }
+          }
+        }
+      }
       final encoded = encodeRoutingMetadata(routing);
       config = '$routingMetadataPrefix $encoded\n$config';
     }

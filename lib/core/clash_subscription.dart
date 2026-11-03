@@ -27,8 +27,9 @@ class ClashSubscriptionParser {
   /// supplied separately when the subscription is not Clash YAML.
   static Map<String, Object?>? rulesForLinks(
     String source,
-    List<String> nodeNames,
-  ) {
+    List<String> nodeNames, {
+    Map<String, String> nodeAliases = const {},
+  }) {
     final lines = source.split(RegExp(r'\r?\n')).map((line) => line.trim());
     final ruleLines = lines
         .where(
@@ -46,13 +47,18 @@ class ClashSubscriptionParser {
           target.toUpperCase() == 'REJECT-DROP') {
         return 'block';
       }
-      if (target == 'PROXY' || nodeNames.contains(target)) return 'proxy';
+      if (target == 'PROXY' ||
+          nodeNames.contains(target) ||
+          nodeAliases.containsKey(target)) {
+        return 'proxy';
+      }
       throw FormatException('규칙의 노드 "$target"를 찾을 수 없습니다.');
     }
 
     List<String> resolveCandidates(String value) {
       final target = value.trim();
       if (target == 'PROXY') return nodeNames;
+      if (nodeAliases[target] case final String name) return [name];
       return nodeNames.contains(target) ? [target] : const [];
     }
 
@@ -364,7 +370,7 @@ class ClashSubscriptionParser {
     return switch (kind.toUpperCase()) {
       'DOMAIN' => 'full:$value',
       'DOMAIN-SUFFIX' => 'domain:$value',
-      'DOMAIN-KEYWORD' => 'plain:$value',
+      'DOMAIN-KEYWORD' => 'keyword:$value',
       'GEOSITE' => 'geosite:${value.toLowerCase()}',
       _ => value,
     };

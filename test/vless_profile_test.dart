@@ -25,6 +25,72 @@ Map<String, dynamic> _routingMetadata(String config) {
 }
 
 void main() {
+  test('routes a named single link even when the profile has another name', () {
+    final config = VlessRealityProfile.storedConfigFromInput(
+      '$_base#Edge\nDOMAIN-SUFFIX,example.com,Edge\nMATCH,DIRECT',
+      profileName: 'Subscription',
+    );
+    final rules = _routingMetadata(config)['rules'] as List;
+    expect(rules.first['candidates'], ['Subscription']);
+    expect(rules.first['domain'], ['domain:example.com']);
+    expect(rules.last['target'], 'direct');
+  });
+
+  test('maps single-node Clash policies to the runtime node name', () {
+    final config = VlessRealityProfile.storedConfigFromInput('''
+proxies:
+  - name: Edge
+    type: vless
+    server: edge.example.com
+    port: 8080
+    uuid: 123e4567-e89b-42d3-a456-426614174000
+proxy-groups:
+  - name: Regional
+    type: select
+    proxies: [Edge]
+rules:
+  - DOMAIN,example.com,Regional
+  - IP-CIDR,203.0.113.0/24,Edge
+  - IP-CIDR6,2001:db8::/32,Edge
+  - MATCH,DIRECT
+''', profileName: 'Subscription');
+    final metadata = _routingMetadata(config);
+    for (final key in ['rules', 'displayRules']) {
+      final rules = metadata[key] as List;
+      for (final rule in rules.take(3)) {
+        expect(rule['candidates'], ['Subscription']);
+      }
+    }
+  });
+
+  test('keeps destination rule order and concrete node candidates', () {
+    final config = VlessRealityProfile.storedConfigFromInput(
+      '$_base#Edge\n$_base#Other\n'
+      'DOMAIN,exact.example,Edge\n'
+      'DOMAIN-SUFFIX,example.org,Other\n'
+      'DOMAIN-KEYWORD,stream,Edge\n'
+      'IP-CIDR,203.0.113.0/24,Other\n'
+      'IP-CIDR6,2001:db8::/32,Edge\n'
+      'MATCH,Other',
+      profileName: 'Subscription',
+    );
+    final rules = _routingMetadata(config)['rules'] as List;
+    expect(rules.map((rule) => rule['candidates']), [
+      ['Edge'],
+      ['Other'],
+      ['Edge'],
+      ['Other'],
+      ['Edge'],
+      ['Other'],
+    ]);
+    expect(rules[0]['domain'], ['full:exact.example']);
+    expect(rules[1]['domain'], ['domain:example.org']);
+    expect(rules[2]['domain'], ['keyword:stream']);
+    expect(rules[3]['ip'], ['203.0.113.0/24']);
+    expect(rules[4]['ip'], ['2001:db8::/32']);
+    expect(rules[5]['match'], true);
+  });
+
   test('imports and exports plain WebSocket links with original options', () {
     final profile = VlessRealityProfile.parse(_ws);
     expect(profile.security, 'none');

@@ -16,6 +16,15 @@ object XrayConfig {
     private const val METADATA_PREFIX = "# proxima-vless-reality-link:"
     private const val ROUTING_PREFIX = "# proxima-routing-rules:"
     const val RULE_PROBE_KEY = "__PROXIMA_RULE__"
+    const val VPN_DNS = "172.19.0.2"
+    val LOCAL_NETWORK_ROUTES = listOf(
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "169.254.0.0/16",
+        "fc00::/7",
+        "fe80::/10",
+    )
     private const val RULE_PROBE_TAG = "proxima-rule-probe"
     private const val AUTO_BALANCER_TAG = "proxima-auto"
     private const val AUTO_OUTBOUND_TAG = "proxima-auto-outbound"
@@ -99,19 +108,30 @@ object XrayConfig {
         }
         val rules = JSONArray()
         val policyBalancers = if (useSubscriptionRules) {
-            policyBalancers(storedRouting.rules, names, tags)
+            policyBalancers(storedRouting.rules, names, tags, uniqueNodeNames(sourceLinks, ""))
         } else emptyMap()
         // DNS packets from the TUN are plain DNS, not DoH. The DNS outbound
         // hands A/AAAA to the built-in resolver; its DoH connection is then
         // routed through VLESS as a regular TCP request.
+        val dnsRule = JSONObject()
+            .put("type", "field")
+            .put("inboundTag", JSONArray().put("proxima-tun"))
+            .put("network", "tcp,udp")
+            .put("port", "53")
+            .put("outboundTag", DNS_OUTBOUND_TAG)
+        // Preserve the synthetic resolver inside the private TUN subnet.
+        rules.put(JSONObject(dnsRule.toString()).put("ip", JSONArray().put("$VPN_DNS/32")))
+        // Android <33 cannot exclude routes from the VPN. Its LAN TCP/UDP
+        // traffic must use protected direct sockets, in every routing mode.
+        // This also keeps explicit queries to a LAN DNS server local.
         rules.put(
             JSONObject()
                 .put("type", "field")
                 .put("inboundTag", JSONArray().put("proxima-tun"))
-                .put("network", "tcp,udp")
-                .put("port", "53")
-                .put("outboundTag", DNS_OUTBOUND_TAG),
+                .put("ip", JSONArray(LOCAL_NETWORK_ROUTES))
+                .put("outboundTag", directTag),
         )
+        rules.put(dnsRule)
         rules.put(
             JSONObject()
                 .put("type", "field")
@@ -150,7 +170,9 @@ object XrayConfig {
         }
         val inbounds = JSONArray()
         val routingConfig = JSONObject()
-            .put("domainStrategy", if (useSubscriptionRules) "IPIfNonMatch" else "AsIs")
+            // Resolve when an IP rule is reached, before a later MATCH rule
+            // can consume a hostname destination.
+            .put("domainStrategy", if (useSubscriptionRules) "IPOnDemand" else "AsIs")
             .put("rules", rules)
         if (useSubscriptionRules) {
             val balancers = JSONArray().put(
@@ -465,7 +487,14 @@ object XrayConfig {
                     "geosite:private" -> listOf(
                         "domain:lan", "domain:local", "full:localhost", "domain:home.arpa",
                     ).forEach(normalized::put)
-                    else -> if (!value.startsWith("geosite:")) normalized.put(value)
+                    // Older saved profiles encoded DOMAIN-KEYWORD using the
+                    // non-Xray "plain:" prefix.
+                    else -> if (!value.startsWith("geosite:")) {
+                        normalized.put(
+                            if (value.startsWith("plain:")) "keyword:${value.removePrefix("plain:")}"
+                            else value,
+                        )
+                    }
                 }
             }
             rule.put("domain", normalized)
@@ -493,6 +522,7 @@ object XrayConfig {
         rules: List<JSONObject>,
         names: List<String>,
         tags: List<String>,
+        originalNames: List<String>,
     ): Map<String, Pair<String, List<String>>> {
         val result = linkedMapOf<String, Pair<String, List<String>>>()
         rules.forEach { rule ->
@@ -506,8 +536,10 @@ object XrayConfig {
                 ?.let { candidates ->
                     buildList {
                         for (index in 0 until candidates.length()) {
-                            candidates.optString(index)
-                                .takeIf(names::contains)
+                            candidates.optString(index).let { candidate ->
+                                if (names.size == 1 && candidate == originalNames.single()) names.single()
+                                else candidate
+                            }.takeIf(names::contains)
                                 ?.let(::add)
                         }
                     }.distinct()
