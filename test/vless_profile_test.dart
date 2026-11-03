@@ -25,6 +25,157 @@ Map<String, dynamic> _routingMetadata(String config) {
 }
 
 void main() {
+  test('keeps an IP lookup rule set ahead of the default Korean policy', () {
+    final config = VlessRealityProfile.storedConfigFromInput('''
+proxies:
+  - {name: Hong Kong ISP, type: vless, server: hk.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000}
+  - {name: Korea ISP, type: vless, server: kr.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000}
+proxy-groups:
+  - {name: IP lookup, type: select, proxies: [Hong Kong ISP, Korea ISP]}
+  - {name: Default, type: select, proxies: [Korea ISP, Hong Kong ISP]}
+rule-providers:
+  ip_check:
+    type: inline
+    behavior: domain
+    payload: [+.ipdata.co, +.myip.wtf]
+rules:
+  - RULE-SET,ip_check,IP lookup
+  - MATCH,Default
+''', profileName: 'Subscription');
+    final metadata = _routingMetadata(config);
+    expect(metadata['version'], 3);
+    final rules = metadata['rules'] as List;
+    expect(rules, hasLength(2));
+    expect(rules.first['domain'], ['domain:ipdata.co', 'domain:myip.wtf']);
+    expect(rules.first['candidates'], ['Hong Kong ISP']);
+    expect(rules.last['candidates'], ['Korea ISP']);
+    expect(
+      (metadata['displayRules'] as List).first['supported'],
+      isTrue,
+    );
+    expect(
+      VlessRealityProfile.routingRulesFromStoredConfig(config).first.destination,
+      'RULE-SET,ip_check',
+    );
+  });
+
+  test('loads referenced HTTP and inline rule providers without duplicates',
+      () async {
+    const source = '''
+proxies: []
+proxy-groups: []
+rule-providers:
+  domains:
+    type: http
+    behavior: domain
+    format: yaml
+    url: https://rules.example.com/domains.yaml
+  networks:
+    type: http
+    behavior: ipcidr
+    format: text
+    url: https://rules.example.com/networks.txt
+  local:
+    type: inline
+    behavior: classical
+    payload: ["DOMAIN,example.com"]
+rules:
+  - RULE-SET,domains,PROXY
+  - RULE-SET,networks,DIRECT
+  - RULE-SET,domains,DIRECT
+  - RULE-SET,local,PROXY
+''';
+    final requests = <String>[];
+    final payloads = await ClashSubscriptionParser.loadRuleSets(
+      source,
+      fetch: (uri) async {
+        requests.add(uri.path);
+        return utf8.encode(
+          uri.path.endsWith('.yaml')
+              ? 'payload:\n  - +.ipdata.co\n  - +.myip.wtf\n'
+              : '# comment\n198.18.0.0/15\n2001:db8::/32\n',
+        );
+      },
+    );
+    expect(requests, unorderedEquals(['/domains.yaml', '/networks.txt']));
+    expect(payloads['domains'], ['+.ipdata.co', '+.myip.wtf']);
+    expect(payloads['networks'], ['198.18.0.0/15', '2001:db8::/32']);
+    expect(payloads['local'], ['DOMAIN,example.com']);
+  });
+
+  test('preserves exact, suffix and single-label provider domain semantics', () {
+    final config = VlessRealityProfile.storedConfigFromInput('''
+proxies:
+  - {name: Edge, type: vless, server: edge.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000}
+proxy-groups:
+  - {name: PROXY, type: select, proxies: [Edge]}
+rule-providers:
+  domains:
+    type: inline
+    behavior: domain
+    payload:
+      - exact.example
+      - +.inclusive.example
+      - .subonly.example
+      - "*.single.example"
+rules:
+  - RULE-SET,domains,PROXY
+  - MATCH,DIRECT
+''', profileName: 'Provider');
+    final domains = (_routingMetadata(config)['rules'] as List).first['domain']
+        as List;
+    expect(domains.take(2), ['full:exact.example', 'domain:inclusive.example']);
+    final suffix = RegExp((domains[2] as String).substring('regexp:'.length));
+    expect(suffix.hasMatch('subonly.example'), isFalse);
+    expect(suffix.hasMatch('a.b.subonly.example'), isTrue);
+    final wildcard = RegExp((domains[3] as String).substring('regexp:'.length));
+    expect(wildcard.hasMatch('a.single.example'), isTrue);
+    expect(wildcard.hasMatch('a.b.single.example'), isFalse);
+    expect(wildcard.hasMatch('single.example'), isFalse);
+  });
+
+  test('rejects unsafe rule-provider addresses before fetching', () async {
+    for (final url in [
+      'http://rules.example.com/domains.yaml',
+      'https://user:secret@rules.example.com/domains.yaml',
+    ]) {
+      await expectLater(
+        ClashSubscriptionParser.loadRuleSets('''
+proxies: []
+proxy-groups: []
+rule-providers:
+  domains: {type: http, behavior: domain, format: yaml, url: "$url"}
+rules:
+  - RULE-SET,domains,PROXY
+''', fetch: (_) => throw StateError('must not fetch')),
+        throwsFormatException,
+      );
+    }
+  });
+
+  test('does not silently replace a failed rule provider with default routing',
+      () async {
+    final failure = StateError('rule-provider unavailable');
+    await expectLater(
+      ClashSubscriptionParser.loadRuleSets('''
+proxies: []
+proxy-groups: []
+rule-providers:
+  domains: {type: http, behavior: domain, url: https://rules.example.com/list.yaml}
+rules:
+  - RULE-SET,domains,PROXY
+''', fetch: (_) async => throw failure),
+      throwsA(same(failure)),
+    );
+    expect(
+      VlessRealityProfile.hasCurrentRoutingMetadata(
+        '${VlessRealityProfile.routingMetadataPrefix} '
+        '${encodeRoutingMetadata({'version': 2, 'source': 'clash-meta'})}',
+      ),
+      isFalse,
+    );
+  });
+
   test('routes a named single link even when the profile has another name', () {
     final config = VlessRealityProfile.storedConfigFromInput(
       '$_base#Edge\nDOMAIN-SUFFIX,example.com,Edge\nMATCH,DIRECT',

@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:yaml/yaml.dart';
 
+import 'mihomo_rule_set.dart';
+
 /// The Xray-oriented representation of a Clash.Meta subscription.
 ///
 /// Clash selectors do not have a direct Xray equivalent. For rule mode we
@@ -78,7 +80,7 @@ class ClashSubscriptionParser {
       });
     }
     return {
-      'version': 2,
+      'version': 3,
       'source': 'vless-links',
       'autoTestUrl': 'https://www.gstatic.com/generate_204',
       'rules': rules,
@@ -86,7 +88,84 @@ class ClashSubscriptionParser {
     };
   }
 
-  static ClashSubscriptionConversion? tryParse(String source) {
+  static Future<Map<String, List<String>>> loadRuleSets(
+    String source, {
+    required Future<List<int>> Function(Uri uri) fetch,
+  }) async {
+    if (!source.contains('proxies:') || !source.contains('proxy-groups:')) {
+      return const {};
+    }
+    final root = _stringMap(loadYaml(source));
+    final providers = _stringMap(root?['rule-providers']);
+    if (providers == null) return const {};
+    final names = <String>{};
+    for (final item in _list(root?['rules']) ?? const []) {
+      final fields = _splitCsv(item.toString());
+      if (fields.length >= 3 && fields.first.toUpperCase() == 'RULE-SET') {
+        names.add(fields[1]);
+      }
+    }
+    final result = <String, List<String>>{};
+    final pending = names.toList();
+    for (var start = 0; start < pending.length; start += 4) {
+      await Future.wait(
+        pending.skip(start).take(4).map((name) async {
+          final provider = _stringMap(providers[name]);
+          if (provider == null) {
+            throw FormatException('규칙셋 "$name"의 정의가 없습니다.');
+          }
+          final behavior = provider['behavior']?.toString();
+          if (!const {'domain', 'ipcidr', 'classical'}.contains(behavior)) {
+            throw FormatException('규칙셋 "$name"의 형식을 지원하지 않습니다.');
+          }
+          if (provider['type'] == 'inline') {
+            result[name] = _ruleSetEntries(provider['payload'], name);
+            return;
+          }
+          if (provider['type'] != 'http') {
+            throw FormatException('규칙셋 "$name"의 불러오기 방식을 지원하지 않습니다.');
+          }
+          final uri = Uri.tryParse(provider['url']?.toString() ?? '');
+          if (uri == null ||
+              uri.scheme != 'https' ||
+              uri.host.isEmpty ||
+              uri.userInfo.isNotEmpty) {
+            throw FormatException('규칙셋 "$name"에는 HTTPS 주소가 필요합니다.');
+          }
+          final bytes = await fetch(uri);
+          switch (provider['format'] ?? 'yaml') {
+            case 'mrs':
+              result[name] = decodeMihomoMrs(bytes, behavior: behavior!);
+            case 'yaml':
+              final document = _stringMap(loadYaml(utf8.decode(bytes)));
+              result[name] = _ruleSetEntries(document?['payload'], name);
+            case 'text':
+              result[name] = const LineSplitter()
+                  .convert(utf8.decode(bytes))
+                  .map((line) => line.trim())
+                  .where((line) => line.isNotEmpty && !line.startsWith('#'))
+                  .toList(growable: false);
+            default:
+              throw FormatException('규칙셋 "$name"의 파일 형식을 지원하지 않습니다.');
+          }
+        }),
+      );
+    }
+    return result;
+  }
+
+  static List<String> _ruleSetEntries(Object? payload, String name) {
+    final entries = _list(payload);
+    if (entries == null || entries.any((entry) => entry is! String)) {
+      throw FormatException('규칙셋 "$name"의 항목이 올바르지 않습니다.');
+    }
+    return entries.cast<String>();
+  }
+
+  static ClashSubscriptionConversion? tryParse(
+    String source, {
+    Map<String, List<String>> ruleSetPayloads = const {},
+  }) {
     if (!source.contains('proxies:') || !source.contains('proxy-groups:')) {
       return null;
     }
@@ -171,8 +250,38 @@ class ClashSubscriptionParser {
 
     final rules = <Map<String, Object?>>[];
     final displayRules = <Map<String, Object?>>[];
+    final providers = _stringMap(root['rule-providers']) ?? const {};
     for (final item in rawRules) {
       final source = item.toString();
+      final fields = _splitCsv(source);
+      if (fields.length >= 3 && fields.first.toUpperCase() == 'RULE-SET') {
+        final provider = _stringMap(providers[fields[1]]);
+        final payload = ruleSetPayloads[fields[1]] ??
+            (provider?['type'] == 'inline'
+                ? _ruleSetEntries(provider?['payload'], fields[1])
+                : null);
+        if (provider == null || payload == null) {
+          displayRules.add(_displayRule(source, null));
+          continue;
+        }
+        final expanded = _ruleSetRules(
+          payload,
+          provider['behavior']?.toString() ?? '',
+          fields[2],
+          resolveTarget,
+          resolveCandidates,
+        );
+        rules.addAll(expanded.rules);
+        displayRules.add({
+          if (expanded.rules.isNotEmpty)
+            for (final key in ['target', 'policy', 'candidates'])
+              if (expanded.rules.first.containsKey(key))
+                key: expanded.rules.first[key],
+          'raw': source,
+          'supported': expanded.supported,
+        });
+        continue;
+      }
       final parsed = _parseRule(
         source,
         resolveTarget,
@@ -187,13 +296,72 @@ class ClashSubscriptionParser {
     return ClashSubscriptionConversion(
       links: List.unmodifiable(links),
       routing: {
-        'version': 2,
+        'version': 3,
         'source': 'clash-meta',
         'autoTestUrl': _automaticTestUrl(groups),
         'rules': rules,
         'displayRules': displayRules,
       },
     );
+  }
+
+  static ({List<Map<String, Object?>> rules, bool supported}) _ruleSetRules(
+    List<String> payload,
+    String behavior,
+    String policy,
+    String Function(String value) resolveTarget,
+    List<String> Function(String value) resolveCandidates,
+  ) {
+    final target = resolveTarget(policy);
+    final fields = <String, Object?>{
+      'target': target,
+      if (target == 'proxy') ...{
+        'policy': policy,
+        if (resolveCandidates(policy).isNotEmpty)
+          'candidates': resolveCandidates(policy),
+      },
+    };
+    switch (behavior) {
+      case 'domain':
+        final domains = payload.map((entry) {
+          final value = entry.trim().toLowerCase();
+          if (value.startsWith('+.')) return 'domain:${value.substring(2)}';
+          if (value.startsWith('.') || value.contains('*')) {
+            final pattern = RegExp.escape(value).replaceAll(r'\*', r'[^.]+');
+            return 'regexp:^${value.startsWith('.') ? '.+' : ''}$pattern\$';
+          }
+          return 'full:$value';
+        }).toList(growable: false);
+        return (
+          rules: domains.isEmpty ? [] : [{'domain': domains, ...fields}],
+          supported: true,
+        );
+      case 'ipcidr':
+        return (
+          rules: payload.isEmpty ? [] : [{'ip': payload, ...fields}],
+          supported: true,
+        );
+      case 'classical':
+        final rules = <Map<String, Object?>>[];
+        var supported = true;
+        for (final entry in payload) {
+          final values = _splitCsv(entry);
+          final withPolicy = values.length >= 2 &&
+                  values.first.toUpperCase() != 'AND'
+              ? [values[0], values[1], policy, ...values.skip(2)].join(',')
+              : '$entry,$policy';
+          final parsed = _parseRule(withPolicy, resolveTarget, resolveCandidates);
+          if (parsed == null) {
+            supported = false;
+          } else {
+            rules.add(parsed);
+            if (!supportsRule(parsed)) supported = false;
+          }
+        }
+        return (rules: rules, supported: supported);
+      default:
+        return (rules: [], supported: false);
+    }
   }
 
   static String? _vlessLink(Map<String, Object?> proxy) {

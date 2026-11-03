@@ -1372,7 +1372,7 @@ rules:
       utf8.decode(base64Url.decode(padded)),
     ) as Map<String, dynamic>;
     final rules = routing['rules'] as List<dynamic>;
-    expect(routing['version'], 2);
+    expect(routing['version'], 3);
     expect(routing['autoTestUrl'], 'https://cp.cloudflare.com/generate_204');
     expect(rules, hasLength(5));
     expect((rules[0] as Map<String, dynamic>)['target'], 'proxy');
@@ -1718,6 +1718,66 @@ rules:
     expect(info.total, 1024);
     expect(info.expire, expiry);
   });
+
+  const ruleSetAccountContent = '''
+proxies:
+  - {name: Hong Kong ISP, type: vless, server: hk.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000}
+  - {name: Korea ISP, type: vless, server: kr.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000}
+proxy-groups:
+  - {name: IP lookup, type: select, proxies: [Hong Kong ISP, Korea ISP]}
+  - {name: Default, type: select, proxies: [Korea ISP]}
+rule-providers:
+  ip_check: {type: http, behavior: domain, format: yaml, url: https://rules.example.com/ip.yaml}
+rules:
+  - RULE-SET,ip_check,IP lookup
+  - MATCH,Default
+''';
+
+  test('account import resolves remote rule sets before persisting routing',
+      () async {
+    final bridge = _AccountImportBridge();
+    final requested = <Uri>[];
+    final controller = _AccountImportController(bridge)
+      ..subscriptionContent = ruleSetAccountContent
+      ..ruleSetFetcher = (uri) async {
+        requested.add(uri);
+        return utf8.encode('payload:\n  - +.ipdata.co\n  - +.myip.wtf\n');
+      };
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.importAccountSubscription(
+      'https://sub.example.com/sub/account',
+    );
+    expect(requested, [Uri.parse('https://rules.example.com/ip.yaml')]);
+    final rules = VlessRealityProfile.routingRulesFromStoredConfig(
+      bridge.profileContent,
+    );
+    expect(rules.first.destination, 'RULE-SET,ip_check');
+    expect(rules.first.supported, isTrue);
+    expect(rules.first.candidates, ['Hong Kong ISP']);
+    expect(rules.last.candidates, ['Korea ISP']);
+    expect(VlessRealityProfile.routingMetadataVersion(bridge.profileContent), 3);
+  });
+
+  test('failed remote rule loading preserves the existing profile', () async {
+    final bridge = _AccountImportBridge();
+    final failure = const SocketException('rules unavailable');
+    final controller = _AccountImportController(bridge)
+      ..subscriptionContent = ruleSetAccountContent
+      ..ruleSetFetcher = (_) async => throw failure;
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    final previous = bridge.profileContent;
+    await expectLater(
+      controller.importAccountSubscription(
+        'https://sub.example.com/sub/account',
+      ),
+      throwsA(same(failure)),
+    );
+    expect(bridge.savedIds, isEmpty);
+    expect(bridge.profileContent, previous);
+    expect(bridge.startedProfileId, isNull);
+  });
 }
 
 class _PlanAccount extends ProximaAccount {
@@ -1736,8 +1796,13 @@ class _AccountImportController extends AppController {
   SubscriptionInfo? subscriptionInfo = const SubscriptionInfo(
     planName: 'Standard',
   );
+  Future<List<int>> Function(Uri uri)? ruleSetFetcher;
   String subscriptionContent =
       'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=tls&type=tcp#Account';
+
+  @override
+  Future<List<int>> fetchRuleSet(Uri uri) =>
+      ruleSetFetcher?.call(uri) ?? super.fetchRuleSet(uri);
 
   @override
   Future<SubscriptionFetchResult> fetchSubscriptionDetails(

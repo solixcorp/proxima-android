@@ -226,10 +226,15 @@ class AppController extends ChangeNotifier {
             fallbackName: requestedName,
           )
         : requestedName;
+    final ruleSets = await ClashSubscriptionParser.loadRuleSets(
+      content,
+      fetch: fetchRuleSet,
+    );
     final generatedConfig = VlessRealityProfile.attachSubscriptionSource(
       VlessRealityProfile.storedConfigFromInput(
         content,
         profileName: effectiveName,
+        ruleSetPayloads: ruleSets,
       ),
       sourceUrl,
     );
@@ -313,6 +318,56 @@ class AppController extends ChangeNotifier {
 
   Future<String> fetchSubscription(String source) async =>
       (await fetchSubscriptionDetails(source)).content;
+
+  Future<List<int>> fetchRuleSet(Uri source) async {
+    if (source.scheme != 'https' ||
+        source.host.isEmpty ||
+        source.userInfo.isNotEmpty) {
+      throw const FormatException('규칙셋에는 HTTPS 주소가 필요합니다.');
+    }
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 15);
+    try {
+      var current = source;
+      for (var redirects = 0; ; redirects++) {
+        final request = await client.getUrl(current);
+        request.followRedirects = false;
+        final response = await request.close().timeout(
+          const Duration(seconds: 20),
+        );
+        if (response.isRedirect) {
+          final location = response.headers.value(HttpHeaders.locationHeader);
+          await response.drain<void>();
+          if (location == null || redirects >= 5) {
+            throw const HttpException('규칙셋 주소의 리디렉션이 너무 많습니다.');
+          }
+          final next = current.resolve(location);
+          if (next.scheme != 'https' ||
+              next.host.isEmpty ||
+              next.userInfo.isNotEmpty) {
+            throw const FormatException('안전하지 않은 규칙셋 주소로 이동할 수 없습니다.');
+          }
+          current = next;
+          continue;
+        }
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          final status = response.statusCode;
+          await response.drain<void>();
+          throw HttpException('규칙셋 서버 응답 $status');
+        }
+        final bytes = <int>[];
+        await for (final chunk in response) {
+          bytes.addAll(chunk);
+          if (bytes.length > 8 * 1024 * 1024) {
+            throw const FormatException('규칙셋은 8MB보다 작아야 합니다.');
+          }
+        }
+        return bytes;
+      }
+    } finally {
+      client.close(force: true);
+    }
+  }
 
   Future<void> importAccountSubscription(
     String source, {

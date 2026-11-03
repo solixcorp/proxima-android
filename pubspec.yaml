@@ -39,6 +39,7 @@ dependencies:
   flutter_secure_storage: ^11.2.0
   flutter_appauth: ^12.1.0
   yaml: ^3.1.4
+  archive: ^4.6.0
 
 dev_dependencies:
   flutter_test:

@@ -183,8 +183,12 @@ class VlessRealityProfile {
   static String storedConfigFromInput(
     String input, {
     required String profileName,
+    Map<String, List<String>> ruleSetPayloads = const {},
   }) {
-    final clash = ClashSubscriptionParser.tryParse(input);
+    final clash = ClashSubscriptionParser.tryParse(
+      input,
+      ruleSetPayloads: ruleSetPayloads,
+    );
     final sourceLinks = clash?.links ?? linksFromSubscription(input);
     final profiles = sourceLinks
         .map(VlessRealityProfile.parse)
@@ -254,10 +258,10 @@ class VlessRealityProfile {
   static bool hasRoutingMetadata(String content) =>
       routingMetadataVersion(content) != null;
 
-  /// Version 2 preserves each Clash policy group's node candidates. Version 1
-  /// collapsed all non-regional policies into a single automatic pool.
+  /// Version 3 expands referenced rule providers. Older subscription metadata
+  /// could silently fall through RULE-SET entries to the default policy.
   static bool hasCurrentRoutingMetadata(String content) =>
-      (routingMetadataVersion(content) ?? 0) >= 2;
+      (routingMetadataVersion(content) ?? 0) >= 3;
 
   static int? routingMetadataVersion(String content) =>
       _routingMetadata(content)?['version'] as int?;

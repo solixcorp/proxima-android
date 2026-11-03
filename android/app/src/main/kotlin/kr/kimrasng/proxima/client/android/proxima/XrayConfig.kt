@@ -441,7 +441,7 @@ object XrayConfig {
             val root = JSONObject(
                 String(Base64.decode(padded, Base64.URL_SAFE or Base64.NO_WRAP), Charsets.UTF_8),
             )
-            require(root.optInt("version") in 1..2) { "지원하지 않는 라우팅 메타데이터입니다." }
+            require(root.optInt("version") in 1..3) { "지원하지 않는 라우팅 메타데이터입니다." }
             val sourceRules = root.optJSONArray("rules") ?: JSONArray()
             val parsed = buildList {
                 for (index in 0 until sourceRules.length()) {
