@@ -99,3 +99,4 @@ Testing/
 .swiftpm/
 /migrate_working_dir/
 .omo
+/artifacts/

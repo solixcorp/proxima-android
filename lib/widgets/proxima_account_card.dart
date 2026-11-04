@@ -13,11 +13,13 @@ class ProximaAccountCard extends StatefulWidget {
     required this.account,
     required this.onImport,
     this.canImport = true,
+    this.subscriptionInfo,
   });
 
   final ProximaAccount account;
   final Future<void> Function(String url) onImport;
   final bool canImport;
+  final SubscriptionInfo? subscriptionInfo;
 
   @override
   State<ProximaAccountCard> createState() => _ProximaAccountCardState();
@@ -112,11 +114,19 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
         final summary = account.summary;
         final name = profile?['name'] as String?;
         final email = profile?['email'] as String?;
-        final used = (summary?['traffic_used'] as num?)?.toInt();
-        final limit = (summary?['traffic_limit'] as num?)?.toInt();
-        final expiry = DateTime.tryParse(
-          summary?['plan_expires_at'] as String? ?? '',
-        );
+        final storedInfo = widget.subscriptionInfo;
+        final used =
+            (summary?['traffic_used'] as num?)?.toInt() ??
+            (storedInfo?.hasTraffic == true ? storedInfo!.used : null);
+        final limit = summary?.containsKey('traffic_limit') == true
+            ? (summary?['traffic_limit'] as num?)?.toInt()
+            : storedInfo?.hasTraffic == true
+            ? storedInfo!.total
+            : null;
+        final expiry =
+            DateTime.tryParse(summary?['plan_expires_at'] as String? ?? '') ??
+            storedInfo?.expire;
+        final expiresIn = expiry?.difference(DateTime.now()).inDays;
         return AnimatedSize(
           alignment: Alignment.topCenter,
           duration: AppMotion.short(context),
@@ -166,6 +176,20 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                       '플랜 · ${account.planName ?? '이용 중인 플랜 없음'}',
                       style: textTheme.titleMedium,
                     ),
+                    if (used != null && limit != null && limit > 0) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        '남은 트래픽 ${formatBytes((limit - used).clamp(0, limit))}',
+                        style: bodyStyle,
+                      ),
+                      const SizedBox(height: 8),
+                      LinearProgressIndicator(
+                        key: const Key('proxima_account_usage'),
+                        value: (used / limit).clamp(0, 1).toDouble(),
+                        semanticsLabel: '구독 데이터 사용량',
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     if (used != null)
                       Text(
                         limit == null
@@ -176,6 +200,11 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                     if (expiry != null)
                       Text(
                         '만료일 ${formatSubscriptionExpiry(expiry.toLocal())}',
+                        style: detailStyle,
+                      ),
+                    if (expiresIn != null)
+                      Text(
+                        expiresIn >= 0 ? '$expiresIn일 남음' : '만료됨',
                         style: detailStyle,
                       ),
                   ],

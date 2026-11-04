@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proxima/app/proxima_app.dart';
 import 'package:proxima/app/proxima_shell.dart';
@@ -20,6 +21,131 @@ import 'package:proxima/state/app_controller.dart';
 import 'package:proxima/widgets/app_page.dart';
 
 void main() {
+  if (const bool.fromEnvironment('SUBSCRIPTION_CAPTURES')) {
+    setUpAll(() async {
+      final textFont = FontLoader('SubscriptionCapture');
+      textFont.addFont(
+        File(const String.fromEnvironment('CAPTURE_TEXT_FONT'))
+            .readAsBytes()
+            .then(ByteData.sublistView),
+      );
+      await textFont.load();
+      final icons = FontLoader('MaterialIcons');
+      icons.addFont(
+        File(
+          const String.fromEnvironment('CAPTURE_ICON_FONT'),
+        ).readAsBytes().then(ByteData.sublistView),
+      );
+      await icons.load();
+    });
+    for (final width in [390.0, 1440.0]) {
+      for (final brightness in Brightness.values) {
+        for (final state in [
+          'account',
+          'other',
+          'signed-out',
+          'empty',
+          'loading',
+          'error',
+        ]) {
+          testWidgets('subscription capture $width $brightness $state', (
+            tester,
+          ) async {
+            tester.view
+              ..physicalSize = Size(width, 1000)
+              ..devicePixelRatio = 1;
+            addTearDown(tester.view.reset);
+            final account = _PlanAccount()
+              ..summary = {
+                'plan_name': 'Everyday Plus',
+                'traffic_used': 12884901888,
+                'traffic_limit': 107374182400,
+                'plan_expires_at': '2027-11-26T03:00:00Z',
+              }
+              ..subscriptionUrl = 'https://sub.example.com/sub/account'
+              ..busy = state == 'loading'
+              ..error = state == 'error' ? '네트워크 연결을 확인하고 다시 시도해 주세요.' : null;
+            final signedOutAccount = ProximaAccount();
+            addTearDown(signedOutAccount.dispose);
+            final controller = AppController(_FakeBridge())
+              ..profiles = [
+                if (state != 'empty')
+                  VpnProfile(
+                    id: 'capture-profile',
+                    name: 'Proxima 구독',
+                    sourceUrl: state == 'other'
+                        ? 'https://other.example.com/subscription'
+                        : account.subscriptionUrl,
+                    updatedAt: DateTime.utc(2026),
+                    isActive: true,
+                    subscriptionInfo: SubscriptionInfo(
+                      download: 12884901888,
+                      total: 107374182400,
+                      expire: DateTime.utc(2027, 11, 26),
+                      planName: 'Everyday Plus',
+                    ),
+                  ),
+              ];
+            addTearDown(account.dispose);
+            addTearDown(controller.dispose);
+            await tester.pumpWidget(
+              MaterialApp(
+                theme: ThemeData(
+                  brightness: brightness,
+                  fontFamily: 'SubscriptionCapture',
+                ),
+                builder: (context, child) => MediaQuery(
+                  data: MediaQuery.of(context)
+                      .copyWith(disableAnimations: false),
+                  child: child!,
+                ),
+                home: RepaintBoundary(
+                  key: const Key('subscription_capture'),
+                  child: SubscriptionScreen(
+                    controller: controller,
+                    account: state == 'signed-out' ? signedOutAccount : account,
+                  ),
+                ),
+              ),
+            );
+            if (state == 'loading') {
+              await tester.pump(const Duration(milliseconds: 240));
+            } else {
+              await tester.pumpAndSettle();
+            }
+            const stage = String.fromEnvironment(
+              'CAPTURE_STAGE',
+              defaultValue: 'after',
+            );
+            final name = '${width.toInt()}-${brightness.name}-$state';
+            await expectLater(
+              find.byKey(const Key('subscription_capture')),
+              matchesGoldenFile(
+                '../.omo/evidence/subscription-consolidation/$stage/$name-top.png',
+              ),
+            );
+            final scroll = tester.state<ScrollableState>(
+              find.byType(Scrollable).first,
+            );
+            scroll.position.jumpTo(scroll.position.maxScrollExtent);
+            if (state == 'loading') {
+              await tester.pump(const Duration(milliseconds: 240));
+            } else {
+              await tester.pumpAndSettle();
+            }
+            await expectLater(
+              find.byKey(const Key('subscription_capture')),
+              matchesGoldenFile(
+                '../.omo/evidence/subscription-consolidation/$stage/$name-end.png',
+              ),
+            );
+            expect(tester.takeException(), isNull);
+            await tester.pumpWidget(const SizedBox.shrink());
+          });
+        }
+      }
+    }
+  }
   testWidgets('short pages keep the last action visible at the scroll end', (
     tester,
   ) async {
@@ -1637,24 +1763,29 @@ rules:
         home: SubscriptionScreen(controller: controller, account: account),
       ),
     );
-    await tester.scrollUntilVisible(
-      find.byIcon(Icons.data_usage_outlined),
-      200,
-      scrollable: find.byType(Scrollable).first,
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Everyday Plus'), findsOneWidget);
+    expect(find.text('사용량'), findsNothing);
+    expect(find.textContaining('남은 트래픽'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('proxima_account_card')),
+        matching: find.byKey(const Key('proxima_account_usage')),
+      ),
+      findsOneWidget,
     );
-    expect(find.text('Everyday Plus'), findsOneWidget);
     expect(find.text('Proxima'), findsNothing);
 
     account.summary = {'plan_name': 'Premium'};
     account.changed();
     await tester.pump();
-    expect(find.text('Premium'), findsOneWidget);
-    expect(find.text('Everyday Plus'), findsNothing);
+    expect(find.textContaining('Premium'), findsOneWidget);
+    expect(find.textContaining('Everyday Plus'), findsNothing);
 
     account.summary = {'plan_name': null};
     account.changed();
     await tester.pump();
-    expect(find.text('Premium'), findsNothing);
+    expect(find.textContaining('Premium'), findsNothing);
     expect(find.text('Proxima'), findsNothing);
   });
 

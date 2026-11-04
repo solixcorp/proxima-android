@@ -6,6 +6,39 @@ import 'package:proxima/core/proxima_account.dart';
 import 'package:proxima/widgets/proxima_account_card.dart';
 
 void main() {
+  testWidgets('consolidated account usage fits narrow large text', (tester) async {
+    tester.view
+      ..physicalSize = const Size(390, 1000)
+      ..devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final account = _Account()
+      ..connected = true
+      ..summary = {
+        'plan_name': 'Everyday Plus subscription with a longer plan name',
+        'traffic_used': 12884901888,
+        'traffic_limit': 107374182400,
+        'plan_expires_at': '2027-11-26T03:00:00Z',
+      };
+    addTearDown(account.dispose);
+    await tester.pumpWidget(_surface(account));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(
+      tester.widget<LinearProgressIndicator>(
+        find.byKey(const Key('proxima_account_usage')),
+      ).value,
+      0.12,
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('proxima_import_subscription')),
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   for (final width in [390.0, 1440.0]) {
     for (final brightness in Brightness.values) {
       testWidgets('account states fit $width in $brightness', (tester) async {
@@ -55,6 +88,12 @@ void main() {
           findsOneWidget,
         );
         expect(find.textContaining('Standard'), findsOneWidget);
+        expect(
+          tester.widget<LinearProgressIndicator>(
+            find.byKey(const Key('proxima_account_usage')),
+          ).value,
+          0.12,
+        );
         expect(find.byKey(const Key('proxima_sign_in')), findsNothing);
         expect(tester.takeException(), isNull);
 
@@ -67,11 +106,16 @@ void main() {
           find.byKey(const Key('proxima_import_subscription')),
         );
         expect(button.onPressed, isNull);
-        expect(find.byType(LinearProgressIndicator), findsOneWidget);
+        final operationProgress = find.byWidgetPredicate(
+          (widget) =>
+              widget is LinearProgressIndicator &&
+              widget.semanticsLabel == '계정 연결 처리 중',
+        );
+        expect(operationProgress, findsOneWidget);
         expect(
           find.text(
             tester.widget<LinearProgressIndicator>(
-              find.byType(LinearProgressIndicator),
+              operationProgress,
             ).semanticsLabel!,
           ),
           findsOneWidget,
@@ -79,7 +123,7 @@ void main() {
         expect(
           find.text(
             tester.widget<LinearProgressIndicator>(
-              find.byType(LinearProgressIndicator),
+              operationProgress,
             ).semanticsLabel!,
           ),
           findsOneWidget,
