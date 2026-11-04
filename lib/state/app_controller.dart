@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../core/native_vpn_bridge.dart';
+import '../core/proxima_user_agent.dart';
 import '../core/clash_subscription.dart';
 import '../core/vless_reality_profile.dart';
 import '../models/vpn_models.dart';
@@ -464,8 +465,10 @@ class AppController extends ChangeNotifier {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 15);
     try {
+      final userAgent = await proximaUserAgent();
       return await fetchPreferredSubscription(
-        (userAgent) => _fetchSubscriptionWithUserAgent(client, uri, userAgent),
+        (_) => _fetchSubscriptionWithUserAgent(client, uri, userAgent),
+        userAgent: userAgent,
       );
     } finally {
       client.close(force: true);
@@ -474,16 +477,16 @@ class AppController extends ChangeNotifier {
 
   static Future<SubscriptionFetchResult> fetchPreferredSubscription(
     Future<SubscriptionFetchResult> Function(String userAgent) fetch,
+    {String? userAgent}
   ) async {
     SubscriptionFetchResult? fallback;
     Object? firstRequestError;
     StackTrace? firstRequestStack;
     var receivedResponse = false;
-    for (final userAgent in const [
-      'clash.meta',
-      'ClashForAndroid',
-      'v2rayN/6.45 Proxima/1.0',
-    ]) {
+    final userAgents = userAgent == null
+        ? const ['clash.meta', 'ClashForAndroid', 'v2rayN/6.45 Proxima/1.0']
+        : [userAgent];
+    for (final userAgent in userAgents) {
       // The legacy identity is only needed when neither Clash request yielded
       // a usable subscription. Some providers reject the Clash identities.
       if (userAgent == 'v2rayN/6.45 Proxima/1.0' && fallback != null) break;
@@ -663,6 +666,21 @@ class AppController extends ChangeNotifier {
       notifyListeners();
       rethrow;
     }
+  }
+
+  Future<Map<String, VlessRealityProfile>> readNodeDetails() async {
+    final profile = activeProfile;
+    if (profile == null) return const {};
+    final content = await bridge.readProfile(profile.id);
+    final names = VlessRealityProfile.nodeNamesFromStoredConfig(
+      content,
+      profileName: profile.name,
+    );
+    final links = VlessRealityProfile.linksFromStoredConfig(content);
+    return {
+      for (var i = 0; i < names.length; i++)
+        names[i]: VlessRealityProfile.parse(links[i]),
+    };
   }
 
   Future<void> loadProxyGroups() async {

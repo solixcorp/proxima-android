@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'proxima_user_agent.dart';
+
 Future<Uri> fetchProximaWebsite({Uri? listUri}) async {
   final client = HttpClient();
   const timeout = Duration(seconds: 15);
@@ -12,6 +14,7 @@ Future<Uri> fetchProximaWebsite({Uri? listUri}) async {
       );
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
+      request.headers.set(HttpHeaders.userAgentHeader, await proximaUserAgent());
       final response = await request.close();
       if (response.statusCode != HttpStatus.ok) {
         throw HttpException('사이트 목록 요청 실패: ${response.statusCode}');

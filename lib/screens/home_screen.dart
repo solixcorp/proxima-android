@@ -49,7 +49,6 @@ class HomeScreen extends StatelessWidget {
     final snapshot = controller.snapshot;
     final active = controller.activeProfile;
     final proxyGroup = controller.currentProxyGroup;
-    final proxyGroupName = controller.currentProxyGroupName;
     final activeNode = snapshot.isConnected ? snapshot.activeNode : null;
     final colors = Theme.of(context).colorScheme;
     final showingActiveConnection =
@@ -58,11 +57,23 @@ class HomeScreen extends StatelessWidget {
     final duration = AppMotion.medium(context);
     final status = _status(snapshot.state);
     final description = _description(snapshot.state);
-    final selectedNodeLabel = activeNode != null && activeNode.isNotEmpty
-        ? displayProxyName(activeNode)
-        : proxyGroup == null
-        ? '노드를 선택해 주세요'
-        : displayProxyName(proxyGroup.selected);
+    final selectedNodeLabel = switch (controller.settings.mode) {
+      OutboundMode.direct => '직접 연결',
+      _ =>
+        activeNode != null && activeNode.isNotEmpty
+            ? displayProxyName(activeNode)
+            : proxyGroup == null
+            ? '자동 선택'
+            : displayProxyName(proxyGroup.selected),
+    };
+    final selectedNodeDescription = switch (controller.settings.mode) {
+      OutboundMode.direct => 'DIRECT · 프록시 없이 연결',
+      OutboundMode.global => 'GLOBAL · 모든 트래픽에 사용할 노드',
+      OutboundMode.rule =>
+        proxyGroup == null
+            ? '규칙에 따라 목적지별로 자동 선택'
+            : 'PROXY · 규칙 트래픽에 사용할 노드',
+    };
     return AppPage(
       title: 'Proxima',
       subtitle: 'VLESS Android VPN 클라이언트',
@@ -284,45 +295,40 @@ class HomeScreen extends StatelessWidget {
         ),
         const SectionHeader('현재 프로필'),
         Card(
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 20,
-              vertical: 8,
-            ),
-            leading: const Icon(Icons.description_outlined),
-            title: Text(active?.name ?? '프로필 없음'),
-            subtitle: Text(active?.sourceLabel ?? '프로필을 추가해 주세요'),
-            trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: openProfiles,
+          child: Column(
+            children: [
+              ListTile(
+                key: const Key('current_profile_tile'),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 8,
+                ),
+                leading: const Icon(Icons.description_outlined),
+                title: Text(active?.name ?? '프로필 없음'),
+                subtitle: Text(active?.sourceLabel ?? '프로필을 추가해 주세요'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: openProfiles,
+              ),
+              const Divider(height: 1, indent: 72),
+              ListTile(
+                key: const Key('selected_node_tile'),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 8,
+                ),
+                leading: const Icon(Icons.public_rounded),
+                title: Text(
+                  selectedNodeLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(selectedNodeDescription),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: snapshot.isBusy ? null : openProxies,
+              ),
+            ],
           ),
         ),
-        if (proxyGroupName != null) ...[
-          const SectionHeader('선택된 노드'),
-          Card(
-            child: ListTile(
-              key: const Key('selected_node_tile'),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 20,
-                vertical: 8,
-              ),
-              leading: const Icon(Icons.public_rounded),
-              title: Text(
-                selectedNodeLabel,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                activeNode == null && proxyGroup == null
-                    ? '노드 정보를 불러오는 중입니다.'
-                    : controller.settings.mode == OutboundMode.global
-                    ? 'GLOBAL · 모든 트래픽에 사용할 노드'
-                    : 'PROXY · 규칙 트래픽에 사용할 노드',
-              ),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: snapshot.isBusy ? null : openProxies,
-            ),
-          ),
-        ],
         if (controller.settings.mode == OutboundMode.rule) ...[
           const SectionHeader('규칙 라우팅'),
           Card(

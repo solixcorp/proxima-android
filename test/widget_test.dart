@@ -1097,6 +1097,116 @@ rules:
     expect(controller.currentProxyGroup, isNull);
   });
 
+  test('node details use canonical aliases and duplicate names', () async {
+    const first = 'vless://11111111-1111-4111-8111-111111111111@first.example:443?security=tls&type=ws&path=%2Fsocket#Same';
+    const second = 'vless://22222222-2222-4222-8222-222222222222@second.example:8443?security=none&type=grpc&serviceName=tunnel#Same';
+    final bridge = _FakeBridge()
+      ..profileContent = VlessRealityProfile.storedConfigFromInput(
+        '$first\n$second',
+        profileName: 'Provider',
+      );
+    final controller = AppController(bridge)..profiles = [bridge.profile];
+    addTearDown(controller.dispose);
+    final nodes = await controller.readNodeDetails();
+    expect(nodes.keys, ['Same', 'Same 2']);
+    expect(nodes['Same']!.path, '/socket');
+    expect(nodes['Same 2']!.server, 'second.example');
+    expect(nodes['Same 2']!.port, 8443);
+    expect(nodes['Same 2']!.serviceName, 'tunnel');
+    bridge.profileContent = VlessRealityProfile.storedConfigFromInput(
+      first,
+      profileName: bridge.profile.name,
+    );
+    expect((await controller.readNodeDetails()).keys, [bridge.profile.name]);
+    expect(bridge.selections, isEmpty);
+    expect(bridge.invokedMethods, isEmpty);
+  });
+
+  testWidgets('node information opens offline without selecting a node', (
+    tester,
+  ) async {
+    final bridge = _FakeBridge()
+      ..profileContent = VlessRealityProfile.storedConfigFromInput(
+        'vless://11111111-1111-4111-8111-111111111111@node.example:443?security=tls&type=ws&path=%2Fsocket#Tokyo',
+        profileName: 'Provider',
+      );
+    final controller = AppController(bridge)..profiles = [bridge.profile];
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(MaterialApp(home: ProxiesScreen(controller: controller)));
+    await tester.tap(find.byTooltip('노드 정보'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(bridge.profile.name));
+    await tester.pumpAndSettle();
+    // The endpoint is also the default TLS SNI.
+    expect(find.text('node.example'), findsNWidgets(2));
+    expect(find.text('443'), findsOneWidget);
+    expect(find.text('WS'), findsOneWidget);
+    expect(find.text('11111111-1111-4111-8111-111111111111'), findsNothing);
+    expect(bridge.selections, isEmpty);
+    expect(bridge.invokedMethods, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('node information retries a failed read without leaking errors', (
+    tester,
+  ) async {
+    final bridge = _FakeBridge()..profileReadError = 'secret-link';
+    final controller = AppController(bridge)..profiles = [bridge.profile];
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(MaterialApp(home: ProxiesScreen(controller: controller)));
+    await tester.tap(find.byTooltip('노드 정보'));
+    await tester.pumpAndSettle();
+    expect(find.text('다시 시도'), findsOneWidget);
+    expect(find.textContaining('secret-link'), findsNothing);
+    bridge.profileReadError = null;
+    await tester.tap(find.text('다시 시도'));
+    await tester.pumpAndSettle();
+    expect(find.text('노드 정보가 없습니다'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('built-in node details do not change the selected node', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    final bridge = _FakeBridge();
+    final controller = AppController(bridge)
+      ..settings = const VpnSettings(mode: OutboundMode.global)
+      ..proxyGroups = const [
+        ProxyGroup(
+          name: 'GLOBAL',
+          type: 'Selector',
+          selected: 'DIRECT',
+          proxies: ['DIRECT'],
+        ),
+      ];
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: ProxiesScreen(controller: controller)),
+    );
+    await tester.tap(find.text('GLOBAL'));
+    await tester.pumpAndSettle();
+    final information = find.byTooltip('DIRECT 노드 상세 정보');
+    try {
+      expect(find.bySemanticsLabel('DIRECT 노드 상세 정보'), findsOneWidget);
+    } finally {
+      semantics.dispose();
+    }
+    await tester.tap(information);
+    await tester.pumpAndSettle();
+    expect(find.text('상세 정보를 사용할 수 없습니다'), findsOneWidget);
+    expect(controller.currentProxyGroup!.selected, 'DIRECT');
+    expect(bridge.selections, isEmpty);
+    expect(tester.takeException(), isNull);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(RadioListTile<String>), findsOneWidget);
+    await tester.tap(find.byTooltip('노드 선택 닫기'));
+    await tester.pumpAndSettle();
+    expect(find.byType(RadioListTile<String>), findsNothing);
+    expect(controller.currentProxyGroup!.selected, 'DIRECT');
+  });
+
   testWidgets('node route rebuilds when the selected node changes', (
     tester,
   ) async {
@@ -1125,7 +1235,9 @@ rules:
     expect(find.text('Tokyo'), findsNothing);
   });
 
-  testWidgets('home hides node selection in rule mode', (tester) async {
+  testWidgets('home combines profile and node information in rule mode', (
+    tester,
+  ) async {
     final controller = AppController(_FakeBridge())
       ..settings = const VpnSettings(mode: OutboundMode.rule)
       ..proxyGroups = const [
@@ -1157,7 +1269,8 @@ rules:
     await tester.pumpAndSettle();
 
     expect(find.text('규칙에 따라 자동 선택'), findsOneWidget);
-    expect(find.byKey(const Key('selected_node_tile')), findsNothing);
+    expect(find.byKey(const Key('current_profile_tile')), findsOneWidget);
+    expect(find.byKey(const Key('selected_node_tile')), findsOneWidget);
   });
 
   test('formats traffic values', () {

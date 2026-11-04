@@ -269,7 +269,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         val port = rulePort ?: (snapshot["activeNode"] as? String)
             ?.let(VpnRuntime::probePort)
             ?: error("직접 연결 모드에서는 프록시 IP를 확인할 수 없습니다.")
-        return XrayProbe.publicIp(port)
+        return XrayProbe.publicIp(this, port)
     }
 
     private fun subscriptionProviders(): JSONArray = JSONArray().apply {

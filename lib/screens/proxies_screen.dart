@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../core/vless_reality_profile.dart';
 import '../models/vpn_models.dart';
 import '../state/app_controller.dart';
 import '../widgets/app_page.dart';
@@ -38,6 +41,15 @@ class ProxiesScreen extends StatelessWidget {
           },
           onRefresh: controller.loadProxyGroups,
           actions: [
+            IconButton(
+              tooltip: '노드 정보',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => _NodeInformation(controller: controller),
+                ),
+              ),
+              icon: const Icon(Icons.info_outline_rounded),
+            ),
             IconButton.filled(
               tooltip: '새로고침',
               style:
@@ -293,9 +305,35 @@ class _ProxyPicker extends StatefulWidget {
 
 class _ProxyPickerState extends State<_ProxyPicker> {
   String? _working;
-  bool _testingAll = false;
   final Set<String> _testing = <String>{};
   final Map<String, int?> _delays = {};
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_measureAvailable);
+    _measureAvailable();
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_measureAvailable);
+    super.dispose();
+  }
+
+  void _measureAvailable() {
+    if (!widget.controller.snapshot.isConnected) return;
+    final group = widget.controller.proxyGroups.firstWhere(
+      (group) => group.name == widget.group.name,
+      orElse: () => widget.group,
+    );
+    final pending = group.proxies
+        .where(
+          (proxy) => !_testing.contains(proxy) && !_delays.containsKey(proxy),
+        )
+        .toList();
+    if (pending.isNotEmpty) unawaited(_measure(pending));
+  }
 
   Future<void> _choose(String proxy) async {
     setState(() => _working = proxy);
@@ -312,59 +350,24 @@ class _ProxyPickerState extends State<_ProxyPicker> {
     }
   }
 
-  Future<void> _test(String proxy) async {
-    if (_testing.isNotEmpty) return;
-    setState(() {
-      _testing.add(proxy);
-      _delays.remove(proxy);
-    });
-    try {
-      final delay = await widget.controller.testDelay(proxy);
-      if (mounted) setState(() => _delays[proxy] = delay);
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('노드 검사 실패: $error')));
-      }
-    } finally {
-      if (mounted) setState(() => _testing.remove(proxy));
-    }
-  }
-
-  Future<void> _testAll(List<String> proxies) async {
-    if (_testing.isNotEmpty) return;
-    setState(() {
-      _testingAll = true;
-      _testing.addAll(proxies);
-      for (final proxy in proxies) {
-        _delays.remove(proxy);
-      }
-    });
-    try {
-      await Future.wait(
-        proxies.map((proxy) async {
-          int? delay;
-          try {
-            delay = await widget.controller.testDelay(proxy);
-          } catch (_) {
-            delay = null;
-          }
-          if (mounted) {
-            setState(() {
-              _delays[proxy] = delay;
-              _testing.remove(proxy);
-            });
-          }
-        }),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _testingAll = false;
-          _testing.clear();
-        });
-      }
-    }
+  Future<void> _measure(List<String> proxies) async {
+    setState(() => _testing.addAll(proxies));
+    await Future.wait(
+      proxies.map((proxy) async {
+        int? delay;
+        try {
+          delay = await widget.controller.testDelay(proxy);
+        } catch (_) {
+          delay = null;
+        }
+        if (mounted) {
+          setState(() {
+            _delays[proxy] = delay;
+            _testing.remove(proxy);
+          });
+        }
+      }),
+    );
   }
 
   @override
@@ -387,16 +390,14 @@ class _ProxyPickerState extends State<_ProxyPicker> {
           final current = group ?? widget.group;
           final disabled = widget.controller.snapshot.isBusy;
           final connected = widget.controller.snapshot.isConnected;
+          final statusStyle = Theme.of(context).textTheme.bodyLarge
+              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant);
           return SafeArea(
             top: false,
             child: RadioGroup<String>(
               groupValue: current.selected,
               onChanged: (value) {
-                if (value != null &&
-                    _working == null &&
-                    _testing.isEmpty &&
-                    !disabled &&
-                    !_testingAll) {
+                if (value != null && _working == null && !disabled) {
                   _choose(value);
                 }
               },
@@ -412,25 +413,30 @@ class _ProxyPickerState extends State<_ProxyPicker> {
                           child: Row(
                             children: [
                               Expanded(
-                                child: Text(
-                                  current.name,
-                                  style: Theme.of(context).textTheme.titleLarge,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      current.name,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleLarge,
+                                    ),
+                                    if (!connected)
+                                      Text(
+                                        'VPN 연결 후 자동으로 측정합니다.',
+                                        style: statusStyle,
+                                      ),
+                                  ],
                                 ),
                               ),
-                              TextButton.icon(
-                                onPressed:
-                                    connected && !disabled && !_testingAll
-                                    ? () => _testAll(current.proxies)
-                                    : null,
-                                icon: _testingAll
-                                    ? const SizedBox.square(
-                                        dimension: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(Icons.speed_rounded),
-                                label: const Text('모두 측정'),
+                              IconButton(
+                                tooltip: '노드 선택 닫기',
+                                onPressed: () => Navigator.pop(context),
+                                icon: const Icon(
+                                  Icons.close_rounded,
+                                  semanticLabel: '노드 선택 닫기',
+                                ),
                               ),
                             ],
                           ),
@@ -441,56 +447,80 @@ class _ProxyPickerState extends State<_ProxyPicker> {
                   }
                   final proxy = current.proxies[index - 1];
                   final selected = proxy == current.selected;
-                  final working = _working == proxy || _testing.contains(proxy);
+                  final working = _working == proxy;
                   return Material(
                     animationDuration: AppMotion.short(context),
                     color: selected
                         ? Theme.of(context).colorScheme.primaryContainer
                               .withValues(alpha: 0.35)
                         : Colors.transparent,
-                    child: RadioListTile<String>(
-                      value: proxy,
-                      enabled: !working && !disabled && !_testingAll,
-                      title: Text(
-                        displayProxyName(proxy),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      secondary: AnimatedSwitcher(
-                        duration: AppMotion.short(context),
-                        child: working
-                            ? const SizedBox.square(
-                                key: ValueKey('working'),
-                                dimension: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : selected
-                            ? const Icon(
-                                Icons.check_circle_rounded,
-                                key: ValueKey('selected'),
-                              )
-                            : IconButton(
-                                key: const ValueKey('test'),
-                                tooltip: '지연 시간 측정',
-                                onPressed:
-                                    connected &&
-                                        !disabled &&
-                                        !_testingAll &&
-                                        _testing.isEmpty
-                                    ? () => _test(proxy)
-                                    : null,
-                                icon: const Icon(Icons.network_ping_rounded),
-                              ),
-                      ),
-                      subtitle: switch (_delays[proxy]) {
-                        final int delay => Text(
-                          delay < 0 ? '시간 초과' : '$delay ms',
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: RadioListTile<String>(
+                            value: proxy,
+                            enabled: _working == null && !disabled,
+                            title: Text(
+                              displayProxyName(proxy),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            secondary: AnimatedSwitcher(
+                              duration: AppMotion.short(context),
+                              child: working
+                                  ? const SizedBox.square(
+                                      key: ValueKey('working'),
+                                      dimension: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : _testing.contains(proxy)
+                                  ? const DelayedProgressIndicator(
+                                      key: ValueKey('measuring'),
+                                      semanticsLabel: '지연 시간 측정 중',
+                                      size: 22,
+                                    )
+                                  : selected
+                                  ? const Icon(
+                                      Icons.check_circle_rounded,
+                                      key: ValueKey('selected'),
+                                    )
+                                  : const SizedBox.shrink(),
+                            ),
+                            subtitle: _testing.contains(proxy)
+                                ? Text('측정 중', style: statusStyle)
+                                : switch (_delays[proxy]) {
+                                    final int delay => Text(
+                                      delay < 0 ? '시간 초과' : '$delay ms',
+                                      style: statusStyle,
+                                    ),
+                                    null =>
+                                      _delays.containsKey(proxy)
+                                          ? Text('응답 없음', style: statusStyle)
+                                          : null,
+                                  },
+                            selected: selected,
+                          ),
                         ),
-                        null => null,
-                      },
-                      selected: selected,
+                        IconButton(
+                          tooltip: '${displayProxyName(proxy)} 노드 상세 정보',
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => _NodeInformation(
+                                controller: widget.controller,
+                                nodeName: proxy,
+                              ),
+                            ),
+                          ),
+                          icon: Icon(
+                            Icons.info_outline_rounded,
+                            semanticLabel:
+                                '${displayProxyName(proxy)} 노드 상세 정보',
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                     ),
                   );
                 },
@@ -498,6 +528,155 @@ class _ProxyPickerState extends State<_ProxyPicker> {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+class _NodeInformation extends StatefulWidget {
+  const _NodeInformation({required this.controller, this.nodeName});
+
+  final AppController controller;
+  final String? nodeName;
+
+  @override
+  State<_NodeInformation> createState() => _NodeInformationState();
+}
+
+class _NodeInformationState extends State<_NodeInformation> {
+  late Future<Map<String, VlessRealityProfile>> _nodes;
+
+  @override
+  void initState() {
+    super.initState();
+    _nodes = widget.controller.readNodeDetails();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.nodeName == null ? '노드 정보' : '노드 상세 정보'),
+      ),
+      body: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: FutureBuilder<Map<String, VlessRealityProfile>>(
+            future: _nodes,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Center(
+                  child: DelayedProgressIndicator(semanticsLabel: '노드 정보 확인 중'),
+                );
+              }
+              if (snapshot.hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('노드 정보를 읽지 못했습니다. 프로필을 확인하고 다시 시도해 주세요.'),
+                        const SizedBox(height: 12),
+                        OutlinedButton(
+                          onPressed: () => setState(() {
+                            _nodes = widget.controller.readNodeDetails();
+                          }),
+                          child: const Text('다시 시도'),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+              final nodes = snapshot.data!;
+              final name = widget.nodeName;
+              if (name == null) {
+                if (nodes.isEmpty) {
+                  return const PageEmptyState(
+                    icon: Icons.dns_outlined,
+                    title: '노드 정보가 없습니다',
+                    message: '프로필을 추가하면 연결하지 않아도 노드 정보를 볼 수 있습니다.',
+                  );
+                }
+                return ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    for (final entry in nodes.entries)
+                      ListTile(
+                        title: Text(displayProxyName(entry.key)),
+                        subtitle: Text(
+                          'VLESS · ${entry.value.network.toUpperCase()} · ${entry.value.security.toUpperCase()}',
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => _NodeInformation(
+                              controller: widget.controller,
+                              nodeName: entry.key,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              }
+              final node = nodes[name];
+              if (node == null) {
+                return const PageEmptyState(
+                  icon: Icons.info_outline_rounded,
+                  title: '상세 정보를 사용할 수 없습니다',
+                  message: '직접 연결·차단 정책이거나 현재 프로필에 없는 노드입니다.',
+                );
+              }
+              final fields = <String, String>{
+                '노드 이름': displayProxyName(name),
+                '프로토콜': 'VLESS',
+                '서버 주소': node.server,
+                '포트': '${node.port}',
+                '전송 방식': node.network.toUpperCase(),
+                '보안': node.security == 'none'
+                    ? '없음 (암호화되지 않음)'
+                    : node.security.toUpperCase(),
+                if (node.security != 'none') '서버 이름 (SNI)': node.serverName,
+                if (node.security != 'none') 'TLS 지문': node.fingerprint,
+                if (node.flow.isNotEmpty) 'Flow': node.flow,
+                if (node.host != null) 'Host': node.host!,
+                if (node.path != null) '경로': node.path!,
+                if (node.serviceName != null) 'gRPC 서비스': node.serviceName!,
+                if (node.security == 'reality') 'REALITY 공개 키': node.publicKey,
+                if (node.security == 'reality' && node.shortId.isNotEmpty)
+                  'Short ID': node.shortId,
+              };
+              return ListView(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
+                children: [
+                  for (final field in fields.entries)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            field.key,
+                            style: Theme.of(context).textTheme.labelLarge,
+                          ),
+                          const SizedBox(height: 4),
+                          SelectableText(
+                            field.value,
+                            style: Theme.of(context).textTheme.bodyLarge,
+                          ),
+                        ],
+                      ),
+                    ),
+                  const Divider(),
+                  const Text('저장된 프로필 정보입니다.\nUUID·접속 링크는 숨깁니다.'),
+                ],
+              );
+            },
+          ),
+        ),
       ),
     );
   }

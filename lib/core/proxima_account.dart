@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_appauth/flutter_appauth.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'proxima_user_agent.dart';
+
 abstract interface class AccountSessionStore {
   Future<String?> read();
   Future<void> write(String value);
@@ -304,6 +306,7 @@ class ProximaAccount extends ChangeNotifier {
           .timeout(const Duration(seconds: 20));
       request.followRedirects = false;
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      request.headers.set(HttpHeaders.userAgentHeader, await proximaUserAgent());
       if (accessToken != null) {
         request.headers.set(
           HttpHeaders.authorizationHeader,

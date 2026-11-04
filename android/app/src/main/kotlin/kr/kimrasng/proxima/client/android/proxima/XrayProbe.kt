@@ -1,5 +1,7 @@
 package kr.kimrasng.proxima.client.android.proxima
 
+import android.content.Context
+import android.os.Build
 import android.os.SystemClock
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
@@ -31,7 +33,7 @@ object XrayProbe {
         }
     }
 
-    fun publicIp(port: Int): JSONObject {
+    fun publicIp(context: Context, port: Int): JSONObject {
         var lastError: Throwable? = null
         val endpoints = listOf(
             "https://api.ipify.org?format=json",
@@ -39,14 +41,14 @@ object XrayProbe {
             "https://ipapi.co/json/",
         )
         endpoints.forEach { endpoint ->
-            runCatching { return readJson(URL(endpoint), port, 5_000) }
+            runCatching { return readJson(context, URL(endpoint), port, 5_000) }
                 .onFailure { lastError = it }
         }
         throw lastError ?: IllegalStateException("공인 IP를 확인하지 못했습니다.")
     }
 
-    private fun readJson(url: URL, port: Int, timeoutMillis: Int): JSONObject {
-        val connection = open(url, port, timeoutMillis)
+    private fun readJson(context: Context, url: URL, port: Int, timeoutMillis: Int): JSONObject {
+        val connection = open(context, url, port, timeoutMillis)
         return try {
             require(connection.responseCode in 200..299) { "공인 IP 조회 서버가 ${connection.responseCode}을 반환했습니다." }
             val text = connection.inputStream.use { input ->
@@ -66,14 +68,21 @@ object XrayProbe {
         }
     }
 
-    private fun open(url: URL, port: Int, timeoutMillis: Int): HttpURLConnection {
+    private fun open(context: Context, url: URL, port: Int, timeoutMillis: Int): HttpURLConnection {
         require(port in 1..65535) { "Xray 검사 포트를 찾을 수 없습니다." }
         return (url.openConnection(
             Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", port)),
         ) as HttpURLConnection).apply {
             connectTimeout = timeoutMillis.coerceIn(1_000, 20_000)
             readTimeout = timeoutMillis.coerceIn(1_000, 20_000)
-            setRequestProperty("User-Agent", "Proxima-Xray/1.0")
+            val version = context.packageManager
+                .getPackageInfo(context.packageName, 0)
+                .versionName
+                .orEmpty()
+            setRequestProperty(
+                "User-Agent",
+                "Proxima-Android/$version (Android ${Build.VERSION.RELEASE})",
+            )
         }
     }
 
