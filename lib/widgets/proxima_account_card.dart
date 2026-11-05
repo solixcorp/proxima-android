@@ -14,12 +14,14 @@ class ProximaAccountCard extends StatefulWidget {
     required this.onImport,
     this.canImport = true,
     this.subscriptionInfo,
+    this.footer,
   });
 
   final ProximaAccount account;
   final Future<void> Function(String url) onImport;
   final bool canImport;
   final SubscriptionInfo? subscriptionInfo;
+  final Widget? footer;
 
   @override
   State<ProximaAccountCard> createState() => _ProximaAccountCardState();
@@ -30,11 +32,13 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
   String? _importMessage;
   late bool _signedIn;
   Object? _accountId;
+  late int _epoch;
 
   @override
   void initState() {
     super.initState();
     _signedIn = widget.account.signedIn;
+    _epoch = widget.account.sessionEpoch;
     _accountId = widget.account.profile?['id'];
     widget.account.addListener(_accountChanged);
   }
@@ -46,6 +50,7 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
       oldWidget.account.removeListener(_accountChanged);
       widget.account.addListener(_accountChanged);
       _signedIn = widget.account.signedIn;
+      _epoch = widget.account.sessionEpoch;
       _accountId = widget.account.profile?['id'];
       _importMessage = null;
     }
@@ -53,9 +58,12 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
 
   void _accountChanged() {
     final account = widget.account;
-    if (_signedIn != account.signedIn || _accountId != account.profile?['id']) {
+    if (_epoch != account.sessionEpoch ||
+        _signedIn != account.signedIn || _accountId != account.profile?['id']) {
       setState(() {
         _signedIn = account.signedIn;
+        _epoch = account.sessionEpoch;
+        _importing = false;
         _accountId = account.profile?['id'];
         _importMessage = null;
       });
@@ -70,6 +78,7 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
 
   Future<void> _importSubscription() async {
     final url = widget.account.subscriptionUrl;
+    final epoch = widget.account.sessionEpoch;
     if (url == null || _importing) return;
     setState(() {
       _importing = true;
@@ -77,7 +86,7 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
     });
     try {
       await widget.account.importSubscription(widget.onImport);
-      if (mounted) {
+      if (mounted && epoch == widget.account.sessionEpoch) {
         setState(() => _importMessage = 'Proxima 구독을 가져와 선택했습니다.');
       }
     } catch (error) {
@@ -89,11 +98,13 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
         HttpException() => '구독 서버 요청이 거절되었습니다. 구독 주소와 유효 기간을 확인해 주세요.',
         _ => '구독을 가져오지 못했습니다. 다시 시도해 주세요.',
       };
-      if (mounted) {
+      if (mounted && epoch == widget.account.sessionEpoch) {
         setState(() => _importMessage = message);
       }
     } finally {
-      if (mounted) setState(() => _importing = false);
+      if (mounted && epoch == widget.account.sessionEpoch) {
+        setState(() => _importing = false);
+      }
     }
   }
 
@@ -103,10 +114,11 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
       listenable: widget.account,
       builder: (context, _) {
         final account = widget.account;
-        final busy = account.busy || _importing;
+        final busy = account.busy || account.mutationBusy || _importing;
         final textTheme = Theme.of(context).textTheme;
         final bodyStyle = textTheme.bodyLarge?.copyWith(fontSize: 17);
         final detailStyle = textTheme.bodyMedium?.copyWith(fontSize: 15);
+        final disabledColor = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65);
         final operationLabel = _importing
             ? 'Proxima 구독 가져오는 중'
             : '계정 연결 처리 중';
@@ -127,11 +139,7 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
             DateTime.tryParse(summary?['plan_expires_at'] as String? ?? '') ??
             storedInfo?.expire;
         final expiresIn = expiry?.difference(DateTime.now()).inDays;
-        return AnimatedSize(
-          alignment: Alignment.topCenter,
-          duration: AppMotion.short(context),
-          curve: Curves.easeOutCubic,
-          child: Card(
+        final content = Card(
             key: const Key('proxima_account_card'),
             child: Padding(
               padding: const EdgeInsets.all(20),
@@ -165,6 +173,7 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                       if (account.signedIn)
                         IconButton(
                           tooltip: '계정 정보 새로고침',
+                          disabledColor: disabledColor,
                           onPressed: busy ? null : account.reload,
                           icon: const Icon(Icons.refresh_rounded),
                         ),
@@ -173,7 +182,7 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                   if (summary != null) ...[
                     const SizedBox(height: 16),
                     Text(
-                      '플랜 · ${account.planName ?? '이용 중인 플랜 없음'}',
+                      '플랜 · ${account.planName ?? '플랜 정보 없음'}',
                       style: textTheme.titleMedium,
                     ),
                     if (used != null && limit != null && limit > 0) ...[
@@ -193,7 +202,10 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                     if (used != null)
                       Text(
                         limit == null
-                            ? '사용량 ${formatBytes(used)} · 무제한'
+                            ? summary.containsKey('traffic_limit') &&
+                                  summary['traffic_limit'] == null
+                                ? '사용량 ${formatBytes(used)} · 무제한'
+                                : '사용량 ${formatBytes(used)} · 한도 정보 없음'
                             : '사용량 ${formatBytes(used)} / ${formatBytes(limit)}',
                         style: detailStyle,
                       ),
@@ -251,6 +263,10 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                       if (!account.signedIn)
                         FilledButton.icon(
                           key: const Key('proxima_sign_in'),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                            disabledForegroundColor: disabledColor,
+                          ),
                           onPressed: busy ? null : account.signIn,
                           icon: const Icon(Icons.login_rounded),
                           label: const Text('Proxima 로그인'),
@@ -258,6 +274,10 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                       else ...[
                         FilledButton.icon(
                           key: const Key('proxima_import_subscription'),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                            disabledForegroundColor: disabledColor,
+                          ),
                           onPressed:
                               !busy &&
                                   widget.canImport &&
@@ -268,16 +288,30 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                           label: const Text('구독 가져오기'),
                         ),
                         TextButton(
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                            disabledForegroundColor: disabledColor,
+                          ),
                           onPressed: busy ? null : account.signOut,
                           child: const Text('로그아웃'),
                         ),
                       ],
                     ],
                   ),
+                  if (widget.footer case final footer?) ...[
+                    const SizedBox(height: 8),
+                    footer,
+                  ],
                 ],
               ),
             ),
-          ),
+          );
+        if (MediaQuery.disableAnimationsOf(context)) return content;
+        return AnimatedSize(
+          alignment: Alignment.topCenter,
+          duration: AppMotion.short(context),
+          curve: Curves.easeOutCubic,
+          child: content,
         );
       },
     );

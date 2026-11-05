@@ -138,7 +138,7 @@ class ProfilesScreen extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.language_rounded),
                 title: const Text('Proxima'),
-                subtitle: const Text('solix.kr을 앱 안에서 엽니다.'),
+                subtitle: const Text('Proxima웹에 로그인하여 프로필을 등록하세요'),
                 onTap: () {
                   Navigator.pop(sheetContext);
                   Navigator.of(context).push(

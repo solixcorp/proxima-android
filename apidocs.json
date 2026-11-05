@@ -1,0 +1,1526 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Proxima VPN API",
+    "version": "1.0.0",
+    "description": "OAuth 2.0 and Proxima client API. Base URL: https://serve.tun.re. Resource endpoints require Authorization: Bearer {access_token}. Access tokens expire in 1 hour; refresh tokens expire in 30 days and rotate on use. See https://serve.tun.re/admin/oauth-apps/docs for the integration guide."
+  },
+  "servers": [
+    {
+      "url": "https://serve.tun.re"
+    }
+  ],
+  "tags": [
+    {
+      "name": "OAuth"
+    },
+    {
+      "name": "Client API"
+    }
+  ],
+  "paths": {
+    "/oauth/authorize": {
+      "get": {
+        "summary": "Authorize user",
+        "description": "Starts OAuth 2.0 authorization-code flow. Redirects to registered redirect_uri with code and state, or an error. Authorization codes expire after 10 minutes and are single-use.",
+        "tags": [
+          "OAuth"
+        ],
+        "parameters": [
+          {
+            "name": "response_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "code"
+              ]
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "redirect_uri",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code_challenge",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code_challenge_method",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "S256"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirects to callback with code/state or OAuth error"
+          },
+          "400": {
+            "description": "Invalid client or callback; shown on Proxima error page"
+          }
+        }
+      }
+    },
+    "/api/v1/oauth/token": {
+      "post": {
+        "summary": "Issue or refresh tokens",
+        "description": "Exchanges authorization code or refresh token for an access and refresh token pair. Accepts JSON or application/x-www-form-urlencoded. Public clients must use PKCE for authorization_code. Refresh tokens rotate on every use.",
+        "tags": [
+          "OAuth"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "grant_type": {
+                    "type": "string",
+                    "enum": [
+                      "authorization_code",
+                      "refresh_token"
+                    ]
+                  },
+                  "code": {
+                    "type": "string"
+                  },
+                  "redirect_uri": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "client_id": {
+                    "type": "string"
+                  },
+                  "code_verifier": {
+                    "type": "string"
+                  },
+                  "refresh_token": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "grant_type"
+                ]
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token pair. Cache-Control: no-store.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "OAuth error response"
+          },
+          "401": {
+            "description": "Invalid client"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          }
+        }
+      }
+    },
+    "/api/v1/oauth/revoke": {
+      "post": {
+        "summary": "Revoke token",
+        "description": "Revokes an access or refresh token. Unknown or empty tokens also return 200.",
+        "tags": [
+          "OAuth"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  },
+                  "client_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "token"
+                ]
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  },
+                  "client_id": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token revoked (plain text OK)"
+          },
+          "401": {
+            "description": "Invalid client"
+          }
+        }
+      }
+    },
+    "/api/v1/client/profile": {
+      "get": {
+        "summary": "Basic profile",
+        "description": "Returns name, email, account status, and language.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "profile",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update profile",
+        "description": "Changes display name and language only. Email and password changes are rejected.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "profile:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/subscription": {
+      "get": {
+        "summary": "Subscription link",
+        "description": "Returns subscription URL and per-domain URLs; url is null when unavailable.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "subscription:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/nodes": {
+      "get": {
+        "summary": "Node status",
+        "description": "Lists nodes available to the user plan and their status.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "nodes:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/summary": {
+      "get": {
+        "summary": "Plan and usage",
+        "description": "Returns current plan, traffic usage and limit in bytes, expiry, and device counts. traffic_limit may be null.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "plan:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/reset-tickets": {
+      "get": {
+        "summary": "Reset tickets",
+        "description": "Lists unused, unexpired reset tickets.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "reset_tickets:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/reset-tickets/history": {
+      "get": {
+        "summary": "Reset ticket history",
+        "description": "Returns up to the latest 20 reset tickets, newest use first.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "reset_tickets:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/reset-tickets/{id}/redeem": {
+      "post": {
+        "summary": "Use a reset ticket",
+        "description": "Uses one ticket to reset this month’s data usage. Used or expired tickets return 409.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "reset_tickets:redeem",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "409": {
+            "description": "Ticket already used, expired, or no capped plan"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/subscription-domains": {
+      "get": {
+        "summary": "Subscription domains",
+        "description": "Lists domains available for the subscription link.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "subscription:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/sub-token/regenerate": {
+      "post": {
+        "summary": "Reissue subscription link",
+        "description": "Creates a new subscription link and retires the old link.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "subscription:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/traffic": {
+      "get": {
+        "summary": "Traffic usage",
+        "description": "Returns data usage over time.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "plan:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/plans": {
+      "get": {
+        "summary": "Plans",
+        "description": "Lists plans available for purchase and their prices.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/orders": {
+      "get": {
+        "summary": "Orders",
+        "description": "Returns order history and payment status.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create order",
+        "description": "Creates a plan order.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/orders/{id}/receipt": {
+      "get": {
+        "summary": "Receipt",
+        "description": "Returns receipt for an order.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/payment-providers": {
+      "get": {
+        "summary": "Payment methods",
+        "description": "Lists available payment methods.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/free-trials/subscription": {
+      "get": {
+        "summary": "Free trial",
+        "description": "Returns free trial subscription status.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/promotions/{code}": {
+      "get": {
+        "summary": "Look up promotion",
+        "description": "Returns details of a promotion code.",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/orders/{id}/cancel": {
+      "post": {
+        "summary": "Cancel order",
+        "description": "Cancels an unpaid order.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/orders/{id}/promotion": {
+      "patch": {
+        "summary": "Apply promotion",
+        "description": "Applies a promotion code to an order.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove promotion",
+        "description": "Removes the promotion code from an order.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/orders/{id}/checkout": {
+      "post": {
+        "summary": "Start checkout",
+        "description": "Returns payment page URL; the user approves payment there.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/orders/{id}/checkout/confirm": {
+      "post": {
+        "summary": "Confirm checkout",
+        "description": "Checks payment completion and applies the plan.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/free-trials/subscription/cancel": {
+      "post": {
+        "summary": "Cancel trial",
+        "description": "Cancels the free trial subscription.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/free-trials/subscription/confirm": {
+      "post": {
+        "summary": "Confirm trial",
+        "description": "Confirms free trial payment setup.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/billing/portal": {
+      "post": {
+        "summary": "Billing portal",
+        "description": "Returns the Stripe billing portal URL.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "orders:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/devices": {
+      "get": {
+        "summary": "Devices",
+        "description": "Lists registered devices.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "devices:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Add device",
+        "description": "Registers a new device.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "devices:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/devices/{id}": {
+      "delete": {
+        "summary": "Remove device",
+        "description": "Removes a device and disconnects it immediately.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "devices:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/support/faq": {
+      "get": {
+        "summary": "FAQ",
+        "description": "Returns support categories and FAQ.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "support:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/support/tickets": {
+      "get": {
+        "summary": "My tickets",
+        "description": "Lists the user’s support tickets.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "support:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Open ticket",
+        "description": "Opens a new support ticket.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "support:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/support/tickets/{id}": {
+      "get": {
+        "summary": "Ticket conversation",
+        "description": "Returns the full conversation of a ticket.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "support:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/support/tickets/{id}/messages": {
+      "post": {
+        "summary": "Reply",
+        "description": "Adds a reply to a ticket.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "support:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/support/tickets/{id}/close": {
+      "post": {
+        "summary": "Close ticket",
+        "description": "Closes a support ticket.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "support:write",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/announcements": {
+      "get": {
+        "summary": "Announcements",
+        "description": "Lists announcements in the user’s language.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "content:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/guides": {
+      "get": {
+        "summary": "Guides",
+        "description": "Lists published guides.",
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "content:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/v1/client/guides/{id}": {
+      "get": {
+        "summary": "Guide",
+        "description": "Returns the body of a guide.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "tags": [
+          "Client API"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-required-scope": "content:read",
+        "responses": {
+          "200": {
+            "description": "Successful response. Response fields depend on the endpoint; see the OAuth integration guide."
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked bearer token"
+          },
+          "403": {
+            "description": "Insufficient scope"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "OAuth access token"
+      }
+    },
+    "schemas": {
+      "TokenResponse": {
+        "type": "object",
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in",
+          "refresh_token",
+          "scope"
+        ],
+        "properties": {
+          "access_token": {
+            "type": "string"
+          },
+          "token_type": {
+            "type": "string",
+            "const": "Bearer"
+          },
+          "expires_in": {
+            "type": "integer",
+            "example": 3600
+          },
+          "refresh_token": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          }
+        }
+      },
+      "OAuthError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "error_description": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "x-oauth-scopes": [
+    "profile",
+    "profile:write",
+    "subscription:read",
+    "subscription:write",
+    "nodes:read",
+    "plan:read",
+    "reset_tickets:read",
+    "reset_tickets:redeem",
+    "orders:read",
+    "orders:write",
+    "support:read",
+    "support:write",
+    "devices:read",
+    "devices:write",
+    "content:read"
+  ],
+  "x-documentation-source": "Proxima VPN OAuth integration guide, observed in admin console"
+}

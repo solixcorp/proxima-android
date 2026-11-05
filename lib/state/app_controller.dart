@@ -227,6 +227,9 @@ class AppController extends ChangeNotifier {
             fallbackName: requestedName,
           )
         : requestedName;
+    if (kDebugMode) {
+      debugPrint('[subscription-import] stage=rule-sets begin');
+    }
     final ruleSets = await ClashSubscriptionParser.loadRuleSets(
       content,
       fetch: fetchRuleSet,
@@ -239,13 +242,24 @@ class AppController extends ChangeNotifier {
       ),
       sourceUrl,
     );
+    if (kDebugMode) {
+      debugPrint(
+        '[subscription-import] stage=validation begin ruleSets=${ruleSets.length}',
+      );
+    }
     final validationError = await validateProfile(generatedConfig);
     if (connectionAttempt != null &&
         (connectionAttempt != _connectionAttempt || id != activeProfile?.id)) {
       return;
     }
     if (validationError != null && validationError.isNotEmpty) {
+      if (kDebugMode) {
+        debugPrint('[subscription-import] stage=validation result=rejected');
+      }
       throw FormatException(validationError);
+    }
+    if (kDebugMode) {
+      debugPrint('[subscription-import] stage=save-profile begin');
     }
     final saved = await bridge.saveProfile(
       id: id,
@@ -320,6 +334,45 @@ class AppController extends ChangeNotifier {
   Future<String> fetchSubscription(String source) async =>
       (await fetchSubscriptionDetails(source)).content;
 
+  Future<void> _traceRejectedResponse(
+    HttpClientResponse response, {
+    required String stage,
+    required String host,
+  }) async {
+    if (!kDebugMode) {
+      await response.drain<void>();
+      return;
+    }
+    try {
+      final bytes = <int>[];
+      await for (final chunk in response.timeout(const Duration(seconds: 3))) {
+        if (bytes.length + chunk.length > 4096) break;
+        bytes.addAll(chunk);
+      }
+      final body = jsonDecode(utf8.decode(bytes));
+      final reason = body is Map ? body['error'] : null;
+      // Never print arbitrary response text: it may contain subscription tokens.
+      const safeReasons = {
+        'subscription inactive',
+        'plan expired',
+        'traffic limit exceeded',
+        'subscription not found',
+        'failed to resolve subscription',
+        'failed to fetch subscription',
+        'no servers are ready for this subscription yet; retry shortly',
+      };
+      debugPrint(
+        '[subscription-import] stage=$stage host=$host '
+        'serverReason=${safeReasons.contains(reason) ? reason : 'unrecognized-or-redacted'}',
+      );
+    } catch (error) {
+      debugPrint(
+        '[subscription-import] stage=$stage host=$host '
+        'responseDiagnostic=${error.runtimeType} body=redacted',
+      );
+    }
+  }
+
   Future<List<int>> fetchRuleSet(Uri source) async {
     if (source.scheme != 'https' ||
         source.host.isEmpty ||
@@ -331,11 +384,20 @@ class AppController extends ChangeNotifier {
     try {
       var current = source;
       for (var redirects = 0; ; redirects++) {
+        if (kDebugMode) {
+          debugPrint('[subscription-import] stage=rule-set host=${current.host} request=GET');
+        }
         final request = await client.getUrl(current);
         request.followRedirects = false;
         final response = await request.close().timeout(
           const Duration(seconds: 20),
         );
+        if (kDebugMode) {
+          debugPrint(
+            '[subscription-import] stage=rule-set host=${current.host} '
+            'status=${response.statusCode} redirect=${response.isRedirect}',
+          );
+        }
         if (response.isRedirect) {
           final location = response.headers.value(HttpHeaders.locationHeader);
           await response.drain<void>();
@@ -353,7 +415,11 @@ class AppController extends ChangeNotifier {
         }
         if (response.statusCode < 200 || response.statusCode >= 300) {
           final status = response.statusCode;
-          await response.drain<void>();
+          await _traceRejectedResponse(
+            response,
+            stage: 'rule-set',
+            host: current.host,
+          );
           throw HttpException('규칙셋 서버 응답 $status');
         }
         final bytes = <int>[];
@@ -365,6 +431,15 @@ class AppController extends ChangeNotifier {
         }
         return bytes;
       }
+    } catch (error, stack) {
+      if (kDebugMode) {
+        debugPrint(
+          '[subscription-import] stage=rule-set host=${source.host} '
+          'failure=${error.runtimeType}',
+        );
+        debugPrintStack(stackTrace: stack);
+      }
+      rethrow;
     } finally {
       client.close(force: true);
     }
@@ -466,10 +541,25 @@ class AppController extends ChangeNotifier {
       ..connectionTimeout = const Duration(seconds: 15);
     try {
       final userAgent = await proximaUserAgent();
+      if (kDebugMode) {
+        debugPrint(
+          '[subscription-import] stage=subscription host=${uri.host} '
+          'userAgent=$userAgent',
+        );
+      }
       return await fetchPreferredSubscription(
         (_) => _fetchSubscriptionWithUserAgent(client, uri, userAgent),
         userAgent: userAgent,
       );
+    } catch (error, stack) {
+      if (kDebugMode) {
+        debugPrint(
+          '[subscription-import] stage=subscription host=${uri.host} '
+          'failure=${error.runtimeType}',
+        );
+        debugPrintStack(stackTrace: stack);
+      }
+      rethrow;
     } finally {
       client.close(force: true);
     }
@@ -535,6 +625,12 @@ class AppController extends ChangeNotifier {
         'application/yaml, text/yaml, text/plain, */*',
       );
       response = await request.close().timeout(const Duration(seconds: 20));
+      if (kDebugMode) {
+        debugPrint(
+          '[subscription-import] stage=subscription host=${current.host} '
+          'status=${response.statusCode} redirect=${response.isRedirect}',
+        );
+      }
       if (!response.isRedirect) break;
       final location = response.headers.value(HttpHeaders.locationHeader);
       await response.drain<void>();
@@ -549,7 +645,11 @@ class AppController extends ChangeNotifier {
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final statusCode = response.statusCode;
-      await response.drain<void>();
+      await _traceRejectedResponse(
+        response,
+        stage: 'subscription',
+        host: current.host,
+      );
       if (statusCode == HttpStatus.forbidden) {
         throw const HttpException(
           '구독 서버가 접근을 거부했습니다(403). 구독 주소나 계정 상태를 확인해 주세요.',

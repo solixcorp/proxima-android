@@ -6,6 +6,35 @@ import 'package:proxima/core/proxima_account.dart';
 import 'package:proxima/widgets/proxima_account_card.dart';
 
 void main() {
+  testWidgets('missing limits are unknown and only explicit null is unlimited', (tester) async {
+    final account = _Account()
+      ..connected = true
+      ..summary = {'traffic_used': 1024};
+    addTearDown(account.dispose);
+    await tester.pumpWidget(_surface(account));
+    expect(find.textContaining('무제한'), findsNothing);
+    account.summary = {'traffic_used': 1024, 'traffic_limit': null};
+    account.changed();
+    await tester.pumpAndSettle();
+    expect(find.textContaining('무제한'), findsOneWidget);
+  });
+
+  testWidgets('session epoch clears and rejects late import feedback', (tester) async {
+    final account = _Account()
+      ..connected = true
+      ..subscriptionUrl = 'https://sub.example.com/sub/account';
+    addTearDown(account.dispose);
+    final pending = Completer<void>();
+    await tester.pumpWidget(_surface(account, onImport: (_) => pending.future));
+    await tester.tap(find.byKey(const Key('proxima_import_subscription')));
+    await tester.pump();
+    account.epoch++;
+    account.changed();
+    pending.complete();
+    await tester.pumpAndSettle();
+    expect(find.byType(SelectableText), findsNothing);
+  });
+
   testWidgets('consolidated account usage fits narrow large text', (tester) async {
     tester.view
       ..physicalSize = const Size(390, 1000)
@@ -267,10 +296,7 @@ void main() {
     final account = _Account();
     addTearDown(account.dispose);
     await tester.pumpWidget(_surface(account, disableAnimations: true));
-    expect(
-      tester.widget<AnimatedSize>(find.byType(AnimatedSize)).duration,
-      Duration.zero,
-    );
+    expect(find.byType(AnimatedSize), findsNothing);
   });
 }
 
@@ -305,8 +331,14 @@ Widget _surface(
 );
 
 class _Account extends ProximaAccount {
+  _Account() : super(server: Uri.https('sub.example.com'));
+
   bool connected = false;
   int logins = 0;
+  int epoch = 0;
+
+  @override
+  int get sessionEpoch => epoch;
 
   @override
   bool get signedIn => connected;

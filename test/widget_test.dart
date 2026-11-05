@@ -254,7 +254,7 @@ void main() {
         ]) {
           if (screen != HomeScreen) {
             final icon = switch (screen) {
-              SubscriptionScreen => Icons.data_usage_outlined,
+              SubscriptionScreen => Icons.account_circle_outlined,
               ProfilesScreen => Icons.description_outlined,
               _ => Icons.more_horiz_rounded,
             };
@@ -274,7 +274,7 @@ void main() {
           );
           final bottom = switch (screen) {
             HomeScreen => '이번 연결',
-            SubscriptionScreen => '구독 주소 필요',
+            SubscriptionScreen => '구독 프로필',
             ProfilesScreen => 'VLESS REALITY',
             _ => '오픈소스 라이선스',
           };
@@ -327,7 +327,7 @@ void main() {
       matching: find.byType(SingleChildScrollView),
     );
     await tester.scrollUntilVisible(
-      find.text('solix.kr을 앱 안에서 엽니다.'),
+      find.widgetWithIcon(ListTile, Icons.language_rounded),
       120,
       scrollable: find.descendant(of: menu, matching: find.byType(Scrollable)),
     );
@@ -454,6 +454,7 @@ void main() {
         home: SubscriptionScreen(controller: controller),
       ),
     );
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('만료일'),
       120,
@@ -1385,9 +1386,9 @@ rules:
     await tester.pumpWidget(
       MaterialApp(home: SubscriptionScreen(controller: controller)),
     );
-
+    await tester.pumpAndSettle();
     expect(find.text('Connected subscription'), findsOneWidget);
-    expect(find.text('example.com'), findsOneWidget);
+    expect(find.text('example.com'), findsNothing);
     expect(find.text('구독 정보가 없습니다'), findsOneWidget);
   });
 
@@ -1420,13 +1421,13 @@ rules:
     await tester.pumpWidget(
       MaterialApp(home: SubscriptionScreen(controller: controller)),
     );
-
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('subscription_status_card')), findsOneWidget);
     expect(find.text('VPN으로 보호됨'), findsOneWidget);
     expect(find.text('규칙'), findsOneWidget);
     expect(find.text('규칙에 따라 자동 선택'), findsOneWidget);
     expect(find.text('Local Reality'), findsOneWidget);
-    expect(find.text('로컬 프로필'), findsOneWidget);
+    expect(find.text('로컬 프로필'), findsNothing);
   });
 
   testWidgets('profile in-use state follows the runtime profile id', (
@@ -1878,7 +1879,10 @@ rules:
     );
     await tester.pumpAndSettle();
     expect(find.textContaining('Everyday Plus'), findsOneWidget);
-    expect(find.text('사용량'), findsNothing);
+    expect(find.descendant(
+      of: find.byKey(const Key('account_local_profile')),
+      matching: find.text('사용량'),
+    ), findsNothing);
     expect(find.textContaining('남은 트래픽'), findsOneWidget);
     expect(
       find.descendant(
@@ -1930,12 +1934,21 @@ rules:
       ),
     );
     await tester.scrollUntilVisible(
+      find.text('구독 프로필'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
       find.byIcon(Icons.data_usage_outlined),
       200,
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('Other plan'), findsOneWidget);
-    expect(find.text('Everyday Plus'), findsNothing);
+    expect(find.descendant(
+      of: find.byKey(const Key('account_local_profile')),
+      matching: find.text('Everyday Plus'),
+    ), findsNothing);
   });
 
   test('account import persists the API plan without replacing usage', () async {

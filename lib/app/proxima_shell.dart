@@ -50,9 +50,9 @@ class _ProximaShellState extends State<ProximaShell>
       label: '홈',
     ),
     NavigationDestination(
-      icon: Icon(Icons.data_usage_outlined),
-      selectedIcon: Icon(Icons.data_usage_rounded),
-      label: '구독',
+      icon: Icon(Icons.account_circle_outlined),
+      selectedIcon: Icon(Icons.account_circle_rounded),
+      label: '계정',
     ),
     NavigationDestination(
       icon: Icon(Icons.description_outlined),
@@ -111,6 +111,7 @@ class _ProximaShellState extends State<ProximaShell>
           SubscriptionScreen(
             controller: widget.controller,
             account: widget.account,
+            active: _index == 1,
           ),
           ProfilesScreen(controller: widget.controller),
           SettingsScreen(controller: widget.controller),
