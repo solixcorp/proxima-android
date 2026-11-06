@@ -287,15 +287,18 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   Widget _accountSection(ProximaAccount current, AccountSection section) {
     final value = _sectionValue(current, section);
     final grant = _readGrant(section);
+    final isPlanDetail =
+        section == AccountSection.summary || section == AccountSection.traffic;
     final loadingLabel = '${_sectionTitle(section)} · 불러오는 중';
-    return Card(
+    final card = Card(
       key: ValueKey('account-section-${section.name}'),
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.all(isPlanDetail ? 20 : 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (!isPlanDetail) ...[
             Semantics(
               header: true,
               child: Text(_sectionTitle(section),
@@ -304,6 +307,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 )),
             ),
             const SizedBox(height: 12),
+            ],
             _responseSize(context, Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -344,6 +348,112 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         ),
       ),
     );
+    return isPlanDetail
+        ? Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 720),
+              child: card,
+            ),
+          )
+        : card;
+  }
+
+  List<Widget> _planDetail(AccountSection section, AccountJson data) {
+    final theme = Theme.of(context);
+    final isPlan = section == AccountSection.summary;
+    final used = (data['traffic_used'] as num?)?.toInt();
+    final limit = (data['traffic_limit'] as num?)?.toInt();
+    final hasQuota = used != null && limit != null && limit > 0;
+    final detailStyle = theme.textTheme.bodyMedium?.copyWith(
+      fontSize: 15,
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+
+    Widget fields(Map<String, String> labels) => Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final entry in labels.entries)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(entry.value, style: detailStyle),
+                const SizedBox(height: 4),
+                AccountText(
+                  _fieldValue(data, entry.key),
+                  style: theme.textTheme.bodyLarge?.copyWith(fontSize: 17),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+
+    return [
+      if (isPlan) ...[
+        AccountText(
+          _fieldValue(data, 'plan_name'),
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        AccountText(_fieldValue(data, 'status'), style: detailStyle),
+        const SizedBox(height: 24),
+      ],
+      Text(
+        isPlan ? '데이터 사용량' : '남은 데이터',
+        style: theme.textTheme.titleMedium,
+      ),
+      if (hasQuota) ...[
+        const SizedBox(height: 8),
+        AccountText(
+          formatBytes((limit - used).clamp(0, limit)),
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 12),
+        LinearProgressIndicator(
+          key: const Key('account_detail_usage'),
+          value: (used / limit).clamp(0, 1).toDouble(),
+          semanticsLabel: '구독 데이터 사용량',
+        ),
+        const SizedBox(height: 12),
+      ] else ...[
+        const SizedBox(height: 8),
+        AccountText(
+          data.containsKey('traffic_limit') && data['traffic_limit'] == null
+              ? '무제한'
+              : '남은 데이터 정보 없음',
+          style: theme.textTheme.titleLarge,
+        ),
+      ],
+      fields({
+        'traffic_used': '사용한 트래픽',
+        'traffic_limit': '트래픽 한도',
+      }),
+      const SizedBox(height: 16),
+      Text('이용 기간', style: theme.textTheme.titleMedium),
+      fields({
+        'plan_expires_at': '만료일',
+        if (!isPlan) 'days_remaining': '남은 일수',
+        if (isPlan) 'next_traffic_reset_at': '다음 트래픽 초기화',
+      }),
+      if (isPlan) ...[
+        const SizedBox(height: 16),
+        Text('기기 및 연결', style: theme.textTheme.titleMedium),
+        fields({
+          'devices': '등록 기기',
+          'max_devices': '기기 등록 한도',
+          'online': '온라인 기기',
+          'online_ips': '온라인 IP',
+          'max_concurrent': '동시 연결 한도',
+        }),
+      ],
+    ];
   }
 
   String _text(Object? value) => _localized(
@@ -488,22 +598,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         ];
       case AccountSection.summary:
       case AccountSection.traffic:
-        return _fields(data, {
-          if (section == AccountSection.summary) 'plan_name': '플랜',
-          if (section == AccountSection.summary) 'status': '이용 상태',
-          'traffic_used': '사용한 트래픽',
-          'traffic_limit': '트래픽 한도',
-          'plan_expires_at': '만료일',
-          if (section == AccountSection.traffic) 'days_remaining': '남은 일수',
-          if (section == AccountSection.summary) ...{
-            'devices': '등록 기기',
-            'max_devices': '기기 등록 한도',
-            'online': '온라인 기기',
-            'online_ips': '온라인 IP',
-            'max_concurrent': '동시 연결 한도',
-            'next_traffic_reset_at': '다음 트래픽 초기화',
-          },
-        });
+        return _planDetail(section, data);
       case AccountSection.subscription:
         return [
           ..._fields(data, {'available': '구독 제공 상태'}),
