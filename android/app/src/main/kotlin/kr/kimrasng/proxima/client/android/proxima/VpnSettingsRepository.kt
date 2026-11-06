@@ -8,8 +8,9 @@ data class NativeVpnSettings(
     val ipv6: Boolean,
     val mtu: Int,
     val mode: String,
+    val themeMode: String = "system",
 ) {
-    fun asMap(): Map<String, Any> = mapOf("stack" to stack, "ipv6" to ipv6, "mtu" to mtu, "mode" to mode)
+    fun asMap(): Map<String, Any> = mapOf("stack" to stack, "ipv6" to ipv6, "mtu" to mtu, "mode" to mode, "themeMode" to themeMode)
 }
 
 class VpnSettingsRepository(context: Context) {
@@ -20,15 +21,17 @@ class VpnSettingsRepository(context: Context) {
         ipv6 = preferences.getBoolean("ipv6", true),
         mtu = preferences.getInt("mtu", 1400).takeIf { it in ALLOWED_MTUS } ?: 1400,
         mode = preferences.getString("mode", "rule")?.takeIf { it in ALLOWED_MODES } ?: "rule",
+        themeMode = preferences.getString("themeMode", "system")?.takeIf { it in ALLOWED_THEMES } ?: "system",
     )
 
-    fun save(stack: String?, ipv6: Boolean?, mtu: Int?, mode: String?) {
+    fun save(stack: String?, ipv6: Boolean?, mtu: Int?, mode: String?, themeMode: String? = null) {
         val current = load()
         preferences.edit()
             .putString("stack", stack?.takeIf { it in ALLOWED_STACKS } ?: current.stack)
             .putBoolean("ipv6", ipv6 ?: current.ipv6)
             .putInt("mtu", mtu?.takeIf { it in ALLOWED_MTUS } ?: current.mtu)
             .putString("mode", mode?.takeIf { it in ALLOWED_MODES } ?: current.mode)
+            .putString("themeMode", themeMode?.takeIf { it in ALLOWED_THEMES } ?: current.themeMode)
             .apply()
     }
 
@@ -56,5 +59,6 @@ class VpnSettingsRepository(context: Context) {
         private val ALLOWED_STACKS = setOf("system", "gvisor", "mixed")
         private val ALLOWED_MTUS = setOf(1280, 1400, 1500, 9000)
         private val ALLOWED_MODES = setOf("rule", "global", "direct")
+        private val ALLOWED_THEMES = setOf("system", "light", "dark")
     }
 }

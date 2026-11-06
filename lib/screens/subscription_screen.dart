@@ -194,27 +194,6 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-        const SectionHeader('계정 서비스'),
-        Card(
-          key: const Key('account_services_container'),
-          child: account?.signedIn == true
-              ? Column(
-                  children: [
-                    for (final section in _serviceSections)
-                      ListTile(
-                        key: ValueKey('account-service-${section.name}'),
-                        leading: Icon(_sectionIcon(section)),
-                        title: Text(_sectionTitle(section)),
-                        trailing: const Icon(Icons.arrow_forward_rounded),
-                        onTap: () => _openService(account!, section),
-                      ),
-                  ],
-                )
-              : const ListTile(
-                  leading: Icon(Icons.account_circle_outlined),
-                  title: Text('로그인 후 이용할 수 있습니다.'),
-                ),
-        ),
         const SectionHeader('플랜 및 사용량'),
         if (account case final account?)
         KeyedSubtree(
@@ -257,6 +236,27 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
               child: Text('연결된 계정이 없습니다.'),
             ),
           ),
+        const SectionHeader('계정 서비스'),
+        Card(
+          key: const Key('account_services_container'),
+          child: account?.signedIn == true
+              ? Column(
+                  children: [
+                    for (final section in _serviceSections)
+                      ListTile(
+                        key: ValueKey('account-service-${section.name}'),
+                        leading: Icon(_sectionIcon(section)),
+                        title: Text(_sectionTitle(section)),
+                        trailing: const Icon(Icons.arrow_forward_rounded),
+                        onTap: () => _openService(account!, section),
+                      ),
+                  ],
+                )
+              : const ListTile(
+                  leading: Icon(Icons.account_circle_outlined),
+                  title: Text('로그인 후 이용할 수 있습니다.'),
+                ),
+        ),
         const SectionHeader('구독 프로필'),
         Card(
           key: const Key('account_subscription_profile_container'),

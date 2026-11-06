@@ -21,6 +21,186 @@ import 'package:proxima/state/app_controller.dart';
 import 'package:proxima/widgets/app_page.dart';
 
 void main() {
+  test('theme settings round trip and preserve tunnel settings', () {
+    expect(VpnSettings.fromMap(const {}).themeMode, AppThemeMode.system);
+    expect(
+      VpnSettings.fromMap(const {'themeMode': 'unknown'}).themeMode,
+      AppThemeMode.system,
+    );
+    for (final mode in AppThemeMode.values) {
+      final settings = const VpnSettings(
+        ipv6: false,
+        mtu: 1500,
+        mode: OutboundMode.global,
+      ).copyWith(themeMode: mode);
+      final restored = VpnSettings.fromMap(settings.toMap());
+      expect(restored.themeMode, mode);
+      expect(restored.ipv6, isFalse);
+      expect(restored.mtu, 1500);
+      expect(restored.mode, OutboundMode.global);
+      expect(restored.copyWith(mtu: 1280).themeMode, mode);
+    }
+  });
+
+  testWidgets('theme selection updates the app and survives reload', (
+    tester,
+  ) async {
+    final bridge = _ThemeBridge();
+    final controller = AppController(bridge);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
+    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+    await tester.pumpWidget(ProximaApp(controller: controller));
+    await tester.pumpAndSettle();
+
+    Brightness brightness() => Theme.of(
+      tester.element(find.byType(ProximaShell)),
+    ).brightness;
+
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+    await tester.pumpAndSettle();
+    expect(brightness(), Brightness.dark);
+
+    await tester.tap(find.byIcon(Icons.more_horiz_rounded).last);
+    await tester.pumpAndSettle();
+    final dropdown = find.byKey(const Key('theme_mode'));
+    for (final mode in [
+      AppThemeMode.light,
+      AppThemeMode.dark,
+      AppThemeMode.system,
+    ]) {
+      await tester.tap(dropdown);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(mode.label).last);
+      await tester.pumpAndSettle();
+      expect(controller.settings.themeMode, mode);
+      expect(bridge.saved.themeMode, mode);
+      expect(
+        brightness(),
+        mode == AppThemeMode.light ? Brightness.light : Brightness.dark,
+      );
+      expect(find.byKey(const Key('theme_mode')), findsOneWidget);
+    }
+    await controller.updateSettings(
+      controller.settings.copyWith(themeMode: AppThemeMode.dark),
+    );
+    final reloaded = AppController(bridge);
+    addTearDown(reloaded.dispose);
+    await reloaded.initialize();
+    expect(reloaded.settings.themeMode, AppThemeMode.dark);
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
+    await tester.pumpWidget(ProximaApp(controller: reloaded));
+    await tester.pumpAndSettle();
+    expect(brightness(), Brightness.dark);
+    expect(tester.takeException(), isNull);
+  });
+
+  if (const bool.fromEnvironment('THEME_CAPTURES')) {
+    setUpAll(() async {
+      final text = FontLoader('Roboto')
+        ..addFont(
+          File(const String.fromEnvironment('CAPTURE_TEXT_FONT'))
+              .readAsBytes()
+              .then(ByteData.sublistView),
+        );
+      await text.load();
+      final icons = FontLoader('MaterialIcons')
+        ..addFont(
+          File(const String.fromEnvironment('CAPTURE_ICON_FONT'))
+              .readAsBytes()
+              .then(ByteData.sublistView),
+        );
+      await icons.load();
+    });
+    for (final width in [390.0, 1440.0]) {
+      for (final mode in [AppThemeMode.light, AppThemeMode.dark]) {
+        testWidgets('theme capture $width ${mode.name}', (tester) async {
+          tester.view
+            ..physicalSize = Size(width, 1000)
+            ..devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          final controller = AppController(_ThemeBridge());
+          addTearDown(controller.dispose);
+          await controller.initialize();
+          await controller.updateSettings(
+            controller.settings.copyWith(themeMode: mode),
+          );
+          await tester.pumpWidget(
+            RepaintBoundary(
+              key: const Key('theme_capture'),
+              child: ProximaApp(controller: controller),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final navigation = find.byType(
+            width >= 600 ? NavigationRail : NavigationBar,
+          );
+          for (final icon in [
+            Icons.home_rounded,
+            Icons.account_circle_outlined,
+            Icons.description_outlined,
+            Icons.more_horiz_rounded,
+          ]) {
+            await tester.tap(
+              find.descendant(of: navigation, matching: find.byIcon(icon)),
+            );
+            await tester.pumpAndSettle();
+            final name = '${width.toInt()}-${mode.name}-${icon.codePoint}';
+            await expectLater(
+              find.byKey(const Key('theme_capture')),
+              matchesGoldenFile(
+                '../.omo/evidence/dark-mode/$name-top.png',
+              ),
+            );
+            if (icon == Icons.more_horiz_rounded) {
+              await tester.tap(find.byKey(const Key('theme_mode')));
+              await tester.pumpAndSettle();
+              await expectLater(
+                find.byKey(const Key('theme_capture')),
+                matchesGoldenFile(
+                  '../.omo/evidence/dark-mode/$name-menu.png',
+                ),
+              );
+              await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+              await tester.pumpAndSettle();
+              await tester.scrollUntilVisible(
+                find.text('오픈소스 라이선스'),
+                400,
+                scrollable: find.byType(Scrollable).last,
+              );
+            }
+            final scroll = tester.state<ScrollableState>(
+              find.byType(Scrollable).last,
+            );
+            scroll.position.jumpTo(scroll.position.maxScrollExtent);
+            await tester.pumpAndSettle();
+            debugPrint(
+              'THEME_SCROLL $name: ${find.byType(Scrollable).evaluate().map(
+                (element) {
+                  final state = (element as StatefulElement).state
+                      as ScrollableState;
+                  return '${element.widget.runtimeType}:'
+                      '${state.axisDirection}:'
+                      '${state.position.pixels}/'
+                      '${state.position.maxScrollExtent}';
+                },
+              ).join(', ')}',
+            );
+            await expectLater(
+              find.byKey(const Key('theme_capture')),
+              matchesGoldenFile(
+                '../.omo/evidence/dark-mode/$name-end.png',
+              ),
+            );
+            expect(tester.takeException(), isNull);
+          }
+          await tester.pumpWidget(const SizedBox.shrink());
+        });
+      }
+    }
+  }
+
   if (const bool.fromEnvironment('SUBSCRIPTION_CAPTURES')) {
     setUpAll(() async {
       final textFont = FontLoader('SubscriptionCapture');
@@ -139,6 +319,22 @@ void main() {
                 '../.omo/evidence/subscription-consolidation/$stage/$name-end.png',
               ),
             );
+            final scrollOwners = <Map<String, Object>>[];
+            for (final element in find.byType(Scrollable).evaluate()) {
+              final owner = (element as StatefulElement).state as ScrollableState;
+              final ancestors = <String>[];
+              element.visitAncestorElements((ancestor) {
+                ancestors.add(ancestor.widget.runtimeType.toString());
+                return ancestors.length < 12;
+              });
+              scrollOwners.add({
+                'axis': owner.axisDirection.name,
+                'pixels': owner.position.pixels,
+                'maxScrollExtent': owner.position.maxScrollExtent,
+                'ancestors': ancestors,
+              });
+            }
+            debugPrint('ACCOUNT_SCROLL $name ${jsonEncode(scrollOwners)}');
             expect(tester.takeException(), isNull);
             await tester.pumpWidget(const SizedBox.shrink());
           });
@@ -2122,6 +2318,18 @@ class _AccountImportBridge extends _FakeBridge {
         isActive: profile.id == id,
       );
     }
+  }
+}
+
+class _ThemeBridge extends _FakeBridge {
+  VpnSettings saved = const VpnSettings();
+
+  @override
+  Future<VpnSettings> loadSettings() async => VpnSettings.fromMap(saved.toMap());
+
+  @override
+  Future<void> saveSettings(VpnSettings settings) async {
+    saved = VpnSettings.fromMap(settings.toMap());
   }
 }
 

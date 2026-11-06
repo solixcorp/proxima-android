@@ -208,12 +208,28 @@ class QrProfileResult {
   final SubscriptionInfo? subscriptionInfo;
 }
 
+enum AppThemeMode {
+  system('시스템 설정'),
+  light('라이트'),
+  dark('다크');
+
+  const AppThemeMode(this.label);
+
+  final String label;
+
+  static AppThemeMode fromWire(Object? value) => values.firstWhere(
+    (mode) => mode.name == value,
+    orElse: () => AppThemeMode.system,
+  );
+}
+
 class VpnSettings {
   const VpnSettings({
     this.stack = 'mixed',
     this.ipv6 = true,
     this.mtu = 1400,
     this.mode = OutboundMode.rule,
+    this.themeMode = AppThemeMode.system,
   });
 
   factory VpnSettings.fromMap(Map<Object?, Object?> map) {
@@ -222,6 +238,7 @@ class VpnSettings {
       ipv6: map['ipv6'] as bool? ?? true,
       mtu: _integer(map['mtu'], fallback: 1400),
       mode: OutboundMode.fromWire(map['mode']),
+      themeMode: AppThemeMode.fromWire(map['themeMode']),
     );
   }
 
@@ -229,18 +246,21 @@ class VpnSettings {
   final bool ipv6;
   final int mtu;
   final OutboundMode mode;
+  final AppThemeMode themeMode;
 
   VpnSettings copyWith({
     String? stack,
     bool? ipv6,
     int? mtu,
     OutboundMode? mode,
+    AppThemeMode? themeMode,
   }) {
     return VpnSettings(
       stack: stack ?? this.stack,
       ipv6: ipv6 ?? this.ipv6,
       mtu: mtu ?? this.mtu,
       mode: mode ?? this.mode,
+      themeMode: themeMode ?? this.themeMode,
     );
   }
 
@@ -249,6 +269,7 @@ class VpnSettings {
     'ipv6': ipv6,
     'mtu': mtu,
     'mode': mode.wireName,
+    'themeMode': themeMode.name,
   };
 }
 

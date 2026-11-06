@@ -18,8 +18,8 @@ void main() {
     await _mount(tester, account);
     expect(account.loads, unorderedEquals(_initialSections));
     for (final entry in {
-      'account_services_container': '계정 서비스',
       'account_plan_usage_container': '플랜 및 사용량',
+      'account_services_container': '계정 서비스',
       'account_subscription_profile_container': '구독 프로필',
     }.entries) {
       final container = find.byKey(ValueKey(entry.key));
@@ -595,6 +595,26 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
+    for (final connected in [false, true]) {
+      testWidgets('plan overview precedes services in $brightness signedIn=$connected',
+          (tester) async {
+        final account = _Account()..connected = connected;
+        await _mount(tester, account, brightness: brightness);
+        final plan = find.byKey(const Key('account_plan_usage_container'));
+        final services = find.byKey(const Key('account_services_container'));
+        final profile = find.byKey(
+            const Key('account_subscription_profile_container'));
+        expect(plan.hitTestable(), findsOneWidget);
+        expect(tester.getTopLeft(plan).dy,
+            lessThan(tester.getTopLeft(services).dy));
+        expect(tester.getTopLeft(services).dy,
+            lessThan(tester.getTopLeft(profile).dy));
+        expect(account.loads,
+            connected ? unorderedEquals(_initialSections) : isEmpty);
+        expect(account.grants, isEmpty);
+      });
+    }
+
     testWidgets('busy support category retains disabled text contrast in $brightness',
         (tester) async {
       final account = _Account();

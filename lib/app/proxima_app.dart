@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../state/app_controller.dart';
 import '../core/proxima_account.dart';
+import '../models/vpn_models.dart';
 import 'proxima_shell.dart';
 
 class ProximaApp extends StatelessWidget {
@@ -55,13 +56,20 @@ class ProximaApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Proxima',
-      debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.system,
-      theme: _theme(Brightness.light),
-      darkTheme: _theme(Brightness.dark),
-      home: ProximaShell(controller: controller, account: account),
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) => MaterialApp(
+        title: 'Proxima',
+        debugShowCheckedModeBanner: false,
+        themeMode: switch (controller.settings.themeMode) {
+          AppThemeMode.system => ThemeMode.system,
+          AppThemeMode.light => ThemeMode.light,
+          AppThemeMode.dark => ThemeMode.dark,
+        },
+        theme: _theme(Brightness.light),
+        darkTheme: _theme(Brightness.dark),
+        home: ProximaShell(controller: controller, account: account),
+      ),
     );
   }
 }

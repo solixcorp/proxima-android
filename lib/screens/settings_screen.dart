@@ -57,6 +57,29 @@ class SettingsScreen extends StatelessWidget {
       subtitle: '네트워크 도구와 Xray 터널 설정을 관리합니다.',
       onRefresh: controller.refreshNetworkInfo,
       children: [
+        const SectionHeader('화면'),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.brightness_6_outlined),
+            title: const Text('테마'),
+            trailing: DropdownButton<AppThemeMode>(
+              key: const Key('theme_mode'),
+              value: settings.themeMode,
+              underline: const SizedBox.shrink(),
+              items: AppThemeMode.values
+                  .map(
+                    (mode) =>
+                        DropdownMenuItem(value: mode, child: Text(mode.label)),
+                  )
+                  .toList(),
+              onChanged: (mode) {
+                if (mode != null) {
+                  controller.updateSettings(settings.copyWith(themeMode: mode));
+                }
+              },
+            ),
+          ),
+        ),
         const SectionHeader('네트워크'),
         Card(
           child: Column(

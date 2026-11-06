@@ -112,6 +112,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                         ipv6 = call.argument("ipv6"),
                         mtu = call.argument("mtu"),
                         mode = call.argument("mode"),
+                        themeMode = call.argument("themeMode"),
                     )
                     result.success(null)
                 }

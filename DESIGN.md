@@ -6,7 +6,7 @@ Operate: connect a selected VPN profile and manage a Proxima account without obs
 
 ## 2. Color
 
-`lib/app/proxima_app.dart` owns color through `ColorScheme.fromSeed`, seed `0xFF35618B`, and system light/dark brightness. Components use scheme roles rather than independent colors. Cards use `surfaceContainerLow`; inputs use `surfaceContainerHighest` at the existing opacity. Errors use error/onError roles and explanatory text.
+`lib/app/proxima_app.dart` owns color through `ColorScheme.fromSeed`, seed `0xFF35618B`, and light/dark brightness. The default follows the system; the theme selector in Settings also offers explicit light and dark modes, persisted with the existing Android settings. Components use scheme roles rather than independent colors. Cards use `surfaceContainerLow`; inputs use `surfaceContainerHighest` at the existing opacity. Errors use error/onError roles and explanatory text.
 
 ## 3. Type
 
@@ -18,7 +18,7 @@ Existing spacing scale: 4, 8, 12, 16, 20, 24 logical pixels. AppPage supplies 16
 
 The shell changes from NavigationBar to NavigationRail at 600 logical pixels. It owns persistent navigation; pages own content scrolling.
 
-Layout: account page - three Material containers in reading order: account services, plan/usage, subscription profile; scroll owner: AppPage CustomScrollView; anti-patterns: accordions, independently scrolling containers, fixed-height long content and horizontal primary content.
+Layout: account page - three Material containers in reading order: plan/usage, account services, subscription profile; scroll owner: AppPage CustomScrollView; anti-patterns: accordions, independently scrolling containers, fixed-height long content and horizontal primary content.
 
 The account-services container holds named navigation rows. Each opens its own native service page with a visible Back control. Plan/usage reuses the existing account overview, including login/import, with links to full plan and usage details. The subscription-profile container groups the selected local profile and connection state without source addresses or horizontal separators, including before login. No account accordion or expand/collapse affordance remains, including FAQ and announcements. Receipt, conversation and guide buttons open child detail pages rather than expanding inline. Plan/usage loads on entry; service and detail reads begin on navigation without automatically requesting permissions. Subscription-address/domain selection and link rotation remain omitted; import and backend/ownership policy are unchanged. Response-size changes retain the existing reduced-motion-aware transition.
 
@@ -29,6 +29,8 @@ Selectable email and guide text have nested text-selection scrollers for their o
 Layout: account editors - bounded native forms and confirmations -> AlertDialog; scroll owner: the dialog's SingleChildScrollView when fields exceed its height; nested EditableText scrollers belong to individual inputs; anti-patterns: another modal route for details, clipped actions, an unbounded form.
 
 Layout: retained shell pages - HomeScreen, ProfilesScreen and SettingsScreen -> existing IndexedStack siblings; scroll owners: each page's existing AppPage CustomScrollView (plus its own text controls), retained offscreen while the account destination is selected; anti-patterns: treating those retained owners as visible account-region scrollers.
+
+Layout: Settings theme selection - a Material ListTile in the first card, followed by the existing settings groups; scroll owner: AppPage CustomScrollView, with a temporary dropdown-menu scroller only while choosing a theme; anti-patterns: a second page scroller, clipping the selected value, or resetting navigation on theme changes. The primary task is choosing a theme; priorities are the current selection, the three available modes, then the existing network and tunnel settings. No account, profile, or VPN behavior is changed.
 
 Layout: wide shell navigation - NavigationRail at widths of 600 logical pixels or more -> independent navigation region; scroll owner: the shell SingleChildScrollView wrapping NavigationRail, not a dialog or account content owner; anti-patterns: counting this rail as nested account scrolling.
 
