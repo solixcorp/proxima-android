@@ -20,7 +20,6 @@ void main() {
     for (final entry in {
       'account_plan_usage_container': '플랜 및 사용량',
       'account_services_container': '계정 서비스',
-      'account_subscription_profile_container': '구독 프로필',
     }.entries) {
       final container = find.byKey(ValueKey(entry.key));
       await tester.scrollUntilVisible(container, 300,
@@ -29,11 +28,9 @@ void main() {
           findsWidgets);
       expect(find.text(entry.value), findsOneWidget);
     }
-    expect(find.descendant(
-      of: find.byKey(const Key('account_subscription_profile_container')),
-      matching: find.byKey(const Key('account_local_profile')),
-    ), findsOneWidget);
-    expect(find.text('선택된 프로필이 없습니다'), findsOneWidget);
+    expect(find.byKey(const Key('account_subscription_profile_container')),
+        findsNothing);
+    expect(find.byKey(const Key('account_local_profile')), findsNothing);
     expect(find.descendant(
       of: find.byKey(const Key('account_plan_usage_container')),
       matching: find.byType(ProximaAccountCard),
@@ -607,8 +604,7 @@ void main() {
         expect(plan.hitTestable(), findsOneWidget);
         expect(tester.getTopLeft(plan).dy,
             lessThan(tester.getTopLeft(services).dy));
-        expect(tester.getTopLeft(services).dy,
-            lessThan(tester.getTopLeft(profile).dy));
+        expect(profile, findsNothing);
         expect(account.loads,
             connected ? unorderedEquals(_initialSections) : isEmpty);
         expect(account.grants, isEmpty);
@@ -680,10 +676,8 @@ void main() {
     expect(find.byType(ExpansionTile, skipOffstage: false), findsNothing);
     final profileContainer = find.byKey(
         const Key('account_subscription_profile_container'));
-    expect(find.descendant(of: profileContainer, matching: find.byType(Divider)),
-        findsNothing);
-    expect(find.descendant(of: profileContainer,
-        matching: find.text('연결 상태')), findsOneWidget);
+    expect(profileContainer, findsNothing);
+    expect(find.text('연결 상태'), findsNothing);
     account.connected = true;
     account.changed();
     await tester.pumpAndSettle();

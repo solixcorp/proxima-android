@@ -470,7 +470,7 @@ void main() {
           );
           final bottom = switch (screen) {
             HomeScreen => '이번 연결',
-            SubscriptionScreen => '구독 프로필',
+            SubscriptionScreen => '계정 서비스',
             ProfilesScreen => 'VLESS REALITY',
             _ => '오픈소스 라이선스',
           };
@@ -640,6 +640,15 @@ void main() {
         ),
       ];
     addTearDown(controller.dispose);
+    final account = _PlanAccount()
+      ..summary = {
+        'plan_name': 'A very long subscription plan name for a narrow screen',
+        'traffic_used': 123456789,
+        'traffic_limit': 999999999999,
+        'plan_expires_at': '2027-01-01T00:00:00Z',
+      }
+      ..subscriptionUrl = 'https://example.com/subscription';
+    addTearDown(account.dispose);
     await tester.pumpWidget(
       MaterialApp(
         builder: (context, child) => MediaQuery(
@@ -647,21 +656,21 @@ void main() {
               .copyWith(textScaler: TextScaler.linear(2)),
           child: child!,
         ),
-        home: SubscriptionScreen(controller: controller),
+        home: SubscriptionScreen(controller: controller, account: account),
       ),
     );
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
-      find.text('만료일'),
+      find.textContaining('만료일'),
       120,
       scrollable: find.byType(Scrollable).first,
     );
     await Scrollable.ensureVisible(
-      tester.element(find.text('만료일')),
+      tester.element(find.textContaining('만료일')),
       alignment: 1,
     );
     await tester.pumpAndSettle();
-    expect(find.text('만료일').hitTestable(), findsOneWidget);
+    expect(find.textContaining('만료일').hitTestable(), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -1565,7 +1574,7 @@ rules:
     expect(bridge.stopCount, 0);
   });
 
-  testWidgets('keeps subscription identity visible without quota headers', (
+  testWidgets('account tab excludes local subscription identity and quota', (
     tester,
   ) async {
     final controller = AppController(_FakeBridge())
@@ -1583,12 +1592,14 @@ rules:
       MaterialApp(home: SubscriptionScreen(controller: controller)),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Connected subscription'), findsOneWidget);
+    expect(find.text('Connected subscription'), findsNothing);
     expect(find.text('example.com'), findsNothing);
-    expect(find.text('구독 정보가 없습니다'), findsOneWidget);
+    expect(find.text('구독 정보가 없습니다'), findsNothing);
+    expect(find.byKey(const Key('account_plan_usage_container')), findsOneWidget);
+    expect(find.byKey(const Key('account_services_container')), findsOneWidget);
   });
 
-  testWidgets('shows runtime status and a local profile on subscription tab', (
+  testWidgets('account tab excludes runtime status and local profile', (
     tester,
   ) async {
     final controller = AppController(_FakeBridge())
@@ -1618,12 +1629,13 @@ rules:
       MaterialApp(home: SubscriptionScreen(controller: controller)),
     );
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('subscription_status_card')), findsOneWidget);
-    expect(find.text('VPN으로 보호됨'), findsOneWidget);
-    expect(find.text('규칙'), findsOneWidget);
-    expect(find.text('규칙에 따라 자동 선택'), findsOneWidget);
-    expect(find.text('Local Reality'), findsOneWidget);
+    expect(find.byKey(const Key('subscription_status_card')), findsNothing);
+    expect(find.text('VPN으로 보호됨'), findsNothing);
+    expect(find.text('규칙'), findsNothing);
+    expect(find.text('규칙에 따라 자동 선택'), findsNothing);
+    expect(find.text('Local Reality'), findsNothing);
     expect(find.text('로컬 프로필'), findsNothing);
+    expect(controller.activeProfile?.id, 'local-profile');
   });
 
   testWidgets('profile in-use state follows the runtime profile id', (
@@ -2129,18 +2141,12 @@ rules:
         home: SubscriptionScreen(controller: controller, account: account),
       ),
     );
-    await tester.scrollUntilVisible(
-      find.text('구독 프로필'),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.byIcon(Icons.data_usage_outlined),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    expect(find.text('Other plan'), findsOneWidget);
+    expect(find.textContaining('Everyday Plus'), findsOneWidget);
+    expect(find.text('Other plan'), findsNothing);
+    expect(find.byKey(const Key('proxima_account_usage')), findsNothing);
+    expect(find.textContaining('남은 트래픽'), findsNothing);
+    expect(controller.activeProfile?.subscriptionInfo?.planName, 'Other plan');
     expect(find.descendant(
       of: find.byKey(const Key('account_local_profile')),
       matching: find.text('Everyday Plus'),
