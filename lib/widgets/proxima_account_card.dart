@@ -118,6 +118,9 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
         final textTheme = Theme.of(context).textTheme;
         final bodyStyle = textTheme.bodyLarge?.copyWith(fontSize: 17);
         final detailStyle = textTheme.bodyMedium?.copyWith(fontSize: 15);
+        final secondaryStyle = detailStyle?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        );
         final disabledColor = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65);
         final operationLabel = _importing
             ? 'Proxima 구독 가져오는 중'
@@ -139,7 +142,7 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
             DateTime.tryParse(summary?['plan_expires_at'] as String? ?? '') ??
             storedInfo?.expire;
         final expiresIn = expiry?.difference(DateTime.now()).inDays;
-        final content = Card(
+        final card = Card(
             key: const Key('proxima_account_card'),
             child: Padding(
               padding: const EdgeInsets.all(20),
@@ -163,10 +166,12 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                                         ? name!
                                         : 'Proxima 계정 연결됨'
                                   : 'VPN 구독 연결',
-                              style: textTheme.titleMedium,
+                              style: account.signedIn
+                                  ? secondaryStyle
+                                  : textTheme.titleMedium,
                             ),
                             if (account.signedIn && email != null)
-                              SelectableText(email, style: detailStyle),
+                              SelectableText(email, style: secondaryStyle),
                           ],
                         ),
                       ),
@@ -180,18 +185,20 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                     ],
                   ),
                   if (summary != null) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 24),
                     Text(
-                      '플랜 · ${account.planName ?? '플랜 정보 없음'}',
-                      style: textTheme.titleMedium,
+                      account.planName ?? '플랜 정보 없음',
+                      style: textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
+                    if (used != null) const SizedBox(height: 20),
                     if (used != null && limit != null && limit > 0) ...[
-                      const SizedBox(height: 8),
                       Text(
                         '남은 트래픽 ${formatBytes((limit - used).clamp(0, limit))}',
                         style: bodyStyle,
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 12),
                       LinearProgressIndicator(
                         key: const Key('proxima_account_usage'),
                         value: (used / limit).clamp(0, 1).toDouble(),
@@ -207,18 +214,31 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                                 ? '사용량 ${formatBytes(used)} · 무제한'
                                 : '사용량 ${formatBytes(used)} · 한도 정보 없음'
                             : '사용량 ${formatBytes(used)} / ${formatBytes(limit)}',
-                        style: detailStyle,
+                        style: secondaryStyle,
                       ),
-                    if (expiry != null)
-                      Text(
-                        '만료일 ${formatSubscriptionExpiry(expiry.toLocal())}',
-                        style: detailStyle,
+                    if (expiry != null) ...[
+                      const SizedBox(height: 16),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            '만료일 ${formatSubscriptionExpiry(expiry.toLocal())}',
+                            style: secondaryStyle,
+                          ),
+                          if (expiresIn != null)
+                            Text(
+                              expiresIn >= 0 ? '$expiresIn일 남음' : '만료됨',
+                              style: detailStyle?.copyWith(
+                                color: expiresIn < 0
+                                    ? Theme.of(context).colorScheme.error
+                                    : Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                        ],
                       ),
-                    if (expiresIn != null)
-                      Text(
-                        expiresIn >= 0 ? '$expiresIn일 남음' : '만료됨',
-                        style: detailStyle,
-                      ),
+                    ],
                   ],
                   if (busy) ...[
                     const SizedBox(height: 16),
@@ -254,11 +274,9 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                       child: SelectableText(message, style: bodyStyle),
                     ),
                   ],
-                  const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
+                  const SizedBox(height: 24),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       if (!account.signedIn)
                         FilledButton.icon(
@@ -271,7 +289,7 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                           icon: const Icon(Icons.login_rounded),
                           label: const Text('Proxima 로그인'),
                         )
-                      else ...[
+                      else
                         FilledButton.icon(
                           key: const Key('proxima_import_subscription'),
                           style: FilledButton.styleFrom(
@@ -287,25 +305,44 @@ class _ProximaAccountCardState extends State<ProximaAccountCard> {
                           icon: const Icon(Icons.cloud_download_outlined),
                           label: const Text('구독 가져오기'),
                         ),
-                        TextButton(
-                          style: TextButton.styleFrom(
-                            minimumSize: const Size(48, 48),
-                            disabledForegroundColor: disabledColor,
-                          ),
-                          onPressed: busy ? null : account.signOut,
-                          child: const Text('로그아웃'),
-                        ),
-                      ],
                     ],
                   ),
-                  if (widget.footer case final footer?) ...[
+                  if (account.signedIn || widget.footer != null) ...[
                     const SizedBox(height: 8),
-                    footer,
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        ?widget.footer,
+                        if (account.signedIn)
+                          TextButton(
+                            key: const Key('proxima_sign_out'),
+                            style: TextButton.styleFrom(
+                              minimumSize: const Size(48, 48),
+                              foregroundColor:
+                                  Theme.of(context).colorScheme.onSurfaceVariant,
+                              disabledForegroundColor: disabledColor,
+                            ),
+                            onPressed: busy ? null : account.signOut,
+                            child: const Text('로그아웃'),
+                          ),
+                      ],
+                    ),
                   ],
                 ],
               ),
             ),
           );
+        final content = account.signedIn
+            ? Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 720),
+                  child: card,
+                ),
+              )
+            : card;
         if (MediaQuery.disableAnimationsOf(context)) return content;
         return AnimatedSize(
           alignment: Alignment.topCenter,

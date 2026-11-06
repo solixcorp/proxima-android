@@ -113,7 +113,10 @@ class AppPage extends StatelessWidget {
               ],
               flexibleSpace: compact
                   ? null
-                  : _AppPageFlexibleTitle(title: title, subtitle: subtitle),
+                  : _AppPageFlexibleTitle(
+                      title: title,
+                      subtitle: subtitle,
+                    ),
             ),
             if (compact && subtitle != null)
               SliverToBoxAdapter(
@@ -153,7 +156,10 @@ class AppPage extends StatelessWidget {
 }
 
 class _AppPageFlexibleTitle extends StatelessWidget {
-  const _AppPageFlexibleTitle({required this.title, this.subtitle});
+  const _AppPageFlexibleTitle({
+    required this.title,
+    this.subtitle,
+  });
 
   final String title;
   final String? subtitle;
@@ -186,7 +192,9 @@ class _AppPageFlexibleTitle extends StatelessWidget {
     final double currentLeft =
         collapsedLeft + (expandedLeft - collapsedLeft) * t;
 
-    final double scale = 1.0 + 0.1 * t;
+    final double expandedScale =
+        32 / (textTheme.titleMedium?.fontSize ?? 16);
+    final double scale = 1.0 + (expandedScale - 1.0) * t;
 
     final double topPadding = MediaQuery.paddingOf(context).top;
 
@@ -202,7 +210,7 @@ class _AppPageFlexibleTitle extends StatelessWidget {
         topPadding + (settings.minExtent - topPadding - titleLineHeight) / 2;
     final double expandedTop =
         settings.maxExtent -
-        (titleLineHeight * 1.1 +
+        (titleLineHeight * expandedScale +
             (subtitle != null ? 6 + subtitleLineHeight : 0) +
             12);
 
