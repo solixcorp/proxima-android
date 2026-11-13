@@ -1,4 +1,52 @@
-# Phase 1.5 verification on November 13, 2026
+# Phase 2b Android integration verification on November 13, 2026
+
+Implementation/limitations: [Android runtime integration](../../android/MIHOMO_RUNTIME.md).
+No native Go/JNI/Java semantic changes, branch switch or commit in this phase.
+
+Completed host gates:
+
+- `JAVA_HOME=/Users/kimrasng/Library/Java/JavaVirtualMachines/jbr-21.0.11/Contents/Home python3 -m unittest discover -s android/app/src/test -v`:
+  four Python-discovered tests; 26 existing Kotlin boundary cases, settings
+  persistence/defaults, 11 new Kotlin runtime cases, source-wiring assertions.
+  New cases cover exact dispatch/no fallback, TCP+REALITY, gRPC, WS,
+  HTTPUpgrade, explicit XHTTP/unsafe-option rejection, mode/MTU/IPv6/DNS
+  projection, selected-node projection, Binder-death fence scenarios and
+  join-before-original-FD-close ordering. Emitted proxy/transport keys are
+  cross-checked against `protocol_admission.go`; this is not native Start proof.
+- `/Users/kimrasng/flutter/bin/flutter analyze`: no issues.
+- `/Users/kimrasng/flutter/bin/flutter test`: 275 passed, 4 existing skipped;
+  engine-flag persistence/default and no-immediate-reconnect tests unchanged.
+- From `android/`, `JAVA_HOME=/Users/kimrasng/Library/Java/JavaVirtualMachines/jbr-21.0.11/Contents/Home ./gradlew :app:assembleDebug`:
+  exit 0; all default APK-supported ABIs, no debug ABI override. Native output
+  was up-to-date in the first run. Log: ignored `build/phase2b-assemble.log`.
+- Repository-root `JAVA_HOME=/Users/kimrasng/Library/Java/JavaVirtualMachines/jbr-21.0.11/Contents/Home bash build.sh test`:
+  exit 0; all seven native modules, race/shuffle/vet and JNI/JVM suites remain
+  passing without native semantic changes. Log: ignored `build/phase2b-native-test.log`.
+
+Required device checks (NOT established by Kotlin host tests or APK assembly):
+
+- Install/load the APK on supported Android ABIs; verify Java/JNI resolution,
+  native-library alignment, and only the worker loading the Mihomo Go runtime.
+- Actual Android TUN IPv4/IPv6 TCP/UDP traffic, protected egress sockets and
+  synthetic UDP/TCP DNS `172.19.0.2:53`; MTUs, LAN exclusions, underlying-network
+  changes and VPN revoke behavior. Authenticated successful VLESS TCP+REALITY,
+  gRPC, WS/HTTPUpgrade interoperability needs real configured peers.
+- Force worker PID death during bind, handshake, Start, traffic/probes/snapshot
+  and Stop; verify the original service FD closes exactly once, state becomes
+  disconnected, and no auto-restart/fallback occurs. Explicit reconnect must
+  have a different worker PID and old callbacks must never protect new sockets.
+- Race explicit reconnect/mode change/stop/service destroy against Binder death;
+  verify native Stop -> worker copies close -> process death -> original TUN
+  close, and no retained VPN indicator/FD. Verify main-owner process death also
+  terminates the worker and cancels/join native management calls.
+- Reject binding/null binding/handshake/native library/admission failures and
+  verify precise Mihomo error states without Xray startup. Verify Xray remains
+  unchanged on-device and always-on remains disabled.
+- Exercise simultaneous delay tests, one-second traffic EventChannel updates,
+  zero/failing polls, >1 MiB connections snapshots through FD transport, and
+  retired-session management errors while disconnecting.
+
+## Historical Phase 1.5 verification on November 13, 2026
 
 Repository-root final gates completed with exit 0:
 

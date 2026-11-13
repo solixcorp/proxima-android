@@ -49,6 +49,22 @@ object VpnRuntime {
     @Volatile
     private var accessLogPath: String? = null
 
+    @Volatile private var mihomo: MihomoVpnSession? = null
+    @Volatile private var engine = "xray"
+
+    fun setEngine(value: String) { engine = value }
+    fun engine(): String = engine
+
+    fun setMihomoSession(session: MihomoVpnSession?) {
+        mihomo = session
+        if (session != null) {
+            clearProbePorts()
+            setAccessLogPath(null)
+        }
+    }
+
+    fun mihomoSession(): MihomoVpnSession? = mihomo
+
     fun initialize(context: Context) {
         appContext = context.applicationContext
     }

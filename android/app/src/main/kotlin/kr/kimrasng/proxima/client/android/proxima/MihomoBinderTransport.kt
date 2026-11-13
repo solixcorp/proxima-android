@@ -28,7 +28,7 @@ internal fun Context.mihomoProcessName(): String? =
  * Every descriptor on this wire is a ParcelFileDescriptor, never an fd number.
  */
 internal object MihomoBinderTransport {
-    const val WORKER = "kr.kimrasng.proxima.mihomo.Worker.v2"
+    const val WORKER = "kr.kimrasng.proxima.mihomo.Worker.v3"
     const val PROTECTOR = "kr.kimrasng.proxima.mihomo.Protector.v1"
     const val HANDSHAKE = "kr.kimrasng.proxima.mihomo.Handshake.v1"
     const val HELLO = IBinder.FIRST_CALL_TRANSACTION
@@ -36,6 +36,9 @@ internal object MihomoBinderTransport {
     const val STAGE = IBinder.FIRST_CALL_TRANSACTION + 1
     const val RETIRE = IBinder.FIRST_CALL_TRANSACTION + 2
     const val PROTECT = IBinder.FIRST_CALL_TRANSACTION
+    const val TRAFFIC = IBinder.FIRST_CALL_TRANSACTION + 3
+    const val DELAY = IBinder.FIRST_CALL_TRANSACTION + 4
+    const val CONNECTIONS = IBinder.FIRST_CALL_TRANSACTION + 5
 
     fun <T> call(
         remote: IBinder,
@@ -120,9 +123,9 @@ internal object MihomoBinderTransport {
 }
 
 /**
- * A future native callback must capture this instance, never look up a newer
+ * The native callback captures this instance, never looks up a newer
  * process-global lease. The fd is borrowed only within this worker process.
- * There is deliberately no native engine or socket creation in this class.
+ * No socket creation occurs in this class.
  */
 internal class MihomoWorkerSocketProtector(
     private val generation: Long,

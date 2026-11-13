@@ -126,7 +126,10 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 "getNetworkInfo" -> result.success(networkInfo())
                 "requestQuickSettingsTile" -> requestQuickSettingsTile(result)
                 "requestPinAppWidget" -> requestPinAppWidget(result)
-                "coreInfo" -> result.success(XrayCore.info(this))
+                "coreInfo" -> result.success(if (settings.load().engine == "mihomo") mapOf(
+                    "loaded" to (VpnRuntime.mihomoSession() != null),
+                    "coreVersion" to "Mihomo v1.19.33 (bundled)", "bridgeAbi" to "mihomo-worker-v3", "error" to null,
+                ) else XrayCore.info(this))
                 "coreAction" -> invokeCore(
                     method = requiredString(call, "method"),
                     data = call.argument<String>("data") ?: "",
@@ -142,7 +145,10 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private fun validateProfile(content: String, result: MethodChannel.Result) {
         require(content.toByteArray(Charsets.UTF_8).size <= MAX_PROFILE_BYTES) { "프로필은 8MB보다 작아야 합니다." }
         runCatching {
-            XrayConfig.validate(content)
+            if (settings.load().engine == "mihomo") {
+                val value = settings.load()
+                MihomoProfileAssembler.build("", content, value.mtu, value.ipv6, value.mode)
+            } else XrayConfig.validate(content)
         }.onSuccess { result.success(null) }
             .onFailure { result.success(it.message ?: "프로필을 검증하지 못했습니다.") }
     }
@@ -186,8 +192,13 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
     private fun invokeCore(method: String, data: String, result: MethodChannel.Result) {
         require(VpnRuntime.snapshot()["state"] == "connected") { "VPN is not connected" }
+        // Capture the running capability before queueing. A delayed Mihomo
+        // request must never borrow a replacement session or switch to Xray.
+        val mihomo = if (VpnRuntime.engine() == "mihomo") {
+            checkNotNull(VpnRuntime.mihomoSession()) { "Mihomo session is not running" }
+        } else null
         val operation = {
-            val payload: Any = when (method) {
+            val payload: Any = if (mihomo != null) invokeMihomo(mihomo, method, data) else when (method) {
                 "getProxies" -> currentProxyState()
                 "changeProxy" -> {
                     changeProxy(data)
@@ -208,7 +219,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             }
             JSONObject().put("code", 0).put("data", payload).toString()
         }
-        if (method in setOf("testDelay", "probeCurrentProxyIp")) {
+        if (method in setOf("testDelay", "probeCurrentProxyIp") || mihomo != null) {
             coreWorker.execute {
                 runCatching(operation)
                     .onSuccess { payload -> runOnUiThread { result.success(payload) } }
@@ -218,6 +229,47 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             runCatching(operation)
                 .onSuccess(result::success)
                 .onFailure { error -> result.error("core_action_error", error.message, null) }
+        }
+    }
+
+    private fun invokeMihomo(session: MihomoVpnSession, method: String, data: String): Any {
+        check(VpnRuntime.mihomoSession() === session) { "Mihomo session was replaced" }
+        return when (method) {
+            "getProxies" -> session.proxyState()
+            "getConnections" -> session.connections()
+            "testDelay" -> {
+                val request = JSONObject(data)
+                session.delayTest(request.optString("proxy-name"),
+                    request.optString("test-url", "https://www.gstatic.com/generate_204"),
+                    request.optInt("timeout", 3_000))
+            }
+            "updateConfig" -> {
+                val restarted = java.util.concurrent.CompletableFuture<Unit>()
+                runOnUiThread {
+                    runCatching {
+                        check(VpnRuntime.mihomoSession() === session && VpnRuntime.snapshot()["state"] == "connected") {
+                            "Mihomo session was replaced"
+                        }
+                        restartCurrentVpn()
+                    }.onSuccess { restarted.complete(Unit) }
+                        .onFailure { restarted.completeExceptionally(it) }
+                }
+                restarted.get()
+                JSONObject()
+            }
+            "changeProxy" -> {
+                // Phase 2b starts one concrete node. Do not pretend unloaded
+                // subscription nodes are available to native delay/selection.
+                require(JSONObject(data).optString("proxy-name") == session.node) {
+                    "Mihomo Phase 2b는 선택된 VLESS 노드 하나만 실행합니다."
+                }
+                JSONObject()
+            }
+            "getMemory" -> Debug.getPss().toLong() * 1024L
+            "queryExternalProviders" -> JSONArray() // No providers in this projection.
+            "probeCurrentProxyIp" -> error("Mihomo 공인 IP 검사는 Phase 3에서 지원합니다.")
+            "closeConnection", "closeAllConnections", "updateExternalProvider" -> error("Mihomo JNI가 지원하지 않는 작업입니다: $method")
+            else -> error("지원하지 않는 Mihomo 작업입니다: $method")
         }
     }
 

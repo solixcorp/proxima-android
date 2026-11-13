@@ -16,10 +16,11 @@ import java.io.Closeable
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Main-process, dormant transport owner. Nothing binds this automatically.
+ * Main-process transport owner. Only the selected Mihomo VPN path binds it.
  * bind() owns an explicit platform binding to MihomoWorkerService. Arbitrary
  * remote Binders cannot be supplied by callers.
- * There is no start API, engine readiness, or connected-state publication.
+ * Start acknowledgment means NativeEngine.start returned successfully. Only
+ * ProximaVpnService may publish Android connected state.
  *
  * Protection covers only sockets explicitly sent through this endpoint.
  * In particular, it does not fix upstream fakeTCP/default-hook bypasses.
@@ -71,6 +72,13 @@ object MihomoWorkerBoundary {
         private var registered = false
         private var closed = false
         private var connection: Connection? = null
+        private val retired = MihomoRetirementFence()
+
+        /** Off-main only. Process death, never an RPC error, is the final fence. */
+        fun awaitRetired() {
+            check(Looper.myLooper() != Looper.getMainLooper())
+            retired.awaitRetired()
+        }
 
         private val dispatcher = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName, service: IBinder) {
@@ -78,6 +86,7 @@ object MihomoWorkerBoundary {
                 val attached = try {
                     check(name == component && connection == null) { "Unexpected Mihomo service binding" }
                     attach(vpn, service) { generation ->
+                        retired.observedDeath()
                         main.post {
                             close()
                             if (binding === this@Binding) binding = null
@@ -133,7 +142,10 @@ object MihomoWorkerBoundary {
                     // bindService may have failed before registering.
                 }
             }
-            if (binding === this && gate.isVacant()) binding = null
+            if (gate.isVacant()) {
+                retired.observedDeath()
+                if (binding === this) binding = null
+            }
         }
     }
 
@@ -253,12 +265,11 @@ object MihomoWorkerBoundary {
         }
 
         /**
-         * Transfer duplicates for staging only. Caller retains its original TUN.
+         * Transfer duplicates and start the native engine. Caller retains its original TUN.
          * The configuration travels as an unlinked, read-only file, not an 8 MB
-         * Binder payload. Return means ownership was staged, never engine start.
-         * Staging a live TUN without an engine does not route packets.
+         * Binder payload. A native start error is returned without Xray fallback.
          */
-        fun stage(tun: ParcelFileDescriptor, configuration: MihomoConfiguration) {
+        fun start(tun: ParcelFileDescriptor, configuration: MihomoConfiguration) {
             check(gate.isActive(lease)) { "Mihomo lease is inactive" }
             check(staged.compareAndSet(false, true)) { "Mihomo lease already staged" }
             try {
@@ -274,7 +285,7 @@ object MihomoWorkerBoundary {
                                 duplicate.writeToParcel(it, 0)
                                 config.writeToParcel(it, 0)
                             },
-                            decode = {},
+                            decode = { reply -> reply.readString()?.let { error("Mihomo start: $it") } },
                         )
                     }
                 }
@@ -282,6 +293,41 @@ object MihomoWorkerBoundary {
             } catch (error: Exception) {
                 close()
                 throw error
+            }
+        }
+
+        private fun <T> query(code: Int, encode: (Parcel) -> Unit = {}, decode: (Parcel) -> T): T {
+            check(gate.isActive(lease)) { "Mihomo lease is inactive" }
+            return MihomoBinderTransport.call(
+                lease.identity, MihomoBinderTransport.WORKER, code,
+                encode = { it.writeLong(generation); encode(it) }, decode = decode,
+            )
+        }
+
+        fun trafficStats(): LongArray = query(MihomoBinderTransport.TRAFFIC) {
+            longArrayOf(it.readLong(), it.readLong())
+        }
+
+        fun delayTest(name: String, url: String, timeoutMs: Int): Int = query(
+            MihomoBinderTransport.DELAY,
+            encode = { it.writeString(name); it.writeString(url); it.writeInt(timeoutMs) },
+            decode = { it.readInt() },
+        )
+
+        fun connectionsSnapshot(): ByteArray = query(MihomoBinderTransport.CONNECTIONS) { reply ->
+            val size = reply.readInt()
+            val sha256 = checkNotNull(reply.readString())
+            // Connection JSON is also up to 8 MiB: never return it inline in Binder.
+            ParcelFileDescriptor.CREATOR.createFromParcel(reply).use { snapshot ->
+                MihomoBinderTransport.verifyConfiguration(snapshot, size, sha256)
+                ByteArray(size).also { bytes ->
+                    var offset = 0
+                    while (offset < size) {
+                        val read = android.system.Os.pread(snapshot.fileDescriptor, bytes, offset, size - offset, offset.toLong())
+                        check(read > 0) { "Truncated Mihomo connections snapshot" }
+                        offset += read
+                    }
+                }
             }
         }
 

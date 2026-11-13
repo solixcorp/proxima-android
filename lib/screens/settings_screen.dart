@@ -145,7 +145,9 @@ class SettingsScreen extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.settings_ethernet_rounded),
                 title: const Text('VPN 엔진'),
-                subtitle: const Text('선택만 저장되며 현재는 항상 Xray로 연결합니다.'),
+                subtitle: const Text(
+                  '다음 연결부터 적용됩니다. Mihomo는 선택 노드 1개를 사용하며 규칙 모드도 전체 프록시로 처리합니다.',
+                ),
                 trailing: DropdownButton<VpnEngine>(
                   key: const Key('vpn_engine'),
                   value: settings.engine,

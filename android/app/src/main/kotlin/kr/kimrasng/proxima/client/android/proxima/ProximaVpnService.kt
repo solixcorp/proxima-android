@@ -37,6 +37,9 @@ class ProximaVpnService : AndroidVpnService() {
     private var runningProfile: StoredProfile? = null
     private var stopping = false
     private val tunnelLock = Any()
+    @Volatile private var activeEngine = "xray"
+    @Volatile private var mihomoSession: MihomoVpnSession? = null
+    @Volatile private var destroyed = false
 
     // `ParcelFileDescriptor.detachFd()` transfers ownership to us. Keep that
     // ownership explicitly: an Xray stop alone does not guarantee Android
@@ -51,7 +54,8 @@ class ProximaVpnService : AndroidVpnService() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        runCatching { XrayCore.ensureLoaded() }
+        activeEngine = VpnSettingsRepository(this).load().engine
+        if (activeEngine == "xray") runCatching { XrayCore.ensureLoaded() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -82,8 +86,8 @@ class ProximaVpnService : AndroidVpnService() {
         startForeground(NOTIFICATION_ID, notification("연결 중"))
         worker.execute {
             runCatching {
-                closeTunnel()
-                XrayCore.stop()
+                stopCurrentEngine()
+                if (token != generation.get() || stopping || destroyed) return@runCatching
                 establishTunnel(profile, repository.readContent(profileId), token, preserveSession)
             }.onFailure {
                 if (token == generation.get() && !stopping) {
@@ -100,6 +104,11 @@ class ProximaVpnService : AndroidVpnService() {
         preserveSession: Boolean,
     ) {
         val settings = VpnSettingsRepository(this).load()
+        synchronized(tunnelLock) {
+            if (destroyed) return
+            activeEngine = settings.engine
+        }
+        VpnRuntime.setEngine(settings.engine)
         // Capture the resolver before establishing the VPN. Afterwards Android
         // may report this VPN's own DNS server as the active network resolver.
         val underlying = currentUnderlyingNetwork()
@@ -150,6 +159,10 @@ class ProximaVpnService : AndroidVpnService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
             setUnderlyingNetworks(underlying.network?.let { arrayOf(it) })
         }
+        dispatchVpnEngine(settings.engine, xray = {}, mihomo = {
+            establishMihomo(profile, content, settings, fd, token, preserveSession)
+        })
+        if (settings.engine == "mihomo") return
         XrayConfig.VpnSettingsRepositoryHolder.selected = { id -> VpnSettingsRepository(this).selectedProxies(id) }
         XrayCore.configureVpn(socketController, dnsEndpoint(upstreamDns))
         val nodeNames = XrayConfig.nodeNames(profile, content)
@@ -190,6 +203,84 @@ class ProximaVpnService : AndroidVpnService() {
         )
         updateNotification("보호됨")
         startTrafficUpdates(token, preserveSession, metricsPort)
+    }
+
+    private fun establishMihomo(
+        profile: StoredProfile, content: String, settings: NativeVpnSettings,
+        fd: Int, token: Int, preserveSession: Boolean,
+    ) {
+        val config = MihomoProfileAssembler.build(profile.name, content, settings.mtu, settings.ipv6,
+            settings.mode, VpnSettingsRepository(this).selectedProxies(profile.id))
+        val session = MihomoVpnSession(this) {
+            // No auto-rebind/retry: only a new ACTION_START may create a worker.
+            // Death can already be queued on main when onDestroy shuts down
+            // this executor; destruction has its own joined cleanup task.
+            if (!destroyed) worker.execute {
+                if (token == generation.get() && !stopping && !destroyed) {
+                    val retiredToken = generation.incrementAndGet()
+                    trafficTask?.cancel(false)
+                    trafficTask = null
+                    stopCurrentEngine()
+                    if (retiredToken != generation.get() || stopping || destroyed) return@execute
+                    VpnRuntime.disconnected()
+                    updateNotification("Mihomo 프로세스 종료 — 다시 연결해 주세요")
+                }
+            }
+        }
+        synchronized(tunnelLock) {
+            if (destroyed || token != generation.get() || stopping) {
+                closeTunnel()
+                return
+            }
+            mihomoSession = session
+        }
+        // fromFd duplicates our original; Binder/worker/native own further
+        // duplicates. The service's detached original is never transferred.
+        ParcelFileDescriptor.fromFd(fd).use { session.start(it, config) }
+        if (token != generation.get() || stopping || destroyed) {
+            stopCurrentEngine()
+            return
+        }
+        VpnRuntime.setMihomoSession(session)
+        VpnRuntime.connected(profile, config.node.takeUnless { settings.mode == "direct" }, settings.mode, preserveSession)
+        updateNotification("보호됨")
+        startMihomoTrafficUpdates(token, preserveSession, session)
+    }
+
+    private fun startMihomoTrafficUpdates(token: Int, preserveSession: Boolean, session: MihomoVpnSession) {
+        val snapshot = VpnRuntime.snapshot()
+        val offsetUp = if (preserveSession) (snapshot["totalUpload"] as? Number)?.toLong() ?: 0L else 0L
+        val offsetDown = if (preserveSession) (snapshot["totalDownload"] as? Number)?.toLong() ?: 0L else 0L
+        var up = 0L
+        var down = 0L
+        trafficTask = trafficScheduler.scheduleAtFixedRate({
+            if (token != generation.get() || stopping || destroyed) return@scheduleAtFixedRate
+            val counters = runCatching { session.trafficStats() }.getOrNull()
+            if (token != generation.get() || stopping || destroyed) return@scheduleAtFixedRate
+            val nextUp = counters?.get(0) ?: up
+            val nextDown = counters?.get(1) ?: down
+            VpnRuntime.traffic((nextUp - up).coerceAtLeast(0), (nextDown - down).coerceAtLeast(0),
+                offsetUp + nextUp, offsetDown + nextDown)
+            up = nextUp
+            down = nextDown
+            updateNotificationWithCurrentSnapshot()
+            // Native worker independently supervises management admission; its
+            // death event, not a transient RPC error, disconnects this session.
+        }, 1, 1, TimeUnit.SECONDS)
+    }
+
+    private fun stopCurrentEngine() {
+        if (activeEngine == "mihomo") {
+            VpnRuntime.setMihomoSession(null)
+            // Request stop -> native join -> PID exit/Binder death -> original fd.
+            closeMihomoTunnel(stopAndJoin = { mihomoSession?.close() }, closeOriginal = {
+                mihomoSession = null
+                closeTunnel()
+            })
+        } else {
+            closeTunnel()
+            XrayCore.stop()
+        }
     }
 
     private fun startTrafficUpdates(token: Int, preserveSession: Boolean, metricsPort: Int) {
@@ -280,7 +371,7 @@ class ProximaVpnService : AndroidVpnService() {
     private fun disconnectAndStop() {
         if (stopping) return
         stopping = true
-        generation.incrementAndGet()
+        val token = generation.incrementAndGet()
         VpnRuntime.disconnecting()
         updateNotification("연결 해제 중")
         trafficTask?.cancel(false)
@@ -288,13 +379,14 @@ class ProximaVpnService : AndroidVpnService() {
         worker.execute {
             // Closing the TUN descriptor first is what tells Android that this
             // VPN has ended. Do it even if the native core shutdown is slow.
-            closeTunnel()
+            if (activeEngine == "mihomo") stopCurrentEngine() else closeTunnel()
+            if (activeEngine == "mihomo" && token != generation.get()) return@execute
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
                 setUnderlyingNetworks(null)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
             else @Suppress("DEPRECATION") stopForeground(true)
-            XrayCore.stop()
+            if (activeEngine == "xray") XrayCore.stop()
             VpnRuntime.disconnected()
             runningProfile = null
             stopSelf()
@@ -302,12 +394,16 @@ class ProximaVpnService : AndroidVpnService() {
     }
 
     private fun fail(profile: StoredProfile?, message: String, token: Int? = null) {
+        if (activeEngine == "mihomo" && android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            worker.execute { fail(profile, message, token) }
+            return
+        }
         if (token != null && !generation.compareAndSet(token, token + 1)) return
-        if (token == null) generation.incrementAndGet()
+        val failedToken = if (token == null) generation.incrementAndGet() else token + 1
         trafficTask?.cancel(false)
         trafficTask = null
-        closeTunnel()
-        XrayCore.stop()
+        stopCurrentEngine()
+        if (activeEngine == "mihomo" && (failedToken != generation.get() || destroyed)) return
         VpnRuntime.failed(profile, message)
         updateNotification("연결 오류")
         runningProfile = profile
@@ -317,13 +413,22 @@ class ProximaVpnService : AndroidVpnService() {
     override fun onRevoke() { disconnectAndStop(); super.onRevoke() }
     override fun onLowMemory() { super.onLowMemory() }
     override fun onDestroy() {
+        synchronized(tunnelLock) { destroyed = true }
         generation.incrementAndGet()
         trafficTask?.cancel(false)
         trafficTask = null
         trafficScheduler.shutdownNow()
-        closeTunnel()
-        XrayCore.stop()
-        worker.shutdownNow()
+        if (activeEngine == "mihomo") {
+            // Never block main: Binding.close must run there while this worker
+            // joins process death. Do not interrupt the retirement fence.
+            mihomoSession?.requestRetirementOnMain()
+            worker.execute { stopCurrentEngine() }
+            worker.shutdown()
+        } else {
+            closeTunnel()
+            XrayCore.stop()
+            worker.shutdownNow()
+        }
         if (VpnRuntime.snapshot()["state"] != "error") VpnRuntime.disconnected()
         super.onDestroy()
     }

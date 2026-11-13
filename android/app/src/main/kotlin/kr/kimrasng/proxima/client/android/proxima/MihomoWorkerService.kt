@@ -9,16 +9,16 @@ import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.system.Os
 import java.io.Closeable
+import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import kr.kimrasng.proxima.mihomo.NativeEngine
 
 /**
- * Bound-only descriptor staging in :mihomo. No JNI load, native engine,
- * packet consumer, foreground notification, or VpnRuntime access.
- *
- * Future runtime integration must supervise ReadDone()/ReadError() from the
- * raw-device packet loop. Unexpected exit requires generation-checked failure
- * reporting, protection revocation, and worker teardown. Successful startup
- * alone must never be treated as continued runtime health. There is no engine
- * or placeholder watcher here.
+ * One native session in :mihomo. No foreground notification or VpnRuntime here.
+ * Native unexpected packet exit closes management admission; a one-second
+ * trafficStats health watch detects that condition and retires this process.
+ * Java has no Done/Wait binding; do not mistake successful start for health.
  */
 class MihomoWorkerService : Service() {
     private lateinit var worker: WorkerEndpoint
@@ -28,7 +28,7 @@ class MihomoWorkerService : Service() {
         // Never let a manifest mistake authorize termination of the main PID.
         check(mihomoProcessName() == "$packageName:mihomo") { "Mihomo service requires its dedicated process" }
         synchronized(processLock) {
-            worker = processEndpoint ?: WorkerEndpoint().also { processEndpoint = it }
+            worker = processEndpoint ?: WorkerEndpoint(filesDir, cacheDir).also { processEndpoint = it }
         }
     }
 
@@ -52,15 +52,18 @@ class MihomoWorkerService : Service() {
         }
     }
 
-    private class WorkerEndpoint : Binder() {
+    private class WorkerEndpoint(private val files: File, private val cache: File) : Binder() {
         private val slot = MihomoWorkerSlot<WorkerLease>()
+        private val lifecycle = Any()
+        @Volatile private var current: WorkerLease? = null
+        private val health = Executors.newSingleThreadScheduledExecutor()
 
         init {
             attachInterface(null, MihomoBinderTransport.WORKER)
         }
 
         override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-            if (code !in MihomoBinderTransport.HELLO..MihomoBinderTransport.RETIRE) {
+            if (code !in MihomoBinderTransport.HELLO..MihomoBinderTransport.CONNECTIONS) {
                 return super.onTransact(code, data, reply, flags)
             }
             data.enforceInterface(MihomoBinderTransport.WORKER)
@@ -93,6 +96,47 @@ class MihomoWorkerService : Service() {
             }
 
             val generation = data.readLong()
+            if (code >= MihomoBinderTransport.TRAFFIC) {
+                val lease = checkNotNull(current) { "Mihomo is not running" }
+                check(lease.generation == generation && lease.started) { "Mihomo lease is inactive" }
+                when (code) {
+                    MihomoBinderTransport.TRAFFIC -> {
+                        require(data.dataAvail() == 0)
+                        val counters = lease.engine.trafficStats()
+                        reply.writeNoException()
+                        reply.writeLong(counters[0]); reply.writeLong(counters[1])
+                    }
+                    MihomoBinderTransport.DELAY -> {
+                        val name = checkNotNull(data.readString())
+                        val url = checkNotNull(data.readString())
+                        val timeout = data.readInt()
+                        require(data.dataAvail() == 0)
+                        val delay = lease.engine.delayTest(name, url, timeout)
+                        reply.writeNoException(); reply.writeInt(delay)
+                    }
+                    MihomoBinderTransport.CONNECTIONS -> {
+                        require(data.dataAvail() == 0)
+                        val snapshot = MihomoConfiguration.copyOf(lease.engine.connectionsSnapshot())
+                        MihomoBinderTransport.withConfiguration(cache, snapshot) { fd ->
+                            reply.writeNoException()
+                            reply.writeInt(snapshot.size); reply.writeString(snapshot.sha256)
+                            fd.writeToParcel(reply, 0)
+                        }
+                    }
+                }
+                return true
+            }
+            // Start errors include LinkageError/UnsatisfiedLinkError: Binder's
+            // exception codec cannot carry those. Return a bounded error string.
+            val startupError = runCatching {
+                synchronized(lifecycle) { start(data, generation) }
+            }.exceptionOrNull()
+            reply.writeNoException()
+            reply.writeString(startupError?.let { (it.message ?: it.javaClass.simpleName).take(2048) })
+            return true
+        }
+
+        private fun start(data: Parcel, generation: Long) {
             val owner = data.readStrongBinder()
             val size = data.readInt()
             val sha256 = data.readString()
@@ -112,28 +156,53 @@ class MihomoWorkerService : Service() {
                         throw error
                     }
                     val lease = WorkerLease(
+                        generation,
                         owned,
                         owner,
                         IBinder.DeathRecipient { retire() },
                         MihomoWorkerSocketProtector(generation, this, owner),
                     )
+                    var installed = false
                     try {
                         owner.linkToDeath(lease.death, 0)
                         lease.linked = true
                         slot.install(lease)
-                    } catch (error: Exception) {
-                        lease.close()
+                        installed = true
+                        current = lease // Retain even when NativeEngine.start throws.
+                        val root = File(files, "mihomo-providers").apply {
+                            check(isDirectory || mkdirs()) { "Cannot create Mihomo provider root" }
+                        }
+                        val bytes = ByteArray(size)
+                        var offset = 0
+                        while (offset < size) {
+                            val read = Os.pread(configuration.fileDescriptor, bytes, offset, size - offset, offset.toLong())
+                            check(read > 0)
+                            offset += read
+                        }
+                        lease.engine.start(bytes, tunCopy.fd, { fd ->
+                            // fromFd duplicates a borrowed worker-local socket;
+                            // closing it never closes the engine's original.
+                            ParcelFileDescriptor.fromFd(fd).use {
+                                lease.protect(it)
+                            }
+                        }, root.absolutePath)
+                        lease.started = true
+                        health.scheduleAtFixedRate({
+                            if (lease.started && runCatching { lease.engine.trafficStats() }.isFailure) retire()
+                        }, 1, 1, TimeUnit.SECONDS)
+                    } catch (error: Throwable) {
+                        if (!installed) runCatching { lease.close() }
+                        // Keep cleanup handles until RETIRE; Stop may need retry.
                         throw error
                     }
                 }
             }
-            reply.writeNoException() // Descriptor ownership only; no engine startup.
-            return true
         }
 
         fun retire() {
             try {
-                slot.close()
+                health.shutdownNow()
+                synchronized(lifecycle) { slot.close() }
             } finally {
                 // Stop acknowledgments cannot join upstream globals. Retire the
                 // entire worker PID; the main owner waits for this Binder's death.
@@ -143,24 +212,35 @@ class MihomoWorkerService : Service() {
     }
 
     private class WorkerLease(
+        val generation: Long,
         private val descriptors: MihomoOwnedDescriptors<ParcelFileDescriptor>,
         private val owner: IBinder,
         val death: IBinder.DeathRecipient,
-        // A future native callback must capture this immutable instance.
         private val socketProtector: MihomoWorkerSocketProtector,
     ) : Closeable {
+        // Lazy so staging ownership is retained even if native loading fails.
+        private val native = lazy { NativeEngine() }
+        val engine: NativeEngine get() = native.value
+        @Volatile var started = false
         var linked = false
         private var closed = false
+
+        fun protect(fd: ParcelFileDescriptor): Boolean = socketProtector.protectBorrowedSocket(fd.fileDescriptor)
 
         @Synchronized
         override fun close() {
             if (closed) return
             closed = true
-            socketProtector.revoke()
+            started = false
             try {
-                descriptors.close()
+                // Native Stop cancels/joins probes, packets and its own duplicate
+                // TUNs before the borrowed worker descriptors can be closed.
+                if (native.isInitialized()) engine.stop()
             } finally {
-                if (linked) owner.unlinkToDeath(death, 0)
+                socketProtector.revoke()
+                try { descriptors.close() } finally {
+                    if (linked) owner.unlinkToDeath(death, 0)
+                }
             }
         }
     }
