@@ -150,6 +150,10 @@ provide a sandbox against same-UID malicious code, device files, or bind mounts.
 The current write operation is not an atomic provider-cache replacement.
 
 These helpers are tested, but **upstream provider I/O is not wired to them**.
+The separate `../mihomo-provider` overlay implements equivalent confined runtime
+I/O and atomic publication; `../mihomo-engine/PROVIDERS.md` documents its Phase
+1.3 engine integration, trusted-root parameter, payload restrictions and joins.
+The foundation library itself still does not construct or run providers.
 The `cmfa` build mode in the pinned source makes `constant.Path.IsSafePath`
 unconditionally succeed. The non-CMFA implementation is only a lexical check;
 it does not itself confine symlink resolution at read/write time. Adding a

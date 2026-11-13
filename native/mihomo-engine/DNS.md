@@ -63,8 +63,12 @@ native refresh/retry dials **before** releasing the protection lease. DNS
 initialization or interception-construction failure follows Start's existing
 full rollback, including TUN duplicates and callback ownership/release retry.
 
-This is not a join of every resolver/HTTP/QUIC background worker: process
-retirement and termination/reaping remain mandatory, as in Phase 1.1. No Android
+Phase 1.3 adds a resolver job lifetime: cancel/join bootstrap/A+AAAA/fallback,
+refresh, retry and real singleflight jobs, join UDP/DoT wire helpers, and close
+native DoH/QUIC/DoT pools explicitly. This is still not a synchronous join proof
+for every library-internal HTTP/QUIC actor: process retirement and
+termination/reaping remain mandatory, as in Phase 1.1. See [PROVIDERS.md](PROVIDERS.md).
+No Android
 worker supervisor or application integration is included. DNS remains direct
 (protected but outside the VPN), not arbitrary proxy-routed DNS. Full protocol
 and custom-dialer auditing is still Phase 1.4.

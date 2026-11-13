@@ -1,14 +1,19 @@
-# Phase 1.2 executable engine contract
+# Phase 1.3 executable engine contract
 
 DNS admission, defaults, upstream security and lifetime: see [DNS.md](DNS.md).
+Provider admission, trusted root, update errors and joined ownership:
+see [PROVIDERS.md](PROVIDERS.md).
 
 ## Public API
 
 ```go
 func Start(configBytes []byte, borrowedTunFd int, protector session.Protector) (*Session, error)
+func StartWithOptions(configBytes []byte, borrowedTunFd int, protector session.Protector, options Options) (*Session, error)
+type Options struct { ProviderRoot string }
 func (*Session) Stop() error
 func (*Session) Done() <-chan struct{}
 func (*Session) Wait() error
+func (*Session) ProviderErrors() map[string]error
 func Version() string
 ```
 
@@ -45,14 +50,16 @@ rules: ['MATCH,DIRECT']
 Mode, IPv6 and log level are also configurable. Rules support MATCH, IP-CIDR,
 IP-CIDR6, SRC-IP-CIDR, DST-PORT, SRC-PORT and NETWORK, with actual semantic
 validation and built-in DIRECT/REJECT targets. Imported fd numbers, arbitrary
-proxies/groups/providers, geodata, custom hosts, advanced DNS policies, persistence,
+proxies/groups, geodata, custom hosts, advanced DNS policies, persistence,
 extra listeners/controllers, NTP, updater and platform routing options fail
 explicitly **before semantic parsing**. Unknown top-level fields are rejected,
 not silently ignored. Snapshot Decode still preserves arbitrary raw YAML.
 
+Providers now have a separately reviewed admission, I/O and shutdown path; only
+passive direct/http/socks5 payload constructors are admitted until Phase 1.4.
 This admission boundary is necessary because factories can create resources
-before returning parse errors, while complete provider/resolver joins and
-custom-dialer auditing are later phases. Do not present this as arbitrary profile
+before returning parse errors, while custom-dialer auditing remains a later
+phase. Do not present this as arbitrary profile
 support. Inert upstream batch/gvisor defaults are accepted but never applied to
 the raw os.File mips path; non-default requests are rejected. Redir-host DNS now
 works through the synthetic address in the host gate. This is still not an
@@ -89,8 +96,10 @@ integrated replacement for the existing Android engine/service.
 The raw tunnel avoids upstream's unjoined global UDP queues. Source-gated
 instrumentation separately joins UDP initialization and sender/reply pumps,
 closes real tracked connections, and joins the TCP peek helper. This is not a
-join of every global actor: mipstack socket actors, core statistics and later
-provider/health-check/resolver/updater lifetimes still require process exit.
+join of every global actor: mipstack socket actors, core statistics and
+library-internal transport teardown still require process exit as the final fence.
+Provider operations/timers/file polling, health checks and resolver jobs now have
+explicit cancel/join groups, with native transport pool closure.
 No supervisor is implemented. Permanent registry retirement prevents old workers
 from using a new lease in this process after Stop.
 
@@ -98,9 +107,10 @@ from using a new lease in this process after Stop.
 
 - `engine.go`: single running-core owner; foundation lease and transfer cleanup.
 - `admit.go`, `dns.go`: fail-closed capability admission and executable DNS defaults.
-- `cmd/overlay`: eight complete-source SHA-256 pins and unique patch anchors for
+- `cmd/overlay`: fourteen complete-source SHA-256 pins and unique patch anchors for
   parser rollback, error-returning executor/listener, raw sing_tun.New and joined
-  packet worker instrumentation, scoped DNS sockets and DoH redirect denial.
+  packet/provider/health-check/resolver worker instrumentation, scoped DNS sockets
+  and DoH redirect denial.
   Legacy void APIs remain unchanged and unused.
 - `cmd/compose`: conflict-free provider/network/engine overlay composition plus
   separately pinned sing-tun packet-loop composition.
@@ -131,6 +141,6 @@ These tests do not establish Android TUN/device behavior or a whole-process
 goroutine-leak proof. Root `bash build.sh android` builds the three standalone
 shared libraries (covering all modules) for all four ABIs.
 
-Remaining work: Phase 1.3 arbitrary providers and joined worker
-shutdown/supervision; Phase 1.4 full custom-dialer/protocol audit; Phase 1.5
+Remaining work: whole-process supervision/transport-actor exit proof;
+Phase 1.4 full custom-dialer/protocol audit and broader providers; Phase 1.5
 statistics/latency/connection APIs; application integration.

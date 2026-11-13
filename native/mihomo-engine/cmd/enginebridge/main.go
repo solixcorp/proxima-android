@@ -41,10 +41,14 @@ func nativeError(err error) *C.char {
 }
 
 //export ProximaEngineStart
-func ProximaEngineStart(data *C.char, size C.int, fd C.int, owner C.uintptr_t, handle *C.ulonglong) *C.char {
+func ProximaEngineStart(data *C.char, size C.int, fd C.int, owner C.uintptr_t, root *C.char, handle *C.ulonglong) *C.char {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	s, err := engine.Start(C.GoBytes(unsafe.Pointer(data), size), int(fd), jniProtector{owner})
+	directory := ""
+	if root != nil {
+		directory = C.GoString(root)
+	}
+	s, err := engine.StartWithOptions(C.GoBytes(unsafe.Pointer(data), size), int(fd), jniProtector{owner}, engine.Options{ProviderRoot: directory})
 	if s != nil {
 		handles.Lock()
 		handles.next++

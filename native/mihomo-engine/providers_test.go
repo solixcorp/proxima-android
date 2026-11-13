@@ -34,6 +34,13 @@ func TestMain(m *testing.M) {
 	if err := os.Chmod(testRoot, 0o700); err != nil {
 		panic(err)
 	}
+	if os.Getenv("PROXIMA_PROVIDER_CHILD") != "" {
+		code := m.Run()
+		if err := os.RemoveAll(testRoot); err != nil {
+			code = 1
+		}
+		os.Exit(code)
+	}
 	if err := boundary.ConfigureRoot(testRoot); err != nil {
 		panic(err)
 	}

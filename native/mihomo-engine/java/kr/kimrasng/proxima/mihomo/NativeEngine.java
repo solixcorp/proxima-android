@@ -21,13 +21,19 @@ public final class NativeEngine implements AutoCloseable {
     /** Borrow fd during the call; it must be nonblocking and carry raw IP. */
     public synchronized void start(byte[] config, int borrowedTunFd, Protector protector) {
         if (handle != 0) throw new IllegalStateException("stop the existing engine first");
-        startNative(config, borrowedTunFd, protector);
+        startNative(config, borrowedTunFd, protector, null);
+    }
+
+    /** Existing, trusted app-private directory; never take this from a profile. */
+    public synchronized void start(byte[] config, int borrowedTunFd, Protector protector, String providerRoot) {
+        if (handle != 0) throw new IllegalStateException("stop the existing engine first");
+        startNative(config, borrowedTunFd, protector, providerRoot);
     }
 
     /** Drains local packets then releases protection. The worker must still exit. */
     public synchronized void stop() { stopNative(); }
     @Override public void close() { stop(); }
 
-    private native void startNative(byte[] config, int borrowedTunFd, Protector protector);
+    private native void startNative(byte[] config, int borrowedTunFd, Protector protector, String providerRoot);
     private native void stopNative();
 }

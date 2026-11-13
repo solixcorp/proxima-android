@@ -58,7 +58,8 @@ Upstream Mihomo is GPL-3.0; its distribution obligations still apply.
    initialization. Upstream executor error logging is not a successful start.
 4. Stop new calls, close providers, and drain their other workers before
    releasing runtime resources. The patched resource fetcher joins its own
-   polling goroutine on `Close`; that does not join health checks or the engine.
+    polling goroutine and admitted operations on `Close`; the engine overlay
+    additionally joins health checks and resolver jobs.
    Close the real `cachefile.Cache().DB` if non-nil before final root teardown.
 5. `boundary.CloseRoot()` permanently revokes future path opens for this
    process. It cannot revoke descriptors already handed to a database or
@@ -79,8 +80,11 @@ loading through confined descriptors. The added native HTTP option is
 - HTTP provider resource requests require HTTPS, a nonempty host, and no URL
   userinfo, both initially and before every redirect. Redirect loops remain
   limited to ten requests. Mihomo's real HTTP transport, certificate validation,
-  proxy selection, dialer, request headers, response callbacks, size limit,
-  subscription metadata, and ETag/304 handling remain in use.
+  request headers, response callbacks, size limit,
+  subscription metadata, and ETag/304 handling remain in use. Policy-bound
+  resource fetches use the protected native direct dialer, not custom proxies
+  or a pre-running internal tunnel. Each fetch owns a cancel/join dial gate and
+  closes its request transport with the response body.
 - File vehicles, HTTP cache writes, initial cached reads, timestamp refreshes,
   bundle directory discovery, archive opening, and each numbered archive volume
   use descriptor-relative `os.Root` operations. Raw traversal and paths outside
@@ -99,8 +103,9 @@ loading through confined descriptors. The added native HTTP option is
   of pathname-based fsnotify. This preserves automatic updates, with up to a
   one-second delay and extra reads; transient intermediate versions can be
   coalesced. No external directories are opened for watching. Fetcher `Close`
-  cancels and joins that loop. Initial/Close and caller-driven updates still
-  need owner serialization. Call `Close` from the owner, never reentrantly from
+  cancels and joins that loop. Initial/Update/SideUpdate are serialized with
+  polling; Close cancels admission and drains admitted operations. Initialize
+  exactly once. Call `Close` from the owner, never reentrantly from
   that fetcher's `onUpdate` callback.
 - Archive parsing stays in the real sevenzip implementation, including split
   `.001`, `.002`, ... archives; archive members are read into the provider
@@ -123,11 +128,13 @@ targets, proxy-server endpoints, DNS, or every HTTP client in the engine.
 Socket protection and underlying Android network selection require their own
 integration. This module does not install a socket protection hook.
 
-Upstream provider periodic update failures are still logged; the executor still
-does not propagate initialization failures. The shared cache still has its
-upstream `sync.Once` lifetime and logs initialization failures. Existing fetcher
-state access, provider callbacks, health checks, the global tunnel, and arbitrary
-concurrent caller-driven updates are not made race-free by joining one loop.
+Upstream provider periodic update failures are logged and retained by
+`ProximaLastError`; explicit updates return the error. The legacy executor still
+does not propagate initialization failures; the separate engine's reviewed
+error-returning executor does, for both provider kinds. The shared cache retains
+its `sync.Once` lifetime; the engine checks initialization and closes it at final
+teardown. Provider callbacks, health checks and the global tunnel need the
+engine's separate admission/lifetime integration, not just this resource overlay.
 No Android/device, four-ABI, full-engine startup, or complete-engine shutdown
 claim is made by these host tests.
 

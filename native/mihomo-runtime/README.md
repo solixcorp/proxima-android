@@ -95,7 +95,9 @@ Close drains every dispatcher/relay. Empty options retain ordinary packet behavi
 
 Phase 1.2 of `../mihomo-engine` now initializes native DNS and supplies targets
 through the raw `sing_tun.New` path. It scopes/closes DNS sockets before releasing
-the lease, but still requires process exit for unexported resolver workers. The
+the lease. Phase 1.3 adds explicit resolver-job/provider/health-check joins in the
+engine; library-internal transport and global actor exit still has the retired
+process as its final boundary. The
 runtime never configures those globals itself. The original constraints below
 explain why an ordinary tunnel alone remains insufficient.
 

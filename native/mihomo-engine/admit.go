@@ -17,6 +17,7 @@ import (
 var topLevel = map[string]bool{
 	"mode": true, "ipv6": true, "log-level": true, "rules": true, "tun": true,
 	"find-process-mode": true, "dns": true, "profile": true,
+	"proxy-providers": true, "rule-providers": true,
 }
 
 var nestedKeys = map[string]map[string]bool{
@@ -62,6 +63,9 @@ func admit(source []byte, raw *config.RawConfig) error {
 		}
 	}
 	if err := admitDNS(node.Content[0], raw); err != nil {
+		return err
+	}
+	if err := admitProviders(raw); err != nil {
 		return err
 	}
 	defaults := config.DefaultRawConfig()

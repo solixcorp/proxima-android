@@ -5,13 +5,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 
+	provider "github.com/metacubex/mihomo/adapter/provider"
+	"github.com/metacubex/mihomo/component/profile/cachefile"
 	"github.com/metacubex/mihomo/config"
+	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/hub/executor"
 	"github.com/metacubex/mihomo/listener/sing_tun"
 	"golang.org/x/sys/unix"
 	foundation "proxima.local/mihomo"
+	"proxima.local/mihomo-provider/boundary"
 	"proxima.local/mihomo/session"
 )
 
@@ -31,17 +36,19 @@ var ErrProcessUsed = errors.New("Mihomo core process already used; terminate and
 // Session owns one core lifetime. Local TUN shutdown is joined; upstream global
 // workers still require process exit. No app connected state is published.
 type Session struct {
-	mu       sync.Mutex
-	token    session.Token
-	transfer int
-	cfg      *config.Config
-	packets  *sing_tun.Listener
-	done     chan struct{}
-	stop     chan struct{}
-	stopOnce sync.Once
-	result   error
-	released bool
-	unleased session.Protector
+	mu             sync.Mutex
+	token          session.Token
+	transfer       int
+	cfg            *config.Config
+	packets        *sing_tun.Listener
+	done           chan struct{}
+	stop           chan struct{}
+	stopOnce       sync.Once
+	result         error
+	released       bool
+	unleased       session.Protector
+	root           bool
+	providerStatus map[string]interface{ ProximaLastError() error }
 }
 
 // Start borrows the fd and takes ownership of protector on entry, even when it
@@ -49,6 +56,15 @@ type Session struct {
 // error means callback release failed: call Stop on that session to retry.
 // Semantic parsing consumes this OS process permanently, even on failure.
 func Start(configBytes []byte, borrowedTunFd int, protector session.Protector) (*Session, error) {
+	return StartWithOptions(configBytes, borrowedTunFd, protector, Options{})
+}
+
+// Options are trusted application capabilities, never imported YAML values.
+type Options struct{ ProviderRoot string }
+
+// StartWithOptions requires an existing app-private directory for providers.
+// The caller must exclude hostile same-UID writers and keep it stable until Stop.
+func StartWithOptions(configBytes []byte, borrowedTunFd int, protector session.Protector, options Options) (*Session, error) {
 	engineProcess.Lock()
 	defer engineProcess.Unlock()
 	if engineProcess.used {
@@ -86,6 +102,12 @@ func Start(configBytes []byte, borrowedTunFd int, protector session.Protector) (
 	if err := admit(snapshot.Bytes(), raw); err != nil {
 		return rollback(err)
 	}
+	if len(raw.ProxyProvider)+len(raw.RuleProvider) > 0 && options.ProviderRoot == "" {
+		return rollback(errors.New("trusted application ProviderRoot required"))
+	}
+	if options.ProviderRoot != "" && !filepath.IsAbs(options.ProviderRoot) {
+		return rollback(errors.New("ProviderRoot must be an absolute application-owned directory"))
+	}
 	// Fence ALL registry clients, including direct NativeSession.prepare callers.
 	// Closing a lease alone cannot prevent delayed old core workers from using a
 	// replacement process-wide protection hook.
@@ -93,9 +115,31 @@ func Start(configBytes []byte, borrowedTunFd int, protector session.Protector) (
 		return rollback(err)
 	}
 	engineProcess.used = true
+	if options.ProviderRoot != "" {
+		if err := boundary.ConfigureRoot(options.ProviderRoot); err != nil {
+			return rollback(fmt.Errorf("provider root: %w", err))
+		}
+		s.root = true
+		C.SetHomeDir(options.ProviderRoot)
+		if cachefile.Cache().DB == nil {
+			return rollback(errors.New("initialize confined provider metadata cache"))
+		}
+	}
+	provider.ProximaProxyPolicy = passiveProviderProxy
 	s.cfg, err = config.ParseRawConfigWithError(raw)
 	if err != nil {
 		return rollback(fmt.Errorf("Mihomo semantic configuration: %w", err))
+	}
+	s.providerStatus = make(map[string]interface{ ProximaLastError() error })
+	for name, p := range s.cfg.Providers {
+		if status, ok := p.(interface{ ProximaLastError() error }); ok {
+			s.providerStatus["proxy/"+name] = status
+		}
+	}
+	for name, p := range s.cfg.RuleProviders {
+		if status, ok := p.(interface{ ProximaLastError() error }); ok {
+			s.providerStatus["rule/"+name] = status
+		}
 	}
 	s.cfg.General.Tun.FileDescriptor = s.transfer
 	s.cfg.General.Tun.ProximaRawFD = true
@@ -140,6 +184,13 @@ func (s *Session) shutdown() error {
 		coreErr = executor.StopConfig(s.cfg)
 		s.cfg = nil
 	}
+	if s.root {
+		if db := cachefile.Cache().DB; db != nil {
+			coreErr = errors.Join(coreErr, db.Close())
+		}
+		coreErr = errors.Join(coreErr, boundary.CloseRoot())
+		s.root = false
+	}
 	return errors.Join(packetErr, fdErr, coreErr)
 }
 
@@ -158,6 +209,19 @@ func (s *Session) run() {
 // called on an attached JVM thread to release a JNI protector.
 func (s *Session) Done() <-chan struct{} { return s.done }
 func (s *Session) Wait() error           { <-s.done; return s.result }
+
+// ProviderErrors returns the latest failed update per resource. A subsequent
+// successful refresh clears it. Failed refreshes retain the last-good core/cache;
+// they are observable errors, never a new successful provider version.
+func (s *Session) ProviderErrors() map[string]error {
+	result := make(map[string]error)
+	for name, status := range s.providerStatus {
+		if err := status.ProximaLastError(); err != nil {
+			result[name] = err
+		}
+	}
+	return result
+}
 
 // Stop is serialized, idempotent and retryable if protector release fails. It
 // must not run reentrantly from a socket protection callback. A successful local

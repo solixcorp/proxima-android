@@ -45,9 +45,20 @@ var patches = []patch{
 		hash: "647fdd5906c41202974577ff96a00ebc6bda441ae3e9d7717037cedff4eee903",
 		edits: []edit{
 			{"import (\n", "import (\n" + boundaryImport},
+			{"\"sync\"", "\"sync\"\n\"sync/atomic\""},
 			{"\t\"os\"\n", ""},
 			{"\t\"github.com/metacubex/fswatch\"\n", ""},
 			{"watcher      *fswatch.Watcher", "workers      sync.WaitGroup"},
+			{"loadBufMutex sync.Mutex", "loadBufMutex sync.Mutex\n opMu sync.Mutex\n lifeMu sync.Mutex\n calls sync.WaitGroup\n stopped bool\n lastErr error"},
+			{"func (f *Fetcher[V]) Initial() (V, error) {", "func (f *Fetcher[V]) initial() (V, error) {"},
+			{"func (f *Fetcher[V]) Update() (V, bool, error) {", "func (f *Fetcher[V]) update() (V, bool, error) {"},
+			{"func (f *Fetcher[V]) SideUpdate(buf []byte) (V, bool, error) {", "func (f *Fetcher[V]) sideUpdate(buf []byte) (V, bool, error) {"},
+			{"contents, _, updateErr := f.Update()", "contents, _, updateErr := f.update()"},
+			{"return f.updatedAt", "f.opMu.Lock(); defer f.opMu.Unlock(); return f.updatedAt"},
+			{"f.interval - time.Since(f.updatedAt)", "f.interval - time.Since(f.UpdatedAt())"},
+			{"\n\tif attempt := f.backoff.Attempt();", "\n\tif attempt := f.proximaAttempt();"},
+			{"\n\t\t\tif attempt := f.backoff.Attempt();", "\n\t\t\tif attempt := f.proximaAttempt();"},
+			{"func (f *Fetcher[V]) Close() error {\n\tf.ctxCancel()", "func (f *Fetcher[V]) Close() error {\n f.lifeMu.Lock(); f.stopped = true; f.ctxCancel(); f.lifeMu.Unlock()\n f.calls.Wait()"},
 			{"os.Stat(f.vehicle.Path())", "boundary.Stat(f.vehicle.Path())"},
 			{"buf, err := os.ReadFile(f.vehicle.Path())", "buf, err := boundary.ReadFile(f.vehicle.Path())\n\t\tif err != nil { return lo.Empty[V](), err }"},
 			{"buf, err := io.ReadAll(file)", "buf, err := io.ReadAll(file)\n\t\t\tif err != nil { return lo.Empty[V](), err }"},
@@ -71,7 +82,8 @@ var patches = []patch{
 		go f.pullLoop(forceUpdate)
 	}`, `	if f.interval > 0 {
 		f.workers.Add(1)
-		go func() { defer f.workers.Done(); f.pullLoop(forceUpdate) }()
+		proximaWorkers.Add(1)
+		go func() { defer f.workers.Done(); defer proximaWorkers.Add(-1); f.pullLoop(forceUpdate) }()
 	}`},
 			{"ctx, cancel := context.WithCancel(context.Background())", `// File providers retain automatic reload without pathname-based watches.
 	if vehicle.Type() == P.File { interval = time.Second }
@@ -82,10 +94,11 @@ var patches = []patch{
 		path: "component/http/http.go",
 		hash: "908b28230f08850d37816a0d1e2920ba5b3ed1d19f32cdc1892ca3078b359a1d",
 		edits: []edit{
-			{"\t\"context\"\n", "\t\"context\"\n\t\"errors\"\n"},
+			{"\t\"context\"\n", "\t\"context\"\n\t\"errors\"\n\t\"sync\"\n"},
 			{"method = strings.ToUpper(method)", `if opt.urlPolicy != nil {
 		if err := opt.urlPolicy(url); err != nil { return nil, err }
 	}
+	 scope := newProximaHTTP(ctx)
 	method = strings.ToUpper(method)`},
 			{"client := http.Client{Transport: transport}", `client := http.Client{Transport: transport}
 	if opt.urlPolicy != nil {
@@ -95,6 +108,16 @@ var patches = []patch{
 			return nil
 		}
 	}`},
+			{"if opt.dialer != nil {", `// Policy-bound resources always use the protected native direct dialer.
+            // In particular, never enter the pre-running tunnel or a custom proxy.
+            if opt.urlPolicy != nil { return scope.dial(ctx, network, address) }
+            if opt.dialer != nil {`},
+			{"return client.Do(req)", `// Each request owns its transport. Body Close is the completion boundary;
+        // no idle pool survives a fetch, redirect failure or rejected status.
+        resp, err := client.Do(req)
+        if err != nil { scope.close(); transport.CloseIdleConnections(); return nil, err }
+        resp.Body = &proximaBody{ReadCloser: resp.Body, closeTransport: func(){ scope.close(); transport.CloseIdleConnections() }}
+        return resp, nil`},
 			{"type option struct {\n", "type option struct {\n\turlPolicy func(string) error\n"},
 			{"func WithSpecialProxy(name string) Option {", `// WithURLPolicy checks the initial request and every redirect before sending.
 func WithURLPolicy(policy func(string) error) Option {

@@ -8,7 +8,7 @@
 
 JNIEXPORT void JNICALL
 Java_kr_kimrasng_proxima_mihomo_NativeEngine_startNative(
-    JNIEnv *env, jobject self, jbyteArray config, jint fd, jobject target) {
+    JNIEnv *env, jobject self, jbyteArray config, jint fd, jobject target, jstring directory) {
     if (config == NULL || target == NULL) {
         throw_error(env, "java/lang/IllegalArgumentException", "configuration and protector are required");
         return;
@@ -35,7 +35,14 @@ Java_kr_kimrasng_proxima_mihomo_NativeEngine_startNative(
     jbyte *bytes = (*env)->GetByteArrayElements(env, config, NULL);
     if (bytes == NULL) { proxima_jni_release((uintptr_t)owner); return; }
     unsigned long long handle = 0;
-    char *error = ProximaEngineStart((char *)bytes, size, fd, (uintptr_t)owner, &handle);
+    const char *root = directory == NULL ? NULL : (*env)->GetStringUTFChars(env, directory, NULL);
+    if (directory != NULL && root == NULL) {
+        (*env)->ReleaseByteArrayElements(env, config, bytes, JNI_ABORT);
+        proxima_jni_release((uintptr_t)owner);
+        return;
+    }
+    char *error = ProximaEngineStart((char *)bytes, size, fd, (uintptr_t)owner, (char *)root, &handle);
+    if (root != NULL) (*env)->ReleaseStringUTFChars(env, directory, root);
     (*env)->ReleaseByteArrayElements(env, config, bytes, JNI_ABORT);
     (*env)->SetLongField(env, self, handle_field, (jlong)handle);
     report_error(env, error);

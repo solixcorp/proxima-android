@@ -1,4 +1,44 @@
-# Phase 1.2 verification on November 13, 2026
+# Phase 1.3 verification on November 13, 2026
+
+Final repository-root gates completed with exit 0:
+
+- `bash build.sh test`: all seven modules, vet/race/shuffle, native JNI/JVM and
+  diagnostic suites, including all Phase 1.1/1.2 regressions.
+- `bash build.sh android`: foundation, engine and diagnostic c-shared libraries
+  for arm64-v8a, armeabi-v7a, x86 and x86_64.
+- `git diff --check`: exit 0. Branch remains `mihomo-migration`; no commits,
+  Kotlin/app changes, lock changes, packaged or checked-in binaries.
+
+New `TestEngineProvidersProcess` passed 18 isolated/reaped child scenarios:
+actual protected HTTPS proxy/rule/MRS initialization and cache publication;
+HTTP/userinfo rejection; HTTP/userinfo redirect escape denial; allowed HTTPS
+redirect; untrusted certificate; false protector; invalid proxy payload;
+missing file; symlink escape; raw traversal; raw absolute path; unsafe autonomous
+proxy constructor; periodic corrupt-MRS refresh preserving last-good core/cache
+and clearing the observable error after recovery; pending HTTP refresh Stop;
+confined automatic file reload; pending real proxy health-check Stop.
+
+`TestProviderAdmissionBoundary` covers the explicit provider option allowlists,
+inline/file/HTTP admission, certificate bypass/custom proxy rejection, negative
+intervals, health-check URL policy, classical-rule denial, unchanged top-level
+proxy/group denial, passive proxy constructor policy and missing trusted-root
+rollback. Existing provider module suites retain descriptor-relative Store,
+atomic publication, redirect/ETag, archive and symlink-replacement-race tests.
+
+Resource, health-check and DNS job counters return to the pre-start zero baseline
+**inside the protector Close callback**, proving those groups drain before lease
+release (including initialization rollback). The Phase 1.2 pending-query and
+protected DNS transport tests pass with the new resolver cancellation/join path.
+The engine still permanently refuses another core or foundation lease afterward.
+
+Logs: ignored `build/phase13-all-test.log`, `build/phase13-android.log`, and focused
+`native/mihomo-engine/build/phase13-engine-test.log`. These are host/compilation
+results, not Android runtime/packaging verification. Counters are not a proof of
+synchronous termination of every library-internal HTTP/QUIC or mipstack actor;
+native pools/sockets are closed and late socket admission is fenced, but process
+termination/reaping is still the final boundary. See [PROVIDERS.md](PROVIDERS.md).
+
+## Historical Phase 1.2 verification on November 13, 2026
 
 Final repository-root gates both completed with exit 0:
 

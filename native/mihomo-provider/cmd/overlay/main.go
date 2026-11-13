@@ -36,6 +36,12 @@ func apply(source []byte, p patch) ([]byte, error) {
 		}
 		text = strings.Replace(text, e.before, e.after, 1)
 	}
+	if p.path == "component/resource/fetcher.go" {
+		text += fetcherSeam
+	}
+	if p.path == "component/http/http.go" {
+		text += httpSeam
+	}
 	return format.Source([]byte(text))
 }
 

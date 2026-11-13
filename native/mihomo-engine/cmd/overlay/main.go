@@ -12,14 +12,20 @@ import (
 )
 
 var pins = map[string]string{
-	"hub/executor/executor.go":    "183595fd58704d60d2137463e751938c1a02a23b57ef1d977b647e3640b64849",
-	"listener/listener.go":        "1a11cda3fb4a87875d817fe29f1e79973cb8cb6eeccc0ae5e22db15df1277758",
-	"listener/config/tun.go":      "4428cefc29ecabc08ea01fe5d0b6c107e6b383b95f07aad7d4f7f6dcb5116fe1",
-	"listener/sing_tun/server.go": "6aec285afd721a40a859dac8b6539c1c481d2c53c7ca33eb10e2f40eb992e7a1",
-	"tunnel/tunnel.go":            "bd0818dddd04779aad3f078819b3ca050bd8bdce29ba57e5a377770539278596",
-	"config/config.go":            "14d577a607eb5fff79513057bc16052520b62731d9af9817481f3baf980e8653",
-	"tunnel/dns_dialer.go":        "1324413474edc70c52510cb44576ae084f3f7875e5ecf4b34ddbfce97f6a0003",
-	"dns/doh.go":                  "978559eb93b791a4269c1993c866322b2851f20e75657b246dc6dd63cc9f0073",
+	"hub/executor/executor.go":        "183595fd58704d60d2137463e751938c1a02a23b57ef1d977b647e3640b64849",
+	"listener/listener.go":            "1a11cda3fb4a87875d817fe29f1e79973cb8cb6eeccc0ae5e22db15df1277758",
+	"listener/config/tun.go":          "4428cefc29ecabc08ea01fe5d0b6c107e6b383b95f07aad7d4f7f6dcb5116fe1",
+	"listener/sing_tun/server.go":     "6aec285afd721a40a859dac8b6539c1c481d2c53c7ca33eb10e2f40eb992e7a1",
+	"tunnel/tunnel.go":                "bd0818dddd04779aad3f078819b3ca050bd8bdce29ba57e5a377770539278596",
+	"config/config.go":                "14d577a607eb5fff79513057bc16052520b62731d9af9817481f3baf980e8653",
+	"tunnel/dns_dialer.go":            "1324413474edc70c52510cb44576ae084f3f7875e5ecf4b34ddbfce97f6a0003",
+	"dns/doh.go":                      "978559eb93b791a4269c1993c866322b2851f20e75657b246dc6dd63cc9f0073",
+	"adapter/provider/provider.go":    "69cb24313f68cc457c5f4e45ecab0d1355c1f5d22e3e2ec0559a7d753ee1672f",
+	"adapter/provider/healthcheck.go": "b3108ef1530c2bb28ff75928c64dc7150e68e2bb38f4f82e110ebdaff1801c64",
+	"dns/resolver.go":                 "400765c7dde15950c324ab8fce1a7dc1d7730b3c7f3bff6a85fd64e4238e2b48",
+	"dns/util.go":                     "24831a2b5e10fe3b8d074d537a1512025adc298968b3afa6bdef0ac3e10bae6e",
+	"dns/client.go":                   "b11cea570b82d782aa222a1fa994a91534aa845e340ffac0cc55b3fce7fad9c6",
+	"dns/dot.go":                      "0c018bc055d511c0e87dfdc36c64cc4a1dcd88b6f07251a37864820749a62049",
 }
 
 func patch(path string, source []byte) ([]byte, error) {
@@ -34,6 +40,52 @@ func patch(path string, source []byte) ([]byte, error) {
 		text = strings.Replace(text, old, next, 1)
 	}
 	switch path {
+	case "adapter/provider/provider.go":
+		replace("go bp.healthCheck.process()", "bp.healthCheck.proximaGo(bp.healthCheck.process)")
+		replace("go bp.healthCheck.check()", "bp.healthCheck.proximaGo(bp.healthCheck.check)")
+		replace("bp.proxies = proxies", "old := bp.proxies\nbp.proxies = proxies\ndefer func(){ for _, p := range old { _ = p.Close() } }()")
+		replace("bp.healthCheck.close()\n\treturn nil", "bp.healthCheck.close()\nfor _, p := range bp.Proxies() { _ = p.Close() }\n\treturn nil")
+		replace("_ = pp.baseProvider.Close()\n\treturn pp.Fetcher.Close()", "pp.Fetcher.ProximaCancel()\npp.healthCheck.close()\nerr := pp.Fetcher.Close()\n_ = pp.baseProvider.Close()\nreturn err")
+		replace("proxy, err := adapter.ParseProxy(mapping,", "if ProximaProxyPolicy != nil { if err := ProximaProxyPolicy(mapping); err != nil { for _, p := range proxies { _ = p.Close() }; return nil, err } }\nproxy, err := adapter.ParseProxy(mapping,")
+		text += "\n// Installed once before semantic parsing by the single-session owner.\nvar ProximaProxyPolicy func(map[string]any) error\n"
+	case "adapter/provider/healthcheck.go":
+		replace("\"sync\"", "\"sync\"\nsyncatomic \"sync/atomic\"")
+		replace("type HealthCheck struct {", "type HealthCheck struct {\n lifeMu sync.Mutex\n stopped bool\n workers sync.WaitGroup")
+		replace("go hc.check()", "hc.proximaGo(hc.check)")
+		replace("hc.proxies = proxies", "hc.mu.Lock(); defer hc.mu.Unlock(); hc.proxies = proxies")
+		replace("func (hc *HealthCheck) check() {", "func (hc *HealthCheck) check() {\n if !hc.proximaBegin() { return }; defer hc.proximaDone()\n hc.mu.Lock(); defer hc.mu.Unlock()")
+		replace("hc.ctxCancel()", "hc.lifeMu.Lock(); hc.stopped = true; hc.ctxCancel(); hc.lifeMu.Unlock(); hc.workers.Wait()")
+		text += healthCheckSeam
+	case "dns/resolver.go":
+		replace("\"time\"", "\"time\"\n\"sync\"\n\"io\"")
+		replace("func (r *Resolver) ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, err error) {", "func (r *Resolver) ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, err error) {\n ctx, done, ok := proximaDNSBegin(ctx); if !ok { return nil, context.Canceled }; defer done()")
+		// Every explicit resolver goroutine is covered, including refresh/retry,
+		// A/AAAA siblings and fallback branches. Exact counts are source-pinned.
+		if strings.Count(text, "go func() {") != 5 {
+			panic("DNS resolver goroutine count changed")
+		}
+		text = strings.ReplaceAll(text, "go func() {", "proximaDNSAdd()\ngo func() { defer proximaDNSDone()")
+		for _, method := range []string{"LookupIPPrimaryIPv4", "LookupIP"} {
+			anchor := "func (r *Resolver) " + method + "(ctx context.Context, host string) (ips []netip.Addr, err error) {"
+			replace(anchor, anchor+"\nctx, done, ok := proximaDNSBegin(ctx); if !ok { return nil, context.Canceled }; defer done()")
+		}
+		text = strings.ReplaceAll(text, "r.group.DoChan(q.String(), fn)", "r.proximaDoChan(q.String(), fn)")
+		replace("context.WithTimeout(context.Background(), resolver.DefaultDNSTimeout) // reset", "context.WithTimeout(proximaDNSContext(), resolver.DefaultDNSTimeout) // reset")
+		replace("context.WithTimeout(context.Background(), resolver.DefaultDNSTimeout)", "context.WithTimeout(proximaDNSContext(), resolver.DefaultDNSTimeout)")
+		text += resolverSeam
+	case "dns/util.go":
+		replace("c = rewrapClient(c, s.Params)", "proximaDNSRegister(c)\nc = rewrapClient(c, s.Params)")
+	case "dns/client.go", "dns/dot.go":
+		if path == "dns/client.go" {
+			replace("\"time\"", "\"time\"\n\"sync\"")
+		}
+		replace("go func() {", "var requestWG sync.WaitGroup\nrequestWG.Add(1)\ndefer requestWG.Wait()\ngo func() {\ndefer requestWG.Done()")
+		if path == "dns/client.go" {
+			replace("case <-ctx.Done():\n\t\treturn", "case <-ctx.Done():\n_ = conn.Close()\n\t\treturn")
+		}
+		if path == "dns/dot.go" {
+			text = strings.ReplaceAll(text, "go oldConn.Close() // close in a new goroutine, not blocking the current task", "_ = oldConn.Close()")
+		}
 	case "tunnel/dns_dialer.go":
 		replace(`"context"`, "\"context\"\n\"io\"\n\"sync\"")
 		replace("func (d *DNSDialer) DialContext(", "func (d *DNSDialer) proximaDialContext(")
@@ -43,17 +95,24 @@ func patch(path string, source []byte) ([]byte, error) {
 		// No redirect may downgrade HTTPS, change authority or select another
 		// upstream. Keep upstream TLS verification and its protected transport.
 		replace("client := &http.Client{", "client := &http.Client{\nCheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf(\"DNS upstream redirects are forbidden\") },")
+		replace("go doh.probeQUIC(ctx, addr, probeTLSCfg, chQuic)", "proximaDNSGo(func(){ doh.probeQUIC(ctx, addr, probeTLSCfg, chQuic) })")
+		replace("go doh.probeTLS(ctx, probeTLSCfg, chTLS)", "proximaDNSGo(func(){ doh.probeTLS(ctx, probeTLSCfg, chTLS) })")
 	case "config/config.go":
 		replace("func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {", `func ParseRawConfig(rawCfg *RawConfig) (*Config, error) { return parseRawConfig(rawCfg, false) }
 func ParseRawConfigWithError(rawCfg *RawConfig) (*Config, error) { return parseRawConfig(rawCfg, true) }
 func parseRawConfig(rawCfg *RawConfig, cleanup bool) (result *Config, resultErr error) {`)
 		replace("config := &Config{}", `config := &Config{}
 defer func() {
- if cleanup && resultErr != nil {
-  for _, provider := range config.Providers { if closer, ok := provider.(interface{ Close() error }); ok { resultErr = errors.Join(resultErr, closer.Close()) } }
+  if cleanup && resultErr != nil {
+   for _, provider := range config.Providers { if closer, ok := provider.(interface{ Close() error }); ok { resultErr = errors.Join(resultErr, closer.Close()) } }
+   for _, provider := range config.RuleProviders { if closer, ok := provider.(interface{ Close() error }); ok { resultErr = errors.Join(resultErr, closer.Close()) } }
   for _, proxy := range config.Proxies { resultErr = errors.Join(resultErr, proxy.Close()) }
  }
 }()`)
+		replace("providersMap = make(map[string]P.ProxyProvider)", `providersMap = make(map[string]P.ProxyProvider)
+ defer func(owned map[string]P.ProxyProvider) { if err != nil { for _, p := range owned { if c, ok := p.(interface{ Close() error }); ok { _ = c.Close() } } } }(providersMap)`)
+		replace("ruleProviders = map[string]P.RuleProvider{}", `ruleProviders = map[string]P.RuleProvider{}
+ defer func(owned map[string]P.RuleProvider) { if err != nil { for _, p := range owned { if c, ok := p.(interface{ Close() error }); ok { _ = c.Close() } } } }(ruleProviders)`)
 	case "tunnel/tunnel.go":
 		replace("go handleUDPToLocal(writeBackProxy, pc, sender, key, oAddrPort)", "proximaPumps.Add(1)\ngo func() { defer proximaPumps.Done(); handleUDPToLocal(writeBackProxy, pc, sender, key, oAddrPort) }()")
 		replace("\t\tgo func() {\n\t\t\tpc, proxy, err := dial()", "\t\tproximaDials.Add(1)\n\t\tgo func() {\n\t\t\tdefer proximaDials.Done()\n\t\t\tpc, proxy, err := dial()")
@@ -100,7 +159,7 @@ if options.ProximaRawFD {
  }, tunnel)
  if openErr != nil { return nil, openErr }
  return &Listener{options: options, rawPackets: packets, addrStr: "PROXIMA-RAW-TUN"}, nil
-}`)
+	}`)
 		replace("func (l *Listener) Close() error {", "func (l *Listener) Close() error {\nif l.rawPackets != nil { return l.rawPackets.Close() }")
 		text += `
 // ProximaReadDone is only available for the app-owned raw packet path.
@@ -139,13 +198,17 @@ func ApplyConfigWithError(cfg *config.Config) (*sing_tun.Listener, error) {
  updateHosts(cfg.Hosts)
   updateGeneral(cfg.General, true)
 	if err := tunnel.ProximaStartDNS(); err != nil { return nil, err }
+	 dns.ProximaStart()
 	updateDNS(cfg.DNS, cfg.General.IPv6)
  dispatcher, err := sniffer.NewDispatcher(cfg.Sniffer)
  if err != nil { return nil, fmt.Errorf("sniffer: %w", err) }
  tunnel.UpdateSniffer(dispatcher)
- for name, provider := range cfg.Providers {
+	 for name, provider := range cfg.Providers {
   if err := provider.Initial(); err != nil { return nil, fmt.Errorf("provider %s: %w", name, err) }
- }
+	 }
+	 for name, provider := range cfg.RuleProviders {
+	  if err := provider.Initial(); err != nil { return nil, fmt.Errorf("rule provider %s: %w", name, err) }
+	 }
  packets, err := listener.ReCreateTunWithError(cfg.General.Tun, tunnel.ProximaTunnel())
  if err != nil { return nil, fmt.Errorf("start TUN: %w", err) }
  tunnel.OnRunning()
@@ -160,7 +223,9 @@ func StopConfig(cfg *config.Config) error {
  defer mux.Unlock()
  tunnel.OnSuspend()
   tunnel.ProximaStopPackets()
-	tunnel.ProximaStopDNS()
+	 dns.ProximaCancel()
+		tunnel.ProximaStopDNS()
+	 dns.ProximaStop()
  Shutdown()
  var result error
  for _, provider := range cfg.Providers { if closer, ok := provider.(interface{ Close() error }); ok { result = errors.Join(result, closer.Close()) } }
