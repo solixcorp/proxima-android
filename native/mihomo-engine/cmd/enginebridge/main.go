@@ -40,6 +40,36 @@ func nativeError(err error) *C.char {
 	return nil
 }
 
+func lookup(id C.ulonglong) *engine.Session {
+	handles.Lock()
+	defer handles.Unlock()
+	return handles.sessions[uint64(id)]
+}
+
+//export ProximaEngineTrafficStats
+func ProximaEngineTrafficStats(id C.ulonglong, up, down *C.longlong) *C.char {
+	u, d, err := lookup(id).TrafficStats()
+	*up, *down = C.longlong(u), C.longlong(d)
+	return nativeError(err)
+}
+
+//export ProximaEngineDelayTest
+func ProximaEngineDelayTest(id C.ulonglong, name, url *C.char, timeout C.int, delay *C.int) *C.char {
+	d, err := lookup(id).DelayTest(C.GoString(name), C.GoString(url), int(timeout))
+	*delay = C.int(d)
+	return nativeError(err)
+}
+
+//export ProximaEngineConnectionsSnapshot
+func ProximaEngineConnectionsSnapshot(id C.ulonglong, data *unsafe.Pointer, size *C.int) *C.char {
+	result, err := lookup(id).ConnectionsSnapshot()
+	if err != nil {
+		return nativeError(err)
+	}
+	*data, *size = C.CBytes(result), C.int(len(result))
+	return nil
+}
+
 //export ProximaEngineStart
 func ProximaEngineStart(data *C.char, size C.int, fd C.int, owner C.uintptr_t, root *C.char, handle *C.ulonglong) *C.char {
 	runtime.LockOSThread()

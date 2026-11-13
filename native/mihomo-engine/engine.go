@@ -14,6 +14,8 @@ import (
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/hub/executor"
 	"github.com/metacubex/mihomo/listener/sing_tun"
+	"github.com/metacubex/mihomo/tunnel"
+	"github.com/metacubex/mihomo/tunnel/statistic"
 	"golang.org/x/sys/unix"
 	foundation "proxima.local/mihomo"
 	"proxima.local/mihomo-provider/boundary"
@@ -49,6 +51,7 @@ type Session struct {
 	unleased       session.Protector
 	root           bool
 	providerStatus map[string]interface{ ProximaLastError() error }
+	management     *management
 }
 
 // Start borrows the fd and takes ownership of protector on entry, even when it
@@ -115,6 +118,10 @@ func StartWithOptions(configBytes []byte, borrowedTunFd int, protector session.P
 		return rollback(err)
 	}
 	engineProcess.used = true
+	s.management = newManagement(new(statistic.Manager))
+	if err := tunnel.ProximaBindStatistics(s.management.stats); err != nil {
+		return rollback(err)
+	}
 	if options.ProviderRoot != "" {
 		if err := boundary.ConfigureRoot(options.ProviderRoot); err != nil {
 			return rollback(fmt.Errorf("provider root: %w", err))
@@ -152,6 +159,10 @@ func StartWithOptions(configBytes []byte, borrowedTunFd int, protector session.P
 		return rollback(fmt.Errorf("TUN input exited during startup: %w", s.packets.ProximaReadError()))
 	default:
 	}
+	s.management.mu.Lock()
+	s.management.proxies = s.cfg.Proxies
+	s.management.running = true
+	s.management.mu.Unlock()
 	go s.run()
 	return s, nil
 }
@@ -169,6 +180,10 @@ func failUnleased(cause error, p session.Protector) (*Session, error) {
 }
 
 func (s *Session) shutdown() error {
+	if s.management != nil {
+		s.management.retire()
+		s.management.calls.Wait()
+	}
 	var packetErr, fdErr error
 	if s.packets != nil {
 		packetErr = s.packets.Close()
@@ -229,7 +244,12 @@ func (s *Session) ProviderErrors() map[string]error {
 func (s *Session) Stop() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.stopOnce.Do(func() { close(s.stop) })
+	s.stopOnce.Do(func() {
+		if s.management != nil {
+			s.management.retire()
+		}
+		close(s.stop)
+	})
 	<-s.done
 	if !s.released {
 		if s.unleased != nil {

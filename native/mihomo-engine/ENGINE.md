@@ -1,10 +1,12 @@
-# Phase 1.4 executable engine contract
+# Phase 1.5 executable engine contract
 
 DNS admission, defaults, upstream security and lifetime: see [DNS.md](DNS.md).
 Provider admission, trusted root, update errors and joined ownership:
 see [PROVIDERS.md](PROVIDERS.md).
 Protocol socket evidence, option limits, rejected transports and overlays:
 see [DIALERS.md](DIALERS.md).
+Session traffic, latency, connection buffers and management lifetime:
+see [MANAGEMENT.md](MANAGEMENT.md).
 
 ## Public API
 
@@ -16,6 +18,9 @@ func (*Session) Stop() error
 func (*Session) Done() <-chan struct{}
 func (*Session) Wait() error
 func (*Session) ProviderErrors() map[string]error
+func (*Session) TrafficStats() (upBytes, downBytes int64, err error)
+func (*Session) DelayTest(name, url string, timeoutMs int) (delayMs int, err error)
+func (*Session) ConnectionsSnapshot() ([]byte, error)
 func Version() string
 ```
 
@@ -88,7 +93,7 @@ integrated replacement for the existing Android engine/service.
    another duplicate and starts the real sing-tun stack. No transfer is passed
    into ambiguous platform tun.New adoption. OnRunning is reached only after
    successful TUN startup; this core status is never Android connected state.
-5. On failure or Stop, close/join the packet stack, close the adapter transfer,
+5. On failure or Stop, retire/cancel/join management calls, then close/join the packet stack, close the adapter transfer,
    suspend routing, drain scoped UDP initialization/pumps, close DNS socket
    admission/transports and real providers/proxies, clear routing maps, then
    release the foundation lease and callback. The transfer stays open until
@@ -112,6 +117,7 @@ from using a new lease in this process after Stop.
 ## Source/build layout
 
 - `engine.go`: single running-core owner; foundation lease and transfer cleanup.
+- `management.go`: admitted queries, native delay tests and bounded tracker buffers.
 - `admit.go`, `protocol_admission.go`, `provider_admission.go`, `dns.go`: fail-closed
   capability admission and executable DNS defaults.
 - `cmd/overlay`: sixteen complete-source SHA-256 pins and unique patch anchors for
@@ -151,5 +157,4 @@ goroutine-leak proof. Root `bash build.sh android` builds the three standalone
 shared libraries (covering all modules) for all four ABIs.
 
 Remaining work: whole-process supervision/transport-actor exit proof;
-additional rejected protocol/transport certification; Phase 1.5
-statistics/latency/connection APIs; application integration.
+additional rejected protocol/transport certification; application integration.

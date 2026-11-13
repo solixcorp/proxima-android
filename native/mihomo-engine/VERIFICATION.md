@@ -1,4 +1,65 @@
-# Phase 1.4 verification on November 13, 2026
+# Phase 1.5 verification on November 13, 2026
+
+Repository-root final gates completed with exit 0:
+
+- `bash build.sh test`: all seven native modules, vet/race/shuffle, prior
+  socket/provider/DNS/protocol regressions, package-local upstream regressions,
+  existing JNI/JVM tests and new management JNI tests. Engine suite: 59.928 s.
+- `bash build.sh android`: foundation, engine and diagnostic shared libraries
+  for **arm64-v8a, armeabi-v7a, x86, x86_64**, all exit 0.
+- `git diff --check` and `bash -n native/mihomo-engine/jni-build.sh`: exit 0.
+  Branch remains `mihomo-migration`; no commit, branch switch, application edit,
+  dependency/pin change, packaged binary or checked-in build artifact.
+
+New executable evidence:
+
+- `TestManagementBeforeStart`: nil/zero sessions reject all three operations.
+- `TestManagementProcess`: six isolated/reaped children, all run under `-race`.
+  Actual trusted local HTTPS URLTest success for DIRECT, a node and a select group,
+  with 24 simultaneous calls (including the same node), protected socket callback
+  counts, actual HEAD requests and delays >= 1 ms. Invalid URLs, userinfo, unknown
+  names and invalid timeouts cannot reach the server. The real raw-TUN UDP
+  ping/pong produces exactly **4 upload / 4 download payload bytes**; actual tracker
+  rows include network, chains, rule, counters and start. Artificial writes to
+  `DefaultManager` do not contaminate these session totals, and probes do not add
+  user payload bytes. Separate children cover actual request timeout, false
+  protection (requires `session.ErrProtection` and an invoked callback), untrusted
+  TLS certificate, and HTTPS-to-HTTP redirect not followed. Stop cancels an active
+  60-second probe; concurrent getters/snapshots vs Stop remain race-free in every
+  child, and every API rejects the retired session afterward.
+- `TestManagementScopeAndBounds`: two independent managers cannot contaminate
+  each other; getter allocation count is zero; >10000 rows and an oversized
+  individual row fail explicitly without returning a partial buffer. Synthetic
+  trackers are used only for serialization bounds, not networking evidence.
+- `NativeManagementTest` in a separate JVM: before-start/retired rejection,
+  successful real engine startup, actual raw-packet UDP round trip, 4/4 byte
+  totals, owned JSON `byte[]` snapshots that survive Stop, unsafe URL/unknown name
+  rejection, and actual false-protector DelayTest failure. An emoji/Korean proxy
+  name verifies ordinary UTF-8 across JNI, not Modified UTF-8. The reused host-only
+  packet fixture is never linked into Android/production libraries.
+- `BenchmarkTrafficStats` (darwin/arm64, Apple M3, non-race): **10.19 ns/op,
+  0 B/op, 0 allocs/op**. This measures the Go getter, not JNI or Android-device
+  latency. The implementation is O(1), two upstream atomic total loads plus
+  admission/WaitGroup operations; no per-poll HTTP, connection scan or rate job.
+
+The first development check failed at compilation because `providerpolicy.URL`
+returns both parsed URL and error. Correcting the call to `_, err := ...` fixed
+that mismatch; no test was suppressed. The corrected engine-only gate and the
+subsequent complete repository gates passed.
+
+Logs (ignored): `build/phase15-all-test.log`, `build/phase15-android.log`,
+`native/mihomo-engine/build/phase15-stats-benchmark.log`,
+`native/mihomo-engine/build/phase15-engine-test-fixed.log`; initial failed check:
+`native/mihomo-engine/build/phase15-engine-test.log`.
+
+See [MANAGEMENT.md](MANAGEMENT.md) for final signatures, accounting exclusions,
+concurrency, weak snapshot consistency and bounded-buffer errors. This is not
+Android device/VpnService verification, successful interop for every proxy type,
+or a join proof for all transport-library actors. Existing one-core-per-process
+retirement and mandatory terminate/reap remain unchanged. No HTTP controller,
+Reload or application integration was added.
+
+## Historical Phase 1.4 verification on November 13, 2026
 
 Repository-root gates completed with exit 0:
 

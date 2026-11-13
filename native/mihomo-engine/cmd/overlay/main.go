@@ -132,6 +132,10 @@ func proximaRealityClientFallback(conn net.Conn, name string, fingerprint utls.C
 			text = strings.ReplaceAll(text, "go oldConn.Close() // close in a new goroutine, not blocking the current task", "_ = oldConn.Close()")
 		}
 	case "tunnel/dns_dialer.go":
+		if strings.Count(text, "statistic.DefaultManager") != 3 {
+			panic("DNS tracker manager count changed")
+		}
+		text = strings.ReplaceAll(text, "statistic.DefaultManager", "proximaStatistics()")
 		replace(`"context"`, "\"context\"\n\"io\"\n\"sync\"")
 		replace("func (d *DNSDialer) DialContext(", "func (d *DNSDialer) proximaDialContext(")
 		replace("func (d *DNSDialer) ListenPacket(", "func (d *DNSDialer) proximaListenPacket(")
@@ -161,6 +165,10 @@ defer func() {
 		replace("ruleProviders = map[string]P.RuleProvider{}", `ruleProviders = map[string]P.RuleProvider{}
  defer func(owned map[string]P.RuleProvider) { if err != nil { for _, p := range owned { if c, ok := p.(interface{ Close() error }); ok { _ = c.Close() } } } }(ruleProviders)`)
 	case "tunnel/tunnel.go":
+		if strings.Count(text, "statistic.DefaultManager") != 2 {
+			panic("packet tracker manager count changed")
+		}
+		text = strings.ReplaceAll(text, "statistic.DefaultManager", "proximaStatistics()")
 		replace("go handleUDPToLocal(writeBackProxy, pc, sender, key, oAddrPort)", "proximaPumps.Add(1)\ngo func() { defer proximaPumps.Done(); handleUDPToLocal(writeBackProxy, pc, sender, key, oAddrPort) }()")
 		replace("\t\tgo func() {\n\t\t\tpc, proxy, err := dial()", "\t\tproximaDials.Add(1)\n\t\tgo func() {\n\t\t\tdefer proximaDials.Done()\n\t\t\tpc, proxy, err := dial()")
 		replace("\t\t\tsender.Process(pc, proxy)", "\t\t\tproximaPumps.Add(1)\n\t\t\tgo func() { defer proximaPumps.Done(); sender.Process(pc, proxy) }()")
@@ -174,12 +182,21 @@ func (t proximaTunnel) HandleUDPPacket(packet C.UDPPacket, metadata *C.Metadata)
  handleUDPConn(C.NewPacketAdapter(packet, metadata))
 }
 func ProximaTunnel() C.Tunnel { return proximaTunnel{Tunnel} }
+// Bound once before any semantic parsing/networking. Never swap the upstream
+// DefaultManager or run its process-global ticker for the session counters.
+var proximaManager atomic.Pointer[statistic.Manager]
+func ProximaBindStatistics(m *statistic.Manager) error {
+ if m == nil || !proximaManager.CompareAndSwap(nil, m) { return fmt.Errorf("statistics already bound") }; return nil
+}
+func proximaStatistics() *statistic.Manager {
+ if m := proximaManager.Load(); m != nil { return m }; return statistic.DefaultManager
+}
 var proximaDials sync.WaitGroup
 var proximaPumps sync.WaitGroup
 func ProximaStopPackets() {
  // No dispatch can enter after the runtime stack's admission gate drained.
  proximaDials.Wait()
- statistic.DefaultManager.Range(func(c statistic.Tracker) bool { c.Close(); return true })
+ proximaStatistics().Range(func(c statistic.Tracker) bool { c.Close(); return true })
  proximaPumps.Wait()
 }
 `

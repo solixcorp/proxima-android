@@ -70,3 +70,60 @@ Java_kr_kimrasng_proxima_mihomo_NativeEngine_version(JNIEnv *env, jclass cls) {
     free(version);
     return result;
 }
+
+JNIEXPORT jlongArray JNICALL
+Java_kr_kimrasng_proxima_mihomo_NativeEngine_trafficStatsNative(JNIEnv *env, jclass cls, jlong handle) {
+    (void)cls;
+    long long up = 0, down = 0;
+    char *error = ProximaEngineTrafficStats((unsigned long long)handle, &up, &down);
+    if (error != NULL) { report_error(env, error); return NULL; }
+    jlong values[2] = {(jlong)up, (jlong)down};
+    jlongArray result = (*env)->NewLongArray(env, 2);
+    if (result != NULL) (*env)->SetLongArrayRegion(env, result, 0, 2, values);
+    return result;
+}
+
+JNIEXPORT jint JNICALL
+Java_kr_kimrasng_proxima_mihomo_NativeEngine_delayTestNative(JNIEnv *env, jclass cls, jlong handle,
+                                                         jbyteArray name, jbyteArray url, jint timeout) {
+    (void)cls;
+    if (name == NULL || url == NULL) {
+        throw_error(env, "java/lang/IllegalArgumentException", "proxy name and HTTPS URL are required");
+        return 0;
+    }
+    jsize ns = (*env)->GetArrayLength(env, name), us = (*env)->GetArrayLength(env, url);
+    if (ns > 8192 || us > 8192) {
+        throw_error(env, "java/lang/IllegalArgumentException", "probe name/URL exceeds 8192 UTF-8 bytes");
+        return 0;
+    }
+    // Normal UTF-8, not JNI Modified UTF-8 (proxy names may contain emoji).
+    // Never pin a JVM array while a network operation is running.
+    char *n = malloc((size_t)ns + 1), *u = malloc((size_t)us + 1);
+    if (n == NULL || u == NULL) {
+        free(n); free(u);
+        throw_error(env, "java/lang/OutOfMemoryError", "copy probe input");
+        return 0;
+    }
+    (*env)->GetByteArrayRegion(env, name, 0, ns, (jbyte *)n);
+    (*env)->GetByteArrayRegion(env, url, 0, us, (jbyte *)u);
+    n[ns] = 0; u[us] = 0;
+    if ((*env)->ExceptionCheck(env)) { free(n); free(u); return 0; }
+    int delay = 0;
+    char *error = ProximaEngineDelayTest((unsigned long long)handle, (char *)n, (char *)u, timeout, &delay);
+    free(n); free(u);
+    report_error(env, error);
+    return (jint)delay;
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_kr_kimrasng_proxima_mihomo_NativeEngine_connectionsSnapshotNative(JNIEnv *env, jclass cls, jlong handle) {
+    (void)cls;
+    void *data = NULL;
+    int size = 0;
+    char *error = ProximaEngineConnectionsSnapshot((unsigned long long)handle, &data, &size);
+    if (error != NULL) { free(data); report_error(env, error); return NULL; }
+    jbyteArray result = (*env)->NewByteArray(env, (jsize)size);
+    if (result != NULL) (*env)->SetByteArrayRegion(env, result, 0, (jsize)size, (const jbyte *)data);
+    free(data);
+    return result;
+}

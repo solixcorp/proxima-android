@@ -27,9 +27,14 @@ else
     "$java_home/bin/javac" --release 17 -d build/classes java/kr/kimrasng/proxima/mihomo/NativeEngine.java
     "$java_home/bin/jar" --create --file build/native-engine.jar -C build/classes .
     if [[ "$mode" == test ]]; then
-        "$java_home/bin/javac" --release 17 -cp build/classes -d build/test-classes tests/NativeEngineTest.java
+        "$java_home/bin/javac" --release 17 -cp build/classes -d build/test-classes tests/NativeEngineTest.java tests/NativeManagementTest.java
+        case "$platform" in darwin) shared=-dynamiclib ;; linux) shared=-shared ;; esac
+        "${CC:-cc}" "$shared" -fPIC -I"$java_home/include" -I"$java_home/include/$platform" \
+            -o "build/host/libproxima_mihomo_engine_fixture.$ext" tests/packet_fixture.c
         "$java_home/bin/java" --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED \
-            -Djava.library.path="$PWD/build/host" -cp build/classes:build/test-classes NativeEngineTest
+             -Djava.library.path="$PWD/build/host" -cp build/classes:build/test-classes NativeEngineTest
+        "$java_home/bin/java" --enable-native-access=ALL-UNNAMED \
+            -Djava.library.path="$PWD/build/host" -cp build/classes:build/test-classes NativeManagementTest
         printf 'Engine JVM JNI tests exit=0\n'
     fi
 fi
