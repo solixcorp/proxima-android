@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      GOMODCACHE: ${{ runner.temp }}/go/pkg/mod
+      GOCACHE: ${{ runner.temp }}/go-build
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: true
+          cache-dependency-path: native/**/go.sum
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: stable
+          cache: true
+      - name: Install pinned Android NDK
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'ndk;28.2.13676358'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - name: Get dependencies
+        run: flutter pub get
+      - name: Analyze
+        run: flutter analyze
+      - name: Test Flutter
+        run: flutter test
+      - name: Test Mihomo worker boundary
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/JetBrains/kotlin/releases/download/v2.2.20/kotlin-compiler-2.2.20.zip \
+            --output "$RUNNER_TEMP/kotlin-compiler.zip"
+          unzip -q "$RUNNER_TEMP/kotlin-compiler.zip" -d "$RUNNER_TEMP/kotlin-2.2.20"
+          export KOTLINC="$RUNNER_TEMP/kotlin-2.2.20/kotlinc/bin/kotlinc"
+          python3 -m unittest discover -s android/app/src/test -v
+      - name: Test all native modules
+        run: time bash build.sh test
+      # Keep native testing and Gradle sequential: both use shared staging paths.
+      - name: Assemble debug APK (four-ABI engine build)
+        working-directory: android
+        run: ./gradlew :app:assembleDebug

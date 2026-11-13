@@ -15,6 +15,10 @@ jobs:
     environment: env
     permissions:
       contents: write
+    env:
+      GOMODCACHE: ${{ runner.temp }}/go/pkg/mod
+      GOCACHE: ${{ runner.temp }}/go-build
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
 
     steps:
       - name: Checkout code
@@ -25,6 +29,18 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '17'
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: true
+          cache-dependency-path: native/**/go.sum
+
+      - name: Install pinned Android NDK
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'ndk;28.2.13676358'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -81,6 +97,14 @@ jobs:
           export KOTLINC="$RUNNER_TEMP/kotlin-2.2.20/kotlinc/bin/kotlinc"
           python3 -m unittest discover -s android/app/src/test -v
 
+      - name: Test all native modules
+        run: time bash build.sh test
+
+      # Run in this job, sequentially: standalone and Gradle builds share staging.
+      - name: Build Mihomo engine (four ABIs)
+        working-directory: android
+        run: ./gradlew :app:buildReleaseMihomo
+
       - name: Validate release credentials
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -109,6 +133,32 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Verify APK engine ABIs and size
+        env:
+          APK: build/app/outputs/flutter-apk/${{ github.event.repository.name }}-v${{ steps.release_version.outputs.BUILD_NAME }}.apk
+        run: |
+          python3 - <<'PY'
+          import os
+          import zipfile
+
+          apk = os.environ['APK']
+          expected = {'arm64-v8a', 'armeabi-v7a', 'x86_64'}
+          with zipfile.ZipFile(apk) as archive:
+              libs = [name for name in archive.namelist()
+                      if name.startswith('lib/') and name.endswith('/libproxima_mihomo_engine.so')]
+              actual = [name.split('/')[1] for name in libs]
+              print('Mihomo APK ABIs:', actual)
+              if len(actual) != len(expected) or set(actual) != expected:
+                  raise SystemExit(f'Expected exactly {sorted(expected)}')
+          size = os.path.getsize(apk)
+          # Old universal release: 173 MiB; three unstripped engines: 187 MiB.
+          # 400 MiB leaves ~40 MiB headroom; revisit after a measured CI release.
+          limit = 400 * 1024 * 1024
+          print(f'APK size: {size} bytes; limit: {limit} bytes')
+          if size > limit:
+              raise SystemExit('APK size limit exceeded')
+          PY
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

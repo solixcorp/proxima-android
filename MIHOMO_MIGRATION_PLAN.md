@@ -45,6 +45,34 @@ Kotlin discovery 4/4(경계 26·실행 10 + 설정·소스 연결 검증), JDK 2
 | 5 | 듀얼 엔진 실제 전환 | 선택된 엔진 기동·중지, 오류 복구 및 기존 Xray 회귀 검증 |
 | 6 | Xray 제거 및 출시 준비 | GPL 정책 확정, 기기 검증 완료, Xray 코드·의존성 제거 및 배포 검토 |
 
+### Phase 5 CI/릴리스 (워크플로 반영, 실제 CI 검증 대기)
+
+```text
+브랜치 push / PR → Flutter 분석·테스트 → Kotlin 호스트 테스트
+                → native 전체 race/JNI 테스트 → debug assemble (엔진 4 ABI)
+v* 태그 → 동일 호스트 게이트 → release 엔진 4 ABI → 서명 APK 빌드
+       → APK 엔진 3 ABI 및 크기 검증 → GitHub Release
+```
+
+두 경로 모두 Flutter 3.47.5, JDK 17, Go 1.27.1 및 NDK 28.2.13676358을
+사용한다. 앱의 Java 바이트코드 목표는 17이며 로컬 JDK 17 debug assemble이
+성공하여 기존 릴리스 JDK를 유지한다. 엔진 스크립트는 NDK API 23 도구를
+직접 사용하며 `-mod=readonly`로 빌드한다. 전체 7개 native 모듈의 race·JNI
+게이트는 경계 회귀를 놓치지 않도록 릴리스에서도 축소하지 않는다. CI 시간은
+첫 실행 후 확인한다. 테스트와 Gradle은 공유 스테이징 충돌을 피하도록 직렬이다.
+setup-go는 모든 native go.sum을 키로 모듈 및 컴파일 캐시를 재사용한다. 경로가
+포함된 임시 overlay와 Gradle 입력·출력 정합성 문제 때문에 native build 디렉터리
+자체는 캐시하지 않는다. `**/build/`는 Git에서 제외되며 CI에서 APK 등 별도
+아티팩트 업로드는 하지 않고 기존 태그 릴리스만 배포한다.
+
+릴리스 엔진 빌드는 x86을 포함한 4 ABI지만 Flutter 패키징은 x86을 제외한다.
+APK 검사에서 `arm64-v8a`, `armeabi-v7a`, `x86_64`의 엔진 라이브러리만 각각
+하나씩 요구한다. 크기 상한은 400 MiB (419,430,400 bytes): 기존 로컬 엔진
+미포함 universal release 181,042,118 bytes (약 173 MiB)에 엔진 3개 ABI의
+미압축 합 약 187 MiB를 보수적으로 더하고 약 40 MiB 여유를 둔 임시 값이다.
+서명·strip/압축·의존성에 따라 달라지므로 첫 CI 릴리스 실측 후 재조정한다.
+이는 기기 동작 또는 GPL 배포 승인을 의미하지 않는다.
+
 ## 리스크
 
 | 위험 | 대응 |
