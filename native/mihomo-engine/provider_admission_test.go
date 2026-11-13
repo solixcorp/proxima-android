@@ -23,7 +23,7 @@ func TestProviderAdmissionBoundary(t *testing.T) {
 		{"proxy-providers: {p: {type: file, path: cache, interval: -1}}", false},
 		{"proxy-providers: {p: {type: file, path: cache, health-check: {enable: true, url: 'http://example.test'}}}", false},
 		{"rule-providers: {r: {type: file, path: rules, behavior: classical}}", false},
-		{"proxies: []", false}, {"proxy-groups: []", false},
+		{"proxies: []", true}, {"proxy-groups: []", true},
 	} {
 		t.Run(tc.yaml, func(t *testing.T) {
 			source := []byte(minimal + tc.yaml + "\n")
@@ -46,7 +46,7 @@ func TestProviderAdmissionBoundary(t *testing.T) {
 		}
 	}
 	for _, proxy := range []map[string]any{
-		{"name": "p", "type": "tailscale"}, {"name": "p", "type": "wireguard"},
+		{"name": "p", "type": "tailscale"}, {"name": "p", "type": "wireguard", "remote-dns-resolve": true},
 		{"name": "p", "type": "http", "skip-cert-verify": true},
 		{"name": "p", "type": "socks5", "dialer-proxy": "p"},
 	} {

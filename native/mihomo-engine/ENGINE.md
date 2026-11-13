@@ -1,8 +1,10 @@
-# Phase 1.3 executable engine contract
+# Phase 1.4 executable engine contract
 
 DNS admission, defaults, upstream security and lifetime: see [DNS.md](DNS.md).
 Provider admission, trusted root, update errors and joined ownership:
 see [PROVIDERS.md](PROVIDERS.md).
+Protocol socket evidence, option limits, rejected transports and overlays:
+see [DIALERS.md](DIALERS.md).
 
 ## Public API
 
@@ -47,20 +49,24 @@ tun:
 rules: ['MATCH,DIRECT']
 ```
 
-Mode, IPv6 and log level are also configurable. Rules support MATCH, IP-CIDR,
-IP-CIDR6, SRC-IP-CIDR, DST-PORT, SRC-PORT and NETWORK, with actual semantic
-validation and built-in DIRECT/REJECT targets. Imported fd numbers, arbitrary
-proxies/groups, geodata, custom hosts, advanced DNS policies, persistence,
+Mode, IPv6 and log level are also configurable. Rules additionally support
+DOMAIN, DOMAIN-SUFFIX, DOMAIN-KEYWORD, DOMAIN-REGEX, DOMAIN-WILDCARD and RULE-SET
+(declared domain/ipcidr providers, including MRS), alongside MATCH, IP-CIDR,
+IP-CIDR6, SRC-IP-CIDR, DST-PORT, SRC-PORT and NETWORK. Native semantic validation
+and actual proxy/group or built-in DIRECT/REJECT targets are retained.
+Imported fd numbers, unaudited proxy/group types/options, geodata, custom hosts,
+advanced DNS policies, persistence,
 extra listeners/controllers, NTP, updater and platform routing options fail
 explicitly **before semantic parsing**. Unknown top-level fields are rejected,
 not silently ignored. Snapshot Decode still preserves arbitrary raw YAML.
 
-Providers now have a separately reviewed admission, I/O and shutdown path; only
-passive direct/http/socks5 payload constructors are admitted until Phase 1.4.
-This admission boundary is necessary because factories can create resources
-before returning parse errors, while custom-dialer auditing remains a later
-phase. Do not present this as arbitrary profile
-support. Inert upstream batch/gvisor defaults are accepted but never applied to
+Top-level proxies and provider payloads now share an audited option-limited
+policy: direct, reject, http, socks5, ss, ssr, vmess, vless (including REALITY),
+trojan, snell (no reuse/v2), hysteria (UDP), hysteria2, tuic, wireguard (single
+endpoint/mips), ssh (host-key pins), anytls and mieru. Groups admit select,
+url-test, fallback and load-balance with explicit proxies/use references and
+HTTPS health URLs. See DIALERS.md and protocol_admission.go for exact limits;
+this is not arbitrary profile support. Inert upstream batch/gvisor defaults are accepted but never applied to
 the raw os.File mips path; non-default requests are rejected. Redir-host DNS now
 works through the synthetic address in the host gate. This is still not an
 integrated replacement for the existing Android engine/service.
@@ -106,11 +112,14 @@ from using a new lease in this process after Stop.
 ## Source/build layout
 
 - `engine.go`: single running-core owner; foundation lease and transfer cleanup.
-- `admit.go`, `dns.go`: fail-closed capability admission and executable DNS defaults.
-- `cmd/overlay`: fourteen complete-source SHA-256 pins and unique patch anchors for
+- `admit.go`, `protocol_admission.go`, `provider_admission.go`, `dns.go`: fail-closed
+  capability admission and executable DNS defaults.
+- `cmd/overlay`: sixteen complete-source SHA-256 pins and unique patch anchors for
   parser rollback, error-returning executor/listener, raw sing_tun.New and joined
   packet/provider/health-check/resolver worker instrumentation, scoped DNS sockets
-  and DoH redirect denial.
+   and DoH redirect denial. Phase 1.4 also suppresses REALITY's unauthenticated
+   background HTTP fallback, drains group failure/health tasks and closes
+   partially parsed top-level/provider proxies.
   Legacy void APIs remain unchanged and unused.
 - `cmd/compose`: conflict-free provider/network/engine overlay composition plus
   separately pinned sing-tun packet-loop composition.
@@ -142,5 +151,5 @@ goroutine-leak proof. Root `bash build.sh android` builds the three standalone
 shared libraries (covering all modules) for all four ABIs.
 
 Remaining work: whole-process supervision/transport-actor exit proof;
-Phase 1.4 full custom-dialer/protocol audit and broader providers; Phase 1.5
+additional rejected protocol/transport certification; Phase 1.5
 statistics/latency/connection APIs; application integration.

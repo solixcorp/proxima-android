@@ -12,20 +12,22 @@ import (
 )
 
 var pins = map[string]string{
-	"hub/executor/executor.go":        "183595fd58704d60d2137463e751938c1a02a23b57ef1d977b647e3640b64849",
-	"listener/listener.go":            "1a11cda3fb4a87875d817fe29f1e79973cb8cb6eeccc0ae5e22db15df1277758",
-	"listener/config/tun.go":          "4428cefc29ecabc08ea01fe5d0b6c107e6b383b95f07aad7d4f7f6dcb5116fe1",
-	"listener/sing_tun/server.go":     "6aec285afd721a40a859dac8b6539c1c481d2c53c7ca33eb10e2f40eb992e7a1",
-	"tunnel/tunnel.go":                "bd0818dddd04779aad3f078819b3ca050bd8bdce29ba57e5a377770539278596",
-	"config/config.go":                "14d577a607eb5fff79513057bc16052520b62731d9af9817481f3baf980e8653",
-	"tunnel/dns_dialer.go":            "1324413474edc70c52510cb44576ae084f3f7875e5ecf4b34ddbfce97f6a0003",
-	"dns/doh.go":                      "978559eb93b791a4269c1993c866322b2851f20e75657b246dc6dd63cc9f0073",
-	"adapter/provider/provider.go":    "69cb24313f68cc457c5f4e45ecab0d1355c1f5d22e3e2ec0559a7d753ee1672f",
-	"adapter/provider/healthcheck.go": "b3108ef1530c2bb28ff75928c64dc7150e68e2bb38f4f82e110ebdaff1801c64",
-	"dns/resolver.go":                 "400765c7dde15950c324ab8fce1a7dc1d7730b3c7f3bff6a85fd64e4238e2b48",
-	"dns/util.go":                     "24831a2b5e10fe3b8d074d537a1512025adc298968b3afa6bdef0ac3e10bae6e",
-	"dns/client.go":                   "b11cea570b82d782aa222a1fa994a91534aa845e340ffac0cc55b3fce7fad9c6",
-	"dns/dot.go":                      "0c018bc055d511c0e87dfdc36c64cc4a1dcd88b6f07251a37864820749a62049",
+	"hub/executor/executor.go":           "183595fd58704d60d2137463e751938c1a02a23b57ef1d977b647e3640b64849",
+	"listener/listener.go":               "1a11cda3fb4a87875d817fe29f1e79973cb8cb6eeccc0ae5e22db15df1277758",
+	"listener/config/tun.go":             "4428cefc29ecabc08ea01fe5d0b6c107e6b383b95f07aad7d4f7f6dcb5116fe1",
+	"listener/sing_tun/server.go":        "6aec285afd721a40a859dac8b6539c1c481d2c53c7ca33eb10e2f40eb992e7a1",
+	"tunnel/tunnel.go":                   "bd0818dddd04779aad3f078819b3ca050bd8bdce29ba57e5a377770539278596",
+	"config/config.go":                   "14d577a607eb5fff79513057bc16052520b62731d9af9817481f3baf980e8653",
+	"tunnel/dns_dialer.go":               "1324413474edc70c52510cb44576ae084f3f7875e5ecf4b34ddbfce97f6a0003",
+	"dns/doh.go":                         "978559eb93b791a4269c1993c866322b2851f20e75657b246dc6dd63cc9f0073",
+	"adapter/provider/provider.go":       "69cb24313f68cc457c5f4e45ecab0d1355c1f5d22e3e2ec0559a7d753ee1672f",
+	"adapter/provider/healthcheck.go":    "b3108ef1530c2bb28ff75928c64dc7150e68e2bb38f4f82e110ebdaff1801c64",
+	"dns/resolver.go":                    "400765c7dde15950c324ab8fce1a7dc1d7730b3c7f3bff6a85fd64e4238e2b48",
+	"dns/util.go":                        "24831a2b5e10fe3b8d074d537a1512025adc298968b3afa6bdef0ac3e10bae6e",
+	"dns/client.go":                      "b11cea570b82d782aa222a1fa994a91534aa845e340ffac0cc55b3fce7fad9c6",
+	"dns/dot.go":                         "0c018bc055d511c0e87dfdc36c64cc4a1dcd88b6f07251a37864820749a62049",
+	"component/tls/reality.go":           "6f3b5771104b79fb9c244192ac7ecc4d11a4603de0444899e703d88359f018d8",
+	"adapter/outboundgroup/groupbase.go": "4f073f75e1deaff8468458adecaaf674e720200f5c056967e5ee7f9dee25fc38",
 }
 
 func patch(path string, source []byte) ([]byte, error) {
@@ -40,13 +42,56 @@ func patch(path string, source []byte) ([]byte, error) {
 		text = strings.Replace(text, old, next, 1)
 	}
 	switch path {
+	case "adapter/outboundgroup/groupbase.go":
+		replace(`"sync"`, `"sync"
+syncatomic "sync/atomic"`)
+		replace("type GroupBase struct {", "type GroupBase struct {\n proximaMu sync.Mutex\n proximaStopped bool\n proximaWorkers sync.WaitGroup")
+		replace("failedTimes       int", "failedTimes       syncatomic.Int64")
+		text = strings.ReplaceAll(text, "gb.failedTimes = 0", "gb.failedTimes.Store(0)")
+		replace("gb.failedTimes++", "gb.failedTimes.Add(1)")
+		replace("gb.failedTimes == 1", "gb.failedTimes.Load() == 1")
+		replace("gb.Name(), gb.failedTimes)", "gb.Name(), gb.failedTimes.Load())")
+		replace("gb.failedTimes >= gb.maxFailedTimes", "gb.failedTimes.Load() >= int64(gb.maxFailedTimes)")
+		replace("go func() {\n\t\tif strings.Contains(err.Error()", "gb.proximaGo(func() {\n\t\tif strings.Contains(err.Error()")
+		replace("\t}()\n}\n\nfunc (gb *GroupBase) healthCheck()", "\t})\n}\n\nfunc (gb *GroupBase) healthCheck()")
+		text += `
+var proximaGroupWorkers syncatomic.Int64
+func ProximaGroupWorkers() int64 { return proximaGroupWorkers.Load() }
+func (gb *GroupBase) proximaGo(fn func()) {
+ gb.proximaMu.Lock()
+ defer gb.proximaMu.Unlock()
+ if gb.proximaStopped { return }
+ gb.proximaWorkers.Add(1)
+ proximaGroupWorkers.Add(1)
+ go func(){ defer gb.proximaWorkers.Done(); defer proximaGroupWorkers.Add(-1); fn() }()
+}
+func (gb *GroupBase) Close() error {
+ gb.proximaMu.Lock(); gb.proximaStopped = true; gb.proximaMu.Unlock()
+ gb.proximaWorkers.Wait()
+ return nil
+}
+`
+	case "component/tls/reality.go":
+		replace(`"github.com/metacubex/mihomo/log"`, `"github.com/metacubex/mihomo/log"
+"github.com/metacubex/mihomo/component/dialer"`)
+		// No unowned camouflage HTTP worker in a protected session. In particular
+		// HTTPS->HTTP redirects must never select net/http's default dialer.
+		replace("go realityClientFallback(uConn, uConfig.ServerName, fingerprint)", "proximaRealityClientFallback(uConn, uConfig.ServerName, fingerprint)")
+		text += `
+func proximaRealityClientFallback(conn net.Conn, name string, fingerprint utls.ClientHelloID) {
+ if dialer.DefaultSocketHook != nil { _ = conn.Close(); return }
+ go realityClientFallback(conn, name, fingerprint)
+}
+`
 	case "adapter/provider/provider.go":
+		replace("return func(buf []byte) ([]C.Proxy, error) {", "return func(buf []byte) (result []C.Proxy, resultErr error) {")
+		replace("proxies := []C.Proxy{}", "proxies := []C.Proxy{}\ndefer func(){ if resultErr != nil { for _, p := range proxies { _ = p.Close() } } }()")
 		replace("go bp.healthCheck.process()", "bp.healthCheck.proximaGo(bp.healthCheck.process)")
 		replace("go bp.healthCheck.check()", "bp.healthCheck.proximaGo(bp.healthCheck.check)")
 		replace("bp.proxies = proxies", "old := bp.proxies\nbp.proxies = proxies\ndefer func(){ for _, p := range old { _ = p.Close() } }()")
 		replace("bp.healthCheck.close()\n\treturn nil", "bp.healthCheck.close()\nfor _, p := range bp.Proxies() { _ = p.Close() }\n\treturn nil")
 		replace("_ = pp.baseProvider.Close()\n\treturn pp.Fetcher.Close()", "pp.Fetcher.ProximaCancel()\npp.healthCheck.close()\nerr := pp.Fetcher.Close()\n_ = pp.baseProvider.Close()\nreturn err")
-		replace("proxy, err := adapter.ParseProxy(mapping,", "if ProximaProxyPolicy != nil { if err := ProximaProxyPolicy(mapping); err != nil { for _, p := range proxies { _ = p.Close() }; return nil, err } }\nproxy, err := adapter.ParseProxy(mapping,")
+		replace("proxy, err := adapter.ParseProxy(mapping,", "if ProximaProxyPolicy != nil { if err := ProximaProxyPolicy(mapping); err != nil { return nil, err } }\nproxy, err := adapter.ParseProxy(mapping,")
 		text += "\n// Installed once before semantic parsing by the single-session owner.\nvar ProximaProxyPolicy func(map[string]any) error\n"
 	case "adapter/provider/healthcheck.go":
 		replace("\"sync\"", "\"sync\"\nsyncatomic \"sync/atomic\"")
@@ -110,7 +155,9 @@ defer func() {
  }
 }()`)
 		replace("providersMap = make(map[string]P.ProxyProvider)", `providersMap = make(map[string]P.ProxyProvider)
- defer func(owned map[string]P.ProxyProvider) { if err != nil { for _, p := range owned { if c, ok := p.(interface{ Close() error }); ok { _ = c.Close() } } } }(providersMap)`)
+  defer func(owned map[string]P.ProxyProvider) { if err != nil { for _, p := range owned { if c, ok := p.(interface{ Close() error }); ok { _ = c.Close() } } } }(providersMap)`)
+		replace("proxies = make(map[string]C.Proxy)", `proxies = make(map[string]C.Proxy)
+ defer func(owned map[string]C.Proxy) { if err != nil { for _, p := range owned { _ = p.Close() } } }(proxies)`)
 		replace("ruleProviders = map[string]P.RuleProvider{}", `ruleProviders = map[string]P.RuleProvider{}
  defer func(owned map[string]P.RuleProvider) { if err != nil { for _, p := range owned { if c, ok := p.(interface{ Close() error }); ok { _ = c.Close() } } } }(ruleProviders)`)
 	case "tunnel/tunnel.go":

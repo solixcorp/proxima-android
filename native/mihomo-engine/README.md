@@ -1,9 +1,11 @@
 # Mihomo engine adapter and configuration building blocks
 
-This module now contains the standalone Phase 1.2 Go/JNI Start/Stop/Version
+This module now contains the standalone Phase 1.4 Go/JNI Start/Stop/Version
 adapter. **Read [ENGINE.md](ENGINE.md) for its executable capability subset,
 descriptor ownership, one-session process boundary and verification.** It is not
 integrated into the Android application and never publishes connected state.
+The socket/protocol audit and exact expanded routing subset are in
+[DIALERS.md](DIALERS.md); unknown transports and options remain fail-closed.
 
 The independent snapshot/provider-stage APIs documented below are still only
 building blocks. A successful raw decode is **syntactic/typed decoding with

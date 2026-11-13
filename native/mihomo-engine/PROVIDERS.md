@@ -18,22 +18,27 @@ Allowed common keys: `type`, `path`, `url`, `interval`, `size-limit`, `header`,
 accept `behavior` (`domain`/`ipcidr`) and `format` (`yaml`/`text`/`mrs`). Unknown
 keys, negative/oversized intervals, raw absolute paths, traversal, custom proxy
 selection, overrides and certificate-verification bypasses are rejected.
-Classical rule providers await the geodata/protocol audit in Phase 1.4.
+Classical rule providers remain rejected: their nested geodata/resource graph
+has no reviewed resource capability.
 
-Top-level `proxies`/`proxy-groups`, arbitrary rules and provider references in
-routing remain unsupported. Phase 1.1's explicit built-in-target rule subset is
-unchanged. Imported proxy names are not inserted into the engine's proxy map or
-implicit GLOBAL group. Provider loading is not provider routing support.
+Phase 1.4 adds option-limited top-level `proxies`, select/url-test/fallback/
+load-balance groups, group `use` references and RULE-SET routing (including MRS).
+Provider proxies are selected through group `use`, not inserted as standalone
+names into the engine's top-level proxy map or implicit GLOBAL group.
+See [DIALERS.md](DIALERS.md) for the exact routing and protocol subset.
 
 **Unused does not mean safe to construct:** some upstream proxy constructors
 create autonomous networking workers. The real upstream provider parser therefore
 calls a process-once adapter policy immediately before each outbound constructor,
-after decryption/conversion/overrides. Phase 1.3 admits only passive `direct`,
-`http`, and `socks5` definitions, with explicit option allowlists. These constructors
-do not perform I/O or start workers. TLS verification cannot be disabled; custom
-dialers, certificates loaded from files, smux, protocol workers, etc. are not
-admitted. Health checks can use these real proxies, through native protected
-dialers. Broader protocol acceptance is deliberately not inferred from non-use.
+after decryption/conversion/overrides, including every refresh. Phase 1.4 applies
+the same `admitProxy` policy to payloads and top-level proxies; it admits only
+reviewed options for the protocols listed in DIALERS.md. Constructors are lazy
+with respect to networking (AnyTLS does start an idle-cleanup timer); adapter
+Close and partial-parse cleanup now own these resources. TLS verification cannot
+be disabled; imported custom dialers, file certificates/private keys (SSH permits
+inline PEM), smux, discovery/realm and unaudited protocol workers remain rejected.
+Health checks use real proxies and protected native sockets. Broader acceptance
+is never inferred from non-use.
 
 ## Actual upstream I/O
 
@@ -96,8 +101,9 @@ Caller deadlines in tests are failure detectors, not production join deadlines.
    and their actual URLTest calls, then join fetch operations, update timers and
    file polling. Fetcher owner-driven operations are serialized with polling;
    queued admitted updates are drained. Health checks cannot restart after Close.
-   Close current/replaced passive proxies and clear routing maps. Updater, NTP,
-   platform watchers and arbitrary protocol workers are **not started** by this
+   Close current/replaced admitted proxies and group failure/health tasks, then
+   clear routing maps. Updater, NTP,
+   platform watchers and arbitrary unaudited protocol workers are **not started** by this
    admitted executor path; their configuration remains rejected.
 4. Close metadata database/root, then release the foundation lease and attached
    JNI callback. Callback-release failure retains the cleanup handle for retry.

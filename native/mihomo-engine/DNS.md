@@ -70,8 +70,8 @@ for every library-internal HTTP/QUIC actor: process retirement and
 termination/reaping remain mandatory, as in Phase 1.1. See [PROVIDERS.md](PROVIDERS.md).
 No Android
 worker supervisor or application integration is included. DNS remains direct
-(protected but outside the VPN), not arbitrary proxy-routed DNS. Full protocol
-and custom-dialer auditing is still Phase 1.4.
+(protected but outside the VPN), not arbitrary proxy-routed DNS. Protocol and
+custom-dialer auditing is documented in [DIALERS.md](DIALERS.md).
 
 ## Host verification
 

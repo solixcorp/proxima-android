@@ -18,6 +18,7 @@ var topLevel = map[string]bool{
 	"mode": true, "ipv6": true, "log-level": true, "rules": true, "tun": true,
 	"find-process-mode": true, "dns": true, "profile": true,
 	"proxy-providers": true, "rule-providers": true,
+	"proxies": true, "proxy-groups": true,
 }
 
 var nestedKeys = map[string]map[string]bool{
@@ -68,6 +69,9 @@ func admit(source []byte, raw *config.RawConfig) error {
 	if err := admitProviders(raw); err != nil {
 		return err
 	}
+	if err := admitRouting(raw); err != nil {
+		return err
+	}
 	defaults := config.DefaultRawConfig()
 	if raw.Profile.StoreFakeIP || raw.Profile.StoreSelected {
 		return fmt.Errorf("profile persistence not implemented")
@@ -92,14 +96,6 @@ func admit(source []byte, raw *config.RawConfig) error {
 	}
 	if !reflect.DeepEqual(raw.Tun, allowedTun) {
 		return fmt.Errorf("TUN routing/device/DNS options not implemented for an app-owned raw fd")
-	}
-	for _, rule := range raw.Rule {
-		kind, _, _ := strings.Cut(rule, ",")
-		switch strings.ToUpper(strings.TrimSpace(kind)) {
-		case "MATCH", "IP-CIDR", "IP-CIDR6", "SRC-IP-CIDR", "DST-PORT", "SRC-PORT", "NETWORK":
-		default:
-			return fmt.Errorf("rule %q requires an unimplemented geodata/DNS/process lifecycle", kind)
-		}
 	}
 	return nil
 }

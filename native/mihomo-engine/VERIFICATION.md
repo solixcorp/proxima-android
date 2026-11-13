@@ -1,4 +1,58 @@
-# Phase 1.3 verification on November 13, 2026
+# Phase 1.4 verification on November 13, 2026
+
+Repository-root gates completed with exit 0:
+
+- `bash build.sh test`: all seven native modules, vet/race/shuffle, existing
+  JNI/JVM and diagnostic regressions, plus actual upstream package-local tests.
+- `bash build.sh android`: foundation, engine and diagnostic shared libraries
+  for arm64-v8a, armeabi-v7a, x86 and x86_64 (no application packaging).
+- `git diff --check`: exit 0. Branch stays `mihomo-migration`; no commit, branch
+  switch, app source change, upstream lock change or checked-in native binary.
+
+New executable evidence:
+
+- `TestProtocolAdmission`: 18 real constructors (17 admitted types, both Mieru
+  outer transports), same policy for providers/top-level definitions, no
+  constructor network call, option and independent-stack rejection boundaries.
+- `TestProtocolSocketRefusal`: 54 actual adapter TCP/UDP cases. Requires the real
+  protection error and a callback count increase, with descriptors observed
+  before bind/connect. Includes Hysteria/Hysteria2/TUIC/ShadowQUIC, Mieru TCP/UDP,
+  WS/gRPC/TFO, TUIC v4 early/v5 normal, VLESS+REALITY. ShadowQUIC remains rejected
+  by engine admission: this proves its inspected UDP edge, not complete lifetime.
+- `TestWireGuardOuterSocketRefusal`: real sing-wireguard ClientBind Send with
+  connected and packet-listener modes; both fail through the permanent hook.
+- `TestRoutingAdmission`: native domain/IP/rule-set subset and fail-closed
+  geodata/process/logical rules, group options, unsafe health URLs and names.
+- `TestEngineRoutingProcess`: seven isolated/reaped children. Real raw-IP/UDP
+  round trips through select/url-test/fallback/load-balance; MRS rule-set to a
+  group using a proxy provider with MATCH,REJECT fallback; actual domain matchers;
+  pending group HTTPS health Stop; partially constructed AnyTLS parse rollback.
+  Group worker counters are checked **inside** protector Close, not only later.
+- `TestProximaRealityFailureClosesWithoutBackgroundHTTP`: executes the actual
+  patched package-local authentication-failure seam; protected mode closes the
+  supplied conn synchronously instead of creating an HTTP fallback worker.
+- `TestProximaGroupCloseDrainsAndDeniesFailureWorkers`: deterministic synctest
+  for task admission/drain; `TestProximaGroupFailureCounterConcurrentSuccess`
+  exercises the upstream counter race with the atomic fix under the race detector.
+- `TestEveryPatchRequiresThePinnedCompleteSource`: all 16 engine source pins,
+  including REALITY/group patches, reject changed and already-patched source.
+
+Development failures were not suppressed: the first MRS fixture incorrectly put
+`payload` on one line (the native line-oriented converter rejected it); after
+fixing that fixture the provider-routing child exposed the test harness's
+prebound provider root. Routing children now let Start own the root, just like
+the existing provider children. The corrected full gates passed; production
+root immutability and the MRS parser were not weakened.
+
+Logs (ignored): `build/phase14-all-test-final.log`, `build/phase14-android.log`;
+earlier evidence/failures: `build/phase14-all-test.log`,
+`native/mihomo-engine/build/phase14-protocol.log`, `phase14-routing.log`.
+These are host/socket and compilation results, not authenticated interop for
+every admitted transport, Android VpnService/device verification, or a complete
+library-actor join proof. Worker termination/reaping remains mandatory.
+See [DIALERS.md](DIALERS.md) for per-type code evidence and remaining risks.
+
+## Historical Phase 1.3 verification on November 13, 2026
 
 Final repository-root gates completed with exit 0:
 

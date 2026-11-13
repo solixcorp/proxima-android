@@ -35,6 +35,11 @@ MIHOMO_ENGINE_PACKET_OVERLAY="$root/build/packet/overlay.json" go run -mod=reado
 export GOFLAGS="-mod=readonly -modfile=$PWD/build/engine.mod -overlay=$PWD/build/overlay.json"
 export MIHOMO_ENGINE_TEST_SOURCE="$stage"
 if [[ "$mode" == test ]]; then
+    # Package-local regressions execute the actual checksum-gated seams, without
+    # exporting test entry points from the production core.
+    chmod u+w "$stage/component/tls" "$stage/adapter/outboundgroup"
+    cp testdata/upstream/proxima_reality_test.go "$stage/component/tls/"
+    cp testdata/upstream/proxima_group_test.go "$stage/adapter/outboundgroup/"
     case "$(uname -s)" in
         Darwin) java_home="${JAVA_HOME:-$(/usr/libexec/java_home)}"; platform=darwin ;;
         Linux) java_home="${JAVA_HOME:?Set JAVA_HOME}"; platform=linux ;;
@@ -43,6 +48,7 @@ if [[ "$mode" == test ]]; then
     export CGO_CFLAGS="-I$java_home/include -I$java_home/include/$platform -Werror=incompatible-pointer-types"
     go vet ./...
     go test -race -shuffle=on -count=1 -timeout=90s -v ./...
+    go test -race -shuffle=on -count=1 -timeout=60s -v github.com/metacubex/mihomo/component/tls github.com/metacubex/mihomo/adapter/outboundgroup -run '^TestProxima'
     printf 'Engine raw decoder and real provider stages: vet and race tests exit=0\n'
 elif [[ "$mode" == cross ]]; then
     GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build .

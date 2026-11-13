@@ -9,7 +9,7 @@ import (
 	"proxima.local/mihomo-provider/boundary"
 )
 
-// Provider definitions are admitted, not referenced by routing yet. Unknown
+// Provider definitions and their routing references share the protocol policy. Unknown
 // options fail closed rather than relying on upstream's weakly typed decoder.
 func admitProviders(raw *config.RawConfig) error {
 	for _, section := range []struct {
@@ -63,7 +63,7 @@ func admitProviders(raw *config.RawConfig) error {
 			if section.name == "rule-providers" {
 				behavior, _ := mapping["behavior"].(string)
 				if behavior != "domain" && behavior != "ipcidr" {
-					return fail("only domain/ipcidr behavior admitted before Phase 1.4")
+					return fail("only domain/ipcidr behavior admitted; classical geodata/resource paths are not audited")
 				}
 				if format, ok := mapping["format"]; ok && format != "yaml" && format != "text" && format != "mrs" {
 					return fail("unsupported format")
@@ -103,24 +103,7 @@ func admitProviders(raw *config.RawConfig) error {
 }
 
 // Called by the real upstream provider parser AFTER decryption/conversion and
-// overrides, BEFORE any outbound constructor. These constructors have no workers
-// or external I/O; custom-dialer protocols remain a Phase 1.4 capability.
+// overrides, BEFORE any outbound constructor (also on every refresh).
 func passiveProviderProxy(mapping map[string]any) error {
-	kind, _ := mapping["type"].(string)
-	keys := "name type"
-	switch kind {
-	case "direct":
-	case "http":
-		keys += " server port username password tls sni headers"
-	case "socks5":
-		keys += " server port username password tls sni udp"
-	default:
-		return fmt.Errorf("provider proxy type %q requires Phase 1.4 constructor/network audit", kind)
-	}
-	for key := range mapping {
-		if !strings.Contains(" "+keys+" ", " "+key+" ") {
-			return fmt.Errorf("provider proxy option %q not admitted", key)
-		}
-	}
-	return nil
+	return admitProxy(mapping)
 }

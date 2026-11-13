@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/metacubex/mihomo/adapter/outboundgroup"
 	proxyprovider "github.com/metacubex/mihomo/adapter/provider"
 	"github.com/metacubex/mihomo/component/ca"
 	"github.com/metacubex/mihomo/component/resource"
@@ -46,6 +47,9 @@ type providerProtector struct{ dnsProtector }
 
 func (p *providerProtector) Close() error {
 	// A release callback must never run before every owned worker group drained.
+	if n := outboundgroup.ProximaGroupWorkers(); n != 0 {
+		p.t.Errorf("release before group join: %d", n)
+	}
 	if n := resource.ProximaActiveWorkers(); n != 0 {
 		p.t.Errorf("release before provider join: %d", n)
 	}
