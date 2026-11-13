@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+mode="${1:-test}"
+case "$mode" in prepare|test|cross) ;; *) exit 2 ;; esac
+export GOTOOLCHAIN=local
+[[ "$(go env GOVERSION)" == go1.27.1 ]] || { echo 'Go 1.27.1 required' >&2; exit 1; }
+export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/cert.pem}"
+export GOMODCACHE="${GOMODCACHE:-$PWD/build/go-mod}"
+export GOCACHE="${GOCACHE:-$PWD/build/go-cache}"
+mkdir -p build
+if [[ ! -f build/go.mod ]]; then
+    (cd build && go mod init proxima.local/mihomo-engine-build)
+fi
+go mod download
+go mod verify
+source="$(go list -m -f '{{.Dir}}' github.com/metacubex/mihomo)"
+[[ "$(go list -m -f '{{.Sum}}' github.com/metacubex/mihomo)" == 'h1:hwqYMItk3Jaeq8Sw2PBAtyHQh157ccUtWS7rXrBOMCU=' ]] || exit 1
+tfo="$(go list -m -f '{{.Dir}}' github.com/metacubex/tfo-go)"
+# Both independent generators see this exact immutable, checksum-verified copy.
+stage="$(mktemp -d "$PWD/build/upstream.XXXXXX")"
+cp -R "$source/." "$stage/"
+cp go.mod build/engine.mod
+cp go.sum build/engine.sum
+go mod edit -modfile=build/engine.mod -replace="github.com/metacubex/mihomo=$stage"
+# Run generators from their own modules, without changing their sources/builds.
+root="$PWD"
+(cd ../mihomo-provider && go run -mod=readonly ./cmd/overlay "$stage" "$root/build/provider")
+(cd ../mihomo-network && go run -mod=readonly ./cmd/overlay "$stage" "$tfo" "$root/build/network")
+go run -mod=readonly ./cmd/compose "$stage" "$PWD/build/overlay.json" "$PWD/build/provider/overlay.json" "$PWD/build/network/overlay.json"
+export GOFLAGS="-mod=readonly -modfile=$PWD/build/engine.mod -overlay=$PWD/build/overlay.json"
+export MIHOMO_ENGINE_TEST_SOURCE="$stage"
+if [[ "$mode" == test ]]; then
+    go vet ./...
+    go test -race -shuffle=on -count=1 -timeout=60s -v ./...
+    printf 'Engine raw decoder and real provider stages: vet and race tests exit=0\n'
+elif [[ "$mode" == cross ]]; then
+    GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build ./...
+    printf 'Engine Android arm64 package compilation exit=0\n'
+fi

@@ -50,6 +50,10 @@
                 android:value="Routes user-selected traffic through an on-device Xray VPN tunnel" />
         </service>
         <service
+            android:name=".MihomoWorkerService"
+            android:exported="false"
+            android:process=":mihomo" />
+        <service
             android:name=".ProximaTileService"
             android:exported="true"
             android:icon="@drawable/ic_stat_proxima"
