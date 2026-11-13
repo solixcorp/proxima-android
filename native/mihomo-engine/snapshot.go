@@ -1,5 +1,5 @@
-// Package engine provides raw configuration decoding and a provider initialization
-// stage. Neither operation starts an executor, a TUN, or a VPN.
+// Package engine provides a standalone, error-returning Mihomo core adapter,
+// raw configuration snapshots and a separate provider-initialization stage.
 package engine
 
 import (

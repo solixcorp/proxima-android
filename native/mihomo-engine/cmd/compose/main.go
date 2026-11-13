@@ -116,6 +116,9 @@ func main() {
 		os.Exit(2)
 	}
 	data, err := compose(os.Args[1], os.Args[3:])
+	if err == nil && os.Getenv("MIHOMO_ENGINE_PACKET_OVERLAY") != "" {
+		data, err = addPacketOverlay(data, os.Getenv("MIHOMO_ENGINE_PACKET_OVERLAY"))
+	}
 	if err == nil {
 		err = os.WriteFile(os.Args[2], data, 0o600)
 	}
@@ -124,4 +127,46 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("Verified parser/executor checksums and composed non-conflicting overlays")
+}
+
+// The packet generator stages exactly one sing-tun module. Do not relax the
+// Mihomo-root restriction for arbitrary dependencies when composing that seam.
+func addPacketOverlay(base []byte, path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var packet uniqueObject[uniqueObject[string]]
+	if err := json.Unmarshal(data, &packet); err != nil {
+		return nil, err
+	}
+	root := filepath.Join(filepath.Dir(path), "sing-tun")
+	original := filepath.Join(root, "stack_mipstack.go")
+	if len(packet) != 1 || len(packet["Replace"]) != 1 || packet["Replace"][original] == "" {
+		return nil, fmt.Errorf("unexpected packet overlay")
+	}
+	source, err := os.ReadFile(original)
+	if err != nil {
+		return nil, err
+	}
+	if fmt.Sprintf("%x", sha256.Sum256(source)) != "0bc87ae1a2cf43abbb71353d10ea356a433c65cbd807b065863a54aa6c146267" {
+		return nil, fmt.Errorf("packet source checksum mismatch")
+	}
+	replacement := packet["Replace"][original]
+	info, err := os.Stat(replacement)
+	if err != nil {
+		return nil, err
+	}
+	if !filepath.IsAbs(replacement) || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("invalid packet replacement")
+	}
+	var result overlay
+	if err := json.Unmarshal(base, &result); err != nil {
+		return nil, err
+	}
+	if _, exists := result.Replace[original]; exists {
+		return nil, fmt.Errorf("packet overlay conflict")
+	}
+	result.Replace[original] = replacement
+	return json.MarshalIndent(result, "", "  ")
 }

@@ -5,6 +5,14 @@ It is **not a Mihomo VPN runtime** and is not integrated into the Android app.
 The existing service, Gradle dependencies, UI, and engine selection are unchanged.
 Loading this library or preparing a session must never set the app to connected.
 
+The separate `native/mihomo-engine` now provides the Phase 1.1 standalone
+Start/Stop/Version adapter. Do not load both c-shared libraries into one process:
+their independent Go runtimes do not share registries. Engine startup retires
+its registry before semantic parsing: its current lease remains usable, but no
+replacement Prepare is permitted even after close until the OS process exits.
+Ordinary foundation-only leases retain existing close/reprepare behavior. See
+`../mihomo-engine/ENGINE.md` for executable limits and the worker-process contract.
+
 The library contains the real upstream Mihomo dialer, with its
 `DefaultSocketHook` permanently bound to the app-owned session registry. It does
 not contain a fake executor, placeholder TUN implementation, or successful
@@ -103,7 +111,9 @@ be treated as an Android runtime:
   `executor.ApplyConfig` also returns no error and marks the tunnel running
   after loading. A runtime adapter needs an error-returning startup path,
   complete rollback, and verified native descriptor ownership through
-  `sing_tun.New`/sing-tun. This component has no TUN startup entry point.
+   `sing_tun.New`/sing-tun. This foundation has no TUN startup entry point. The
+   separate engine now implements a gated error-returning raw-FD subset; it does
+   not make the legacy void APIs safe for arbitrary profiles.
 - `executor.loadProvider` logs provider initialization failures.
   `executor.Shutdown` cleans listeners and stores fake-IP state, but does not
   establish a joined shutdown of every provider, health check, resolver,

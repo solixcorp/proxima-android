@@ -19,6 +19,7 @@ var (
 	ErrInvalidFD     = errors.New("invalid file descriptor")
 	ErrInvalidOwner  = errors.New("socket protector is required")
 	ErrTokenOverflow = errors.New("native session token exhausted")
+	ErrRetired       = errors.New("native process retired; terminate and reap before preparing another lease")
 )
 
 type Token int64
@@ -46,6 +47,7 @@ type Registry struct {
 	mu      sync.Mutex
 	current *lease
 	next    Token
+	retired bool
 }
 
 // Prepare borrows tunFD and duplicates it atomically with close-on-exec.
@@ -53,6 +55,9 @@ type Registry struct {
 func (r *Registry) Prepare(tunFD int, protector Protector) (Token, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.retired {
+		return 0, ErrRetired
+	}
 	if r.current != nil {
 		return 0, ErrBusy
 	}
@@ -69,6 +74,20 @@ func (r *Registry) Prepare(tunFD int, protector Protector) (Token, error) {
 	r.next++
 	r.current = &lease{active: true, tun: fd, protector: protector, token: r.next}
 	return r.next, nil
+}
+
+// Retire permanently prevents replacement leases without revoking the current
+// one. A core with unjoined process-global workers must call this BEFORE parsing
+// or starting those workers. Close still drains/releases the current lease and
+// remains retryable. Only process exit can reset this fence.
+func (r *Registry) Retire(token Token) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.current == nil || r.current.token != token {
+		return ErrInactive
+	}
+	r.retired = true
+	return nil
 }
 
 // DuplicateTun gives the caller a separate owned descriptor. The caller must

@@ -1,10 +1,13 @@
-# Mihomo configuration and provider initialization building blocks
+# Mihomo engine adapter and configuration building blocks
 
-This module is a partial engine building block, **not a running Android engine**.
-It implements actual pinned Mihomo raw YAML decoding and real provider `Initial`
-error propagation. It never calls `executor.ApplyConfig`, `tunnel.OnRunning`, or
-reports connected. A successful raw decode is **syntactic/typed decoding with
-upstream defaults**, not Mihomo semantic configuration validation.
+This module now contains the standalone Phase 1.1 Go/JNI Start/Stop/Version
+adapter. **Read [ENGINE.md](ENGINE.md) for its executable capability subset,
+descriptor ownership, one-session process boundary and verification.** It is not
+integrated into the Android application and never publishes connected state.
+
+The independent snapshot/provider-stage APIs documented below are still only
+building blocks. A successful raw decode is **syntactic/typed decoding with
+upstream defaults**, not semantic validation or a started engine.
 
 ## Exact supported operations
 
@@ -59,7 +62,7 @@ used. On a failed attempt the owner still owns every constructed provider,
 including the failing one; close them under their real teardown contracts or
 reap the process before revoking the filesystem/socket capabilities.
 
-## Required integration ordering and remaining blockers
+## Full-profile integration requirements (outside Start's admitted subset)
 
 Use a **fresh operating-system worker process per session**. The engine module
 does not create/supervise that process or pass the TUN fd across IPC. The
@@ -95,19 +98,19 @@ external UI, resolver, or listener paths. A general parser wrapper would cross
 those unproven paths before executor startup. This module does not silently
 disable those options or pass them to unsafe initialization.
 
-The upstream executor's void `ApplyConfig` logs listener/provider failures and
-continues to `OnRunning`; its `Shutdown` does not join all global workers.
-Implementing a strict full executor requires observable errors from every
-configured listener/TUN/DNS/NTP/controller/update path, consistent rollback, and
-a supervised process lifetime. This module does not call that void API or offer
-a fake `Start()` returning success.
+The upstream void `ApplyConfig` logs failures and continues to `OnRunning`, while
+`Shutdown` does not join all global workers. The new adapter does not call that
+void API: a separately named, checksum-gated error path reuses only admitted
+helpers and returns actual raw-TUN startup errors. Extending it to full profiles
+still needs error propagation/rollback for every additional listener, DNS, NTP,
+controller and update path, plus a supervised process lifetime.
 
-Remaining unsupported end-to-end paths therefore include semantic proxy/rule/DNS
-validation; geodata download/readiness; routing application and provider-through-
-proxy bootstrapping; executor/controller/listener/NTP/update startup; TUN adoption
-and packet admission; DNS interception; Android worker/JNI/IPC integration;
-whole-core stop; and device/live external-server verification. Their raw YAML
-fields are retained without being executed.
+Unsupported full-profile paths include arbitrary proxy/group/provider execution,
+geodata, DNS interception, additional listeners/controllers/NTP/updaters, Android
+worker/IPC supervision and device/live external verification. Snapshot decoding
+retains these raw fields; executable Start rejects them explicitly rather than
+running unproven initialization paths. Raw TUN startup and JNI are now implemented
+for the bounded subset in ENGINE.md.
 
 Future packet/DNS integration must include `native/mihomo-dns`, rather than
 forwarding the Android synthetic DNS address as ordinary upstream traffic. Its
@@ -125,9 +128,9 @@ Mihomo v1.19.33, commit
 `h1:hwqYMItk3Jaeq8Sw2PBAtyHQh157ccUtWS7rXrBOMCU=`, Go 1.27.1.
 The dependency graph is pinned in `go.mod`/`go.sum`, including the upstream
 protobuf replacement. Local dependencies are `../mihomo` for the permanent
-socket hook and `../mihomo-provider` for its path capability. The build also
-runs the existing provider/network overlay generators. It does not modify their
-sources, generated files, or module caches.
+socket hook, `../mihomo-provider` for its path capability, and `../mihomo-runtime`
+for joined packet ownership. The build reuses the provider/network/packet overlay
+generators without modifying their own generated outputs or module caches.
 
 `build.sh` verifies downloaded modules, copies the core to one fresh staged
 directory under this module's ignored `build/`, and gives that identical path to
@@ -150,14 +153,15 @@ review remains blocked.
 ```sh
 bash build.sh test   # source verification, vet, actual-core race tests
 bash build.sh cross  # Android arm64 package compilation only
+bash build.sh android # four-ABI c-shared engine libraries, 16 KiB alignment
 ```
 
 TLS certificate verification remains enabled. `SSL_CERT_FILE` defaults to
 `/etc/ssl/cert.pem`. Generated caches remain beneath `build/` unless the caller
 explicitly supplies `GOMODCACHE`/`GOCACHE`.
 
-Tests use temporary app-private directories, actual pinned provider parsers,
-actual file payloads and missing/corrupt-file errors. They never prepare a VPN
-lease, open a live external server connection, or start a TUN. A small timing
-wrapper around a real rule-provider object tests concurrent initialization and
-Stop; it does not supply the real payload/error verification evidence.
+Building-block tests use actual provider parsers, file payloads and errors. Their
+timing wrapper verifies admission, not provider shutdown. Separate isolated core
+tests now prepare real leases, instantiate sing_tun.New/mipstack and exercise raw
+IPv4/UDP against a local host-interface sink, without a privileged TUN or external
+server. Real JVM JNI tests cover error propagation and descriptor ownership.
