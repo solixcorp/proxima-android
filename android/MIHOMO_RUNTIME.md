@@ -1,5 +1,13 @@
 # Phase 2b Android runtime integration
 
+Phase 3.3 is not integrated: `lib/core/mihomo_config_assembly.dart` is an
+offline prototype and is not a source of configuration for this service. The
+existing Kotlin projection and execution contract below remain authoritative.
+TUN addresses continue to belong to Android's Builder; native admission rejects
+address fields in the executable YAML. A Dart-to-worker FD path, settings
+consistency validation, and non-Flutter start/restart entry points still need
+to be implemented before replacing the projection.
+
 ## Engine boundary
 
 `ProximaVpnService` captures `NativeVpnSettings.engine` per connection. Both

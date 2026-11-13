@@ -62,7 +62,8 @@ class ClashSubscriptionParser {
     final skipped = <ClashSkippedItem>[];
     final proxies = <Map<String, Object?>>[];
     final groups = <Map<String, Object?>>[];
-    final names = {...MihomoProxyAdmission.reservedNames};
+    // PROXY belongs to the app selector, but is a valid group/rule target.
+    final names = {...MihomoProxyAdmission.reservedNames, 'PROXY'};
     void skip(String type, String name, String reason) =>
         skipped.add(ClashSkippedItem(type, name, reason));
     for (final row in rows) {
