@@ -138,8 +138,41 @@ Go 1.27.1; Mihomo v1.19.33 / commit
 `3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8`; sing-tun v0.4.28; NDK
 28.2.13676358; API 23. Pins are unchanged. Builds use `-mod=readonly`, immutable
 module staging under ignored native build directories and 16 KiB ELF alignment.
-No binaries are checked in or copied to the app. GPL-3.0/license obligations and
-device loading/packaging verification remain applicable.
+No binaries are checked in. GPL-3.0/license obligations and device
+loading/packaging verification remain applicable.
+
+## Android Gradle integration
+
+The app adds `native/mihomo-engine/java` to its main Java sources; it does not
+instantiate or load `NativeEngine` until a caller actually uses that class.
+Each Android variant's `build<Variant>Mihomo` runs this module's unchanged
+`bash build.sh android`, then copies only its engine libraries into the app's
+generated `build/app/generated/mihomoJniLibs/<variant>` directory. The JNI merge
+depends on that task; `verify<Variant>Mihomo`, also required by assemble, checks
+the selected libraries and compiled Java class. Xray remains a separate AAR.
+
+Gradle snapshots the native source tree (excluding generated `build` folders),
+including local overlays and Go module checksums, along with the ABI selection
+and relevant environment values. Unchanged inputs and outputs are up-to-date;
+these tasks do not opt into remote build caching. Go 1.27.1, Android NDK
+28.2.13676358, API 23 toolchains and the verified upstream Go modules are
+required on the build machine. If a toolchain is replaced in place, clean the
+app build or use `--rerun-tasks`. Variant builds in one Gradle invocation are
+serialized, but do not run separate Gradle builds or standalone engine builds
+concurrently: the engine script shares its staging directory.
+
+All variants build and copy all four ABIs by default. Flutter's existing APK
+ABI filter excludes x86 because this Flutter SDK has no x86 `libflutter.so`;
+the default APK therefore includes only arm64-v8a, armeabi-v7a and x86_64.
+Do not remove that filter just to package x86: it would advertise support for
+devices on which Flutter cannot run. For local debug APKs only,
+`MIHOMO_DEBUG_ABIS=arm64-v8a,x86_64 ./gradlew :app:assembleDebug` limits the
+engine libraries copied into the APK. This does not change the script's
+four-ABI build or filter other dependencies; such an APK cannot use mihomo on
+an omitted ABI and must not be distributed as a complete build. Release ignores
+this variable. The engine links with 16 KiB ELF alignment; AGP 8.11 handles APK
+native-library alignment without a manifest change. This does not certify the
+alignment of Xray, Flutter, or any other library or verify a 16 KiB device.
 
 ## Verification scope
 
