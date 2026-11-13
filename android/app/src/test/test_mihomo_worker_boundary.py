@@ -11,9 +11,6 @@ It does not emulate Binder, load Android stubs, or prove device behavior.
 """
 
 import os
-import base64
-import json
-import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -47,39 +44,15 @@ class MihomoWorkerBoundaryHostTest(unittest.TestCase):
         ]
         self.run_host(files, "VpnSettingsHostTest", r"PASS VpnSettings engine persistence and defaults")
 
-    def test_engine_dispatch_yaml_projection_death_and_join_order(self):
+    def test_engine_dispatch_sidecar_consistency_death_and_join_order(self):
         source = Path(__file__).resolve().parents[1]
         package = Path("kotlin/kr/kimrasng/proxima/client/android/proxima")
         files = [source / "main" / package / name for name in (
             "MihomoProfileAssembler.kt", "MihomoConfiguration.kt", "MihomoLifecycle.kt", "MihomoLeaseGate.kt",
+            "MihomoConfigSidecar.kt",
         )]
         files.append(source / "test" / package / "MihomoRuntimeHostTest.kt")
-        stdout = self.run_host(files, "MihomoRuntimeHostTest", r"PASS [1-9][0-9]* deterministic Mihomo runtime host tests")
-        configs = {}
-        for line in stdout.splitlines():
-            if not line.startswith("CONFIG "):
-                continue
-            _, name, encoded = line.split(" ", 2)
-            yaml = base64.b64decode(encoded).decode()
-            root = json.loads("\n".join(row for row in yaml.splitlines() if not row.startswith("#")))
-            configs[name] = root
-            self.assertEqual(len(root["proxies"]), 1)
-            self.assertEqual(root["proxy-groups"][0]["type"], "select")
-            self.assertEqual(root["tun"]["dns-hijack"], ["172.19.0.2:53"])
-            self.assertNotIn("dns", root)
-        self.assertEqual(set(configs), {"tcp-reality", "grpc", "ws", "httpupgrade"})
-        # Cross-check emitted proxy/transport keys against the authoritative Go
-        # allowlist, without changing native sources or pretending to start TUN.
-        root = source.parents[2]
-        admission = (root / "native/mihomo-engine/protocol_admission.go").read_text()
-        proxy_keys = set(re.search(r'"vless":\s*"([^"]*)"', admission)[1].split()) | {"name", "type", "ip-version", "tfo"}
-        for config in configs.values():
-            proxy = config["proxies"][0]
-            self.assertLessEqual(set(proxy), proxy_keys)
-            for key in ("ws-opts", "grpc-opts", "reality-opts"):
-                if key in proxy:
-                    allowed = set(re.search(r'"' + key + r'":\s*"([^"]*)"', admission)[1].split())
-                    self.assertLessEqual(set(proxy[key]), allowed)
+        self.run_host(files, "MihomoRuntimeHostTest", r"PASS [1-9][0-9]* deterministic Mihomo runtime host tests")
 
     def test_android_wiring_keeps_isolation_and_original_xray_adapters(self):
         source = Path(__file__).resolve().parents[1]
@@ -98,6 +71,19 @@ class MihomoWorkerBoundaryHostTest(unittest.TestCase):
         self.assertLess(service.index('if (settings.engine == "mihomo") return'), service.index("XrayCore.configureVpn"))
         self.assertIn("worker.linkToDeath(recipient, 0)", boundary)
         self.assertIn("retired.observedDeath()", boundary)
+        self.assertNotIn("MihomoProfileAssembler.build", service + activity)
+        self.assertIn("MihomoConfigSidecar", service)
+        self.assertIn("mihomoConfigToken, profile.id, content", service)
+        self.assertIn("mihomoUploads.remove(profileId)", activity)
+        self.assertIn("beginMihomoConfiguration", activity)
+        session = (package / "MihomoVpnSession.kt").read_text()
+        self.assertIn("MihomoConfiguration.copyOf(config.bytes)", session)
+        transport = (package / "MihomoBinderTransport.kt").read_text()
+        self.assertIn("ParcelFileDescriptor.MODE_READ_ONLY", transport)
+        self.assertIn("check(file.delete())", transport)
+        self.assertIn("stat.st_size == size.toLong()", transport)
+        self.assertIn("actual == sha256", transport)
+        self.assertIn("MihomoProfileAssembler.verify(tun.opt", (package / "MihomoRuntimeConfig.kt").read_text())
         manifest = (source / "main/AndroidManifest.xml").read_text()
         self.assertIn('android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"\n                android:value="false"', manifest)
 

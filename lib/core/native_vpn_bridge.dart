@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 
 import '../models/vpn_models.dart';
@@ -14,6 +17,7 @@ abstract interface class VpnBridge {
     String? sourceUrl,
     required String content,
     SubscriptionInfo? subscriptionInfo,
+    ProfileAdmissionSummary? admissionSummary,
   });
   Future<void> deleteProfile(String id);
   Future<void> selectProfile(String id);
@@ -26,7 +30,16 @@ abstract interface class VpnBridge {
   Future<String?> validateProfile(String content);
   Future<bool> requestVpnPermission();
   Future<void> startVpn(String profileId);
+  Future<void> prepareMihomoConfiguration(
+    String profileId,
+    String yaml, {
+    required String source,
+    required VpnSettings settings,
+  });
+  Future<void> discardPreparedMihomoConfiguration(String profileId);
+  Future<void> clearProxySelection(String profileId, String group);
   Future<void> stopVpn();
+
   /// Android selects Xray or the isolated Mihomo worker on the next connection.
   Future<VpnSettings> loadSettings();
   Future<void> saveSettings(VpnSettings settings);
@@ -77,6 +90,7 @@ class MethodChannelVpnBridge implements VpnBridge {
     String? sourceUrl,
     required String content,
     SubscriptionInfo? subscriptionInfo,
+    ProfileAdmissionSummary? admissionSummary,
   }) async {
     final value = await _methods.invokeMapMethod<Object?, Object?>(
       'saveProfile',
@@ -86,6 +100,7 @@ class MethodChannelVpnBridge implements VpnBridge {
         'sourceUrl': sourceUrl,
         'content': content,
         'subscriptionInfo': subscriptionInfo?.toMap(),
+        'admissionSummary': admissionSummary?.toMap(),
       },
     );
     return VpnProfile.fromMap(value!);
@@ -133,6 +148,63 @@ class MethodChannelVpnBridge implements VpnBridge {
   @override
   Future<void> startVpn(String profileId) =>
       _methods.invokeMethod<void>('startVpn', {'profileId': profileId});
+
+  @override
+  Future<void> clearProxySelection(String profileId, String group) =>
+      _methods.invokeMethod<void>('clearProxySelection', {
+        'profileId': profileId,
+        'group': group,
+      });
+
+  @override
+  Future<void> discardPreparedMihomoConfiguration(String profileId) =>
+      _methods.invokeMethod<void>('discardPreparedMihomoConfiguration', {
+        'profileId': profileId,
+      });
+
+  @override
+  Future<void> prepareMihomoConfiguration(
+    String profileId,
+    String yaml, {
+    required String source,
+    required VpnSettings settings,
+  }) async {
+    final bytes = Uint8List.fromList(utf8.encode(yaml));
+    if (bytes.isEmpty || bytes.length > 8 * 1024 * 1024) {
+      throw const FormatException('Mihomo 실행 설정은 1바이트 이상 8MB 이하여야 합니다.');
+    }
+    final token = await _methods.invokeMethod<String>(
+      'beginMihomoConfiguration',
+      {
+        'profileId': profileId,
+        'size': bytes.length,
+        'sourceSha256': sha256.convert(utf8.encode(source)).toString(),
+        'settingsKey':
+            '${settings.mtu}:${settings.ipv6}:${settings.mode.wireName}:mips',
+      },
+    );
+    if (token == null) throw StateError('Mihomo 설정 사이드카를 생성하지 못했습니다.');
+    try {
+      // Platform channels are not Binder, but bounded chunks also avoid a large
+      // main-thread message/allocation. Worker Binder only ever receives an FD.
+      for (var offset = 0; offset < bytes.length; offset += 64 * 1024) {
+        final end = (offset + 64 * 1024).clamp(0, bytes.length);
+        await _methods.invokeMethod<void>('appendMihomoConfiguration', {
+          'token': token,
+          'offset': offset,
+          'bytes': Uint8List.sublistView(bytes, offset, end),
+        });
+      }
+      await _methods.invokeMethod<void>('finishMihomoConfiguration', {
+        'token': token,
+      });
+    } catch (_) {
+      await _methods.invokeMethod<void>('discardMihomoConfiguration', {
+        'token': token,
+      });
+      rethrow;
+    }
+  }
 
   @override
   Future<void> stopVpn() => _methods.invokeMethod<void>('stopVpn');

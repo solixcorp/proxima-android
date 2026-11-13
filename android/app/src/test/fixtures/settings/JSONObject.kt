@@ -8,4 +8,5 @@ class JSONObject {
     fun keys(): Iterator<String> = emptyList<String>().iterator()
     fun optString(key: String): String = ""
     fun put(key: String, value: String): JSONObject = this
+    fun remove(key: String): Any? = null
 }

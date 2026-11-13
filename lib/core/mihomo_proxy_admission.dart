@@ -187,4 +187,156 @@ class MihomoProxyAdmission {
     }
     return null;
   }
+
+  /// Recheck the executable document, not a sanitizing import preview. Go's
+  /// constructors remain authoritative for values and upstream semantics.
+  static String? configurationError(Map<String, Object?> config) {
+    final tun = config['tun'];
+    if (tun is! Map ||
+        tun['stack'] != 'mips' ||
+        tun.containsKey('inet4-address') ||
+        tun.containsKey('inet6-address')) {
+      return 'TUN 주소는 Android 빌더가 소유하며 스택은 mips여야 합니다.';
+    }
+    if (config.containsKey('dns') ||
+        config.keys.any((k) => k.startsWith('external-controller'))) {
+      return '앱 실행 설정에 DNS/controller 덮어쓰기를 사용할 수 없습니다.';
+    }
+    final proxies = config['proxies'];
+    final groups = config['proxy-groups'];
+    if (proxies is! List || proxies.isEmpty || groups is! List) {
+      return '프록시/그룹이 없습니다.';
+    }
+    final names = {...reservedNames};
+    for (final row in [...proxies, ...groups]) {
+      if (row is! Map<String, Object?>) return '프록시/그룹 형식이 올바르지 않습니다.';
+      final name = row['name'];
+      if (name is! String || name.isEmpty || !names.add(name)) {
+        return '예약되었거나 중복된 프록시/그룹 이름입니다.';
+      }
+    }
+    for (final row in proxies) {
+      final error = proxyError(row as Map<String, Object?>);
+      if (error != null) return error;
+    }
+    final proxyProviders = config['proxy-providers'] as Map? ?? const {};
+    final ruleProviders = config['rule-providers'] as Map? ?? const {};
+    for (final section in [proxyProviders, ruleProviders]) {
+      for (final provider in section.values) {
+        if (provider is! Map) return 'provider는 매핑이어야 합니다.';
+        final error = providerError(
+          provider,
+          rule: identical(section, ruleProviders),
+        );
+        if (error != null) return error;
+      }
+    }
+    for (final row in groups.cast<Map<String, Object?>>()) {
+      final error = groupError(row);
+      if (error != null) return error;
+      for (final name in row['proxies'] as List? ?? const []) {
+        if (!names.contains(name)) return '그룹의 프록시 참조가 없습니다.';
+      }
+      for (final name in row['use'] as List? ?? const []) {
+        if (!proxyProviders.containsKey(name)) return '그룹의 provider 참조가 없습니다.';
+      }
+    }
+    final groupMap = {
+      for (final row in groups.cast<Map<String, Object?>>()) row['name']: row,
+    };
+    bool cyclic(Object? name, Set<Object?> ancestors) {
+      if (!ancestors.add(name)) return true;
+      for (final next in groupMap[name]?['proxies'] as List? ?? const []) {
+        if (groupMap.containsKey(next) && cyclic(next, {...ancestors})) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    if (groupMap.keys.any((name) => cyclic(name, {}))) return '그룹 참조가 순환합니다.';
+    for (final rule in config['rules'] as List? ?? const []) {
+      if (rule is! String) return '규칙 형식이 올바르지 않습니다.';
+      final fields = rule.split(',').map((s) => s.trim()).toList();
+      final kind = fields.first.toUpperCase();
+      final targetIndex = kind == 'MATCH' ? 1 : 2;
+      if (!ruleTypes.contains(kind) ||
+          fields.length <= targetIndex ||
+          !names.contains(fields[targetIndex])) {
+        return '규칙 유형 또는 대상이 유효하지 않습니다.';
+      }
+      if (kind == 'RULE-SET' && !ruleProviders.containsKey(fields[1])) {
+        return '규칙 provider 참조가 없습니다.';
+      }
+    }
+    return null;
+  }
+
+  /// Mirror provider_admission.go. Fetch/redirect/cache checks remain native.
+  static String? providerError(Map provider, {required bool rule}) {
+    final unknown = _unknown(
+      provider,
+      rule
+          ? 'type path url interval size-limit header behavior format payload'
+          : 'type path url interval size-limit header health-check payload',
+    );
+    if (unknown != null) return 'provider: $unknown';
+    final type = provider['type'];
+    if (!const {'http', 'file', 'inline'}.contains(type)) {
+      return 'provider 유형이 허용되지 않습니다.';
+    }
+    bool safeUrl(Object? raw) {
+      final uri = raw is String ? Uri.tryParse(raw) : null;
+      return uri != null &&
+          uri.scheme == 'https' &&
+          uri.host.isNotEmpty &&
+          uri.userInfo.isEmpty;
+    }
+
+    if ((type == 'http' || provider.containsKey('url')) &&
+        !safeUrl(provider['url'])) {
+      return 'provider 주소는 사용자 정보가 없는 HTTPS여야 합니다.';
+    }
+    if (provider.containsKey('path')) {
+      final path = provider['path'];
+      if (path is! String ||
+          path.isEmpty ||
+          path.startsWith('/') ||
+          path.contains('\\') ||
+          path.split('/').contains('..')) {
+        return 'provider 경로는 앱 전용 루트 아래 상대 경로여야 합니다.';
+      }
+    } else if (type == 'file') {
+      return 'file provider에는 상대 경로가 필요합니다.';
+    }
+    bool validSeconds(Object? n) => n is int && n >= 0 && n <= 31536000;
+    if (provider.containsKey('interval') &&
+        !validSeconds(provider['interval'])) {
+      return 'provider interval이 올바르지 않습니다.';
+    }
+    if (rule &&
+        (!const {'domain', 'ipcidr'}.contains(provider['behavior']) ||
+            (provider.containsKey('format') &&
+                !const {'yaml', 'text', 'mrs'}.contains(provider['format'])))) {
+      return '규칙 provider의 behavior/format이 허용되지 않습니다.';
+    }
+    final health = provider['health-check'];
+    if (health != null) {
+      if (health is! Map) return 'provider health-check는 매핑이어야 합니다.';
+      final error = _unknown(
+        health,
+        'enable url interval timeout lazy expected-status',
+      );
+      if (error != null) return error;
+      if (health.containsKey('url') && !safeUrl(health['url'])) {
+        return 'provider 검사 주소는 HTTPS여야 합니다.';
+      }
+      for (final key in ['interval', 'timeout']) {
+        if (health.containsKey(key) && !validSeconds(health[key])) {
+          return 'provider health-check $key 값이 올바르지 않습니다.';
+        }
+      }
+    }
+    return null;
+  }
 }

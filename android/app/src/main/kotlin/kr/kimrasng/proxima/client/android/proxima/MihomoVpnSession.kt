@@ -20,8 +20,9 @@ class MihomoVpnSession(private val vpn: VpnService, private val onDeath: () -> U
     @Volatile private var connection: MihomoWorkerBoundary.Connection? = null
     @Volatile var node: String? = null
         private set
+    @Volatile private var nodes: List<Pair<String, String>> = emptyList()
 
-    fun start(tun: ParcelFileDescriptor, config: MihomoProfileAssembler.Result) {
+    internal fun start(tun: ParcelFileDescriptor, config: MihomoRuntimeConfig) {
         check(Looper.myLooper() != Looper.getMainLooper())
         main.post {
             if (closing.get()) {
@@ -52,8 +53,9 @@ class MihomoVpnSession(private val vpn: VpnService, private val onDeath: () -> U
             throw IllegalStateException("Mihomo worker bind/handshake failed: ${error.cause?.message ?: error.message}", error)
         }
         check(!closing.get()) { "Mihomo startup cancelled" }
-        remote.start(tun, MihomoConfiguration.copyOf(config.yaml.toByteArray(Charsets.UTF_8)))
-        node = config.node
+        remote.start(tun, MihomoConfiguration.copyOf(config.bytes))
+        nodes = config.nodes
+        node = config.selected
     }
 
     private fun active(): MihomoWorkerBoundary.Connection {
@@ -81,9 +83,10 @@ class MihomoVpnSession(private val vpn: VpnService, private val onDeath: () -> U
 
     fun proxyState(): JSONObject {
         val name = checkNotNull(node)
-        val proxies = JSONObject().put(name, JSONObject().put("type", "Vless"))
+        val proxies = JSONObject()
+        nodes.forEach { (nodeName, type) -> proxies.put(nodeName, JSONObject().put("type", type)) }
         for (group in listOf("GLOBAL", "PROXY")) proxies.put(group,
-            JSONObject().put("type", "Selector").put("now", name).put("all", JSONArray(listOf(name))))
+            JSONObject().put("type", "Selector").put("now", name).put("all", JSONArray(nodes.map { it.first })))
         return JSONObject().put("proxies", proxies)
     }
 

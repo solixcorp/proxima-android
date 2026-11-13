@@ -28,6 +28,8 @@ import java.util.concurrent.Executors
 class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
     private lateinit var profiles: ProfileRepository
     private lateinit var settings: VpnSettingsRepository
+    private lateinit var mihomoSidecars: MihomoConfigSidecar
+    private val mihomoUploads = mutableMapOf<String, String>() // profile -> one-use capability
     private var eventSink: EventChannel.EventSink? = null
     private var permissionResult: MethodChannel.Result? = null
     private var importResult: MethodChannel.Result? = null
@@ -43,6 +45,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         VpnRuntime.initialize(this)
         profiles = ProfileRepository(this)
         settings = VpnSettingsRepository(this)
+        mihomoSidecars = MihomoConfigSidecar(File(filesDir, "mihomo-configs"))
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, METHOD_CHANNEL).setMethodCallHandler(this)
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENT_CHANNEL).setStreamHandler(this)
     }
@@ -55,7 +58,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 "readProfile" -> result.success(profiles.readContent(requiredString(call, "id")))
                 "saveProfile" -> {
                     val content = requiredString(call, "content")
-                    require(VlessRealityConfig.isGeneratedProfile(content)) {
+                    require(settings.load().engine == "mihomo" || VlessRealityConfig.isGeneratedProfile(content)) {
                         "VLESS 링크로 만든 프로필만 저장할 수 있습니다."
                     }
                     result.success(
@@ -67,6 +70,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                             subscriptionInfo = call.argument<Map<*, *>>("subscriptionInfo")?.let(
                                 StoredSubscriptionInfo::fromMap,
                             ),
+                            admissionSummary = call.argument<Map<*, *>>("admissionSummary")?.let(StoredAdmissionSummary::fromMap),
                         ),
                     )
                 }
@@ -99,6 +103,51 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     result.success(null)
                 }
                 "validateProfile" -> validateProfile(requiredString(call, "content"), result)
+                "clearProxySelection" -> {
+                    settings.clearSelectedProxy(requiredString(call, "profileId"), requiredString(call, "group"))
+                    result.success(null)
+                }
+                "beginMihomoConfiguration" -> {
+                    require(settings.load().engine == "mihomo") { "Mihomo 엔진을 선택해 주세요." }
+                    val id = requiredString(call, "profileId")
+                    require(profiles.profile(id) != null) { "Profile not found" }
+                    // Any previous upload (including a cancelled preparation)
+                    // loses its capability before a fresh start is prepared.
+                    mihomoUploads.values.forEach(mihomoSidecars::discard)
+                    mihomoUploads.clear()
+                    val value = settings.load()
+                    val source = profiles.readContent(id)
+                    val settingsKey = MihomoConfigSidecar.settingsKey(value.mtu, value.ipv6, value.mode)
+                    require(MihomoConfiguration.digest(source.toByteArray(Charsets.UTF_8)) == requiredString(call, "sourceSha256") &&
+                        settingsKey == requiredString(call, "settingsKey")) { "Mihomo 조립 중 프로필/설정이 변경되었습니다. 다시 연결해 주세요." }
+                    val token = mihomoSidecars.begin(id, source, settingsKey,
+                        call.argument<Int>("size") ?: 0)
+                    mihomoUploads[id] = token
+                    result.success(token)
+                }
+                "appendMihomoConfiguration" -> {
+                    val token = requiredString(call, "token")
+                    require(token in mihomoUploads.values) { "Mihomo 설정 전송이 취소되었습니다." }
+                    mihomoSidecars.append(token, call.argument<Int>("offset") ?: -1,
+                        call.argument<ByteArray>("bytes") ?: byteArrayOf())
+                    result.success(null)
+                }
+                "finishMihomoConfiguration" -> {
+                    val token = requiredString(call, "token")
+                    require(token in mihomoUploads.values) { "Mihomo 설정 전송이 취소되었습니다." }
+                    mihomoSidecars.finish(token)
+                    result.success(null)
+                }
+                "discardMihomoConfiguration" -> {
+                    val token = requiredString(call, "token")
+                    mihomoSidecars.discard(token)
+                    mihomoUploads.entries.removeAll { it.value == token }
+                    result.success(null)
+                }
+                "discardPreparedMihomoConfiguration" -> {
+                    mihomoUploads.remove(requiredString(call, "profileId"))?.let(mihomoSidecars::discard)
+                    result.success(null)
+                }
                 "requestVpnPermission" -> requestVpnPermission(result)
                 "startVpn" -> startVpn(requiredString(call, "profileId"), result)
                 "stopVpn" -> {
@@ -147,7 +196,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         runCatching {
             if (settings.load().engine == "mihomo") {
                 val value = settings.load()
-                MihomoProfileAssembler.build("", content, value.mtu, value.ipv6, value.mode)
+                MihomoRuntimeConfig(content.toByteArray(Charsets.UTF_8), value.mtu, value.ipv6)
             } else XrayConfig.validate(content)
         }.onSuccess { result.success(null) }
             .onFailure { result.success(it.message ?: "프로필을 검증하지 못했습니다.") }
@@ -171,7 +220,12 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private fun startVpn(profileId: String, result: MethodChannel.Result) {
         require(VpnService.prepare(this) == null) { "VPN permission is required" }
         val profile = profiles.profile(profileId) ?: error("Profile not found")
-        require(VlessRealityConfig.isGeneratedProfile(profiles.readContent(profileId))) {
+        val mihomo = settings.load().engine == "mihomo"
+        val configToken = if (mihomo) {
+            checkNotNull(mihomoUploads.remove(profileId)) { "Mihomo 설정 사이드카가 없습니다. 앱에서 다시 연결해 주세요." }
+                .also(mihomoSidecars::requireReady)
+        } else null
+        require(mihomo || VlessRealityConfig.isGeneratedProfile(profiles.readContent(profileId))) {
             "VLESS 링크로 만든 프로필만 연결할 수 있습니다."
         }
         profiles.select(profileId)
@@ -182,6 +236,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         val intent = Intent(this, ProximaVpnService::class.java)
             .setAction(ProximaVpnService.ACTION_START)
             .putExtra(ProximaVpnService.EXTRA_PROFILE_ID, profileId)
+            .putExtra(ProximaVpnService.EXTRA_MIHOMO_CONFIG, configToken)
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
         }.onFailure {
@@ -244,29 +299,13 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     request.optInt("timeout", 3_000))
             }
             "updateConfig" -> {
-                val restarted = java.util.concurrent.CompletableFuture<Unit>()
-                runOnUiThread {
-                    runCatching {
-                        check(VpnRuntime.mihomoSession() === session && VpnRuntime.snapshot()["state"] == "connected") {
-                            "Mihomo session was replaced"
-                        }
-                        restartCurrentVpn()
-                    }.onSuccess { restarted.complete(Unit) }
-                        .onFailure { restarted.completeExceptionally(it) }
-                }
-                restarted.get()
-                JSONObject()
+                error("Mihomo 설정 변경은 앱의 Dart 조립 후 다시 연결해야 합니다.")
             }
             "changeProxy" -> {
-                // Phase 2b starts one concrete node. Do not pretend unloaded
-                // subscription nodes are available to native delay/selection.
-                require(JSONObject(data).optString("proxy-name") == session.node) {
-                    "Mihomo Phase 2b는 선택된 VLESS 노드 하나만 실행합니다."
-                }
-                JSONObject()
+                error("Mihomo 노드 변경은 앱의 Dart 조립 후 다시 연결해야 합니다.")
             }
             "getMemory" -> Debug.getPss().toLong() * 1024L
-            "queryExternalProviders" -> JSONArray() // No providers in this projection.
+            "queryExternalProviders" -> JSONArray() // JNI has no provider inventory surface yet.
             "probeCurrentProxyIp" -> error("Mihomo 공인 IP 검사는 Phase 3에서 지원합니다.")
             "closeConnection", "closeAllConnections", "updateExternalProvider" -> error("Mihomo JNI가 지원하지 않는 작업입니다: $method")
             else -> error("지원하지 않는 Mihomo 작업입니다: $method")
@@ -552,6 +591,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         importResult = null
         exportResult = null
         exportContent = null
+        mihomoUploads.values.forEach(mihomoSidecars::discard)
+        mihomoUploads.clear()
         coreWorker.shutdownNow()
         super.onDestroy()
     }

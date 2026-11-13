@@ -2339,6 +2339,7 @@ class _AccountImportBridge extends _FakeBridge {
     String? sourceUrl,
     required String content,
     SubscriptionInfo? subscriptionInfo,
+    ProfileAdmissionSummary? admissionSummary,
   }) async {
     profileContent = content;
     savedIds.add(id);
@@ -2489,6 +2490,7 @@ class _FakeBridge implements VpnBridge {
     String? sourceUrl,
     required String content,
     SubscriptionInfo? subscriptionInfo,
+    ProfileAdmissionSummary? admissionSummary,
   }) async => profile;
 
   @override
@@ -2510,6 +2512,22 @@ class _FakeBridge implements VpnBridge {
   Future<void> startVpn(String profileId) async {
     startedProfileId = profileId;
   }
+
+  @override
+  Future<void> prepareMihomoConfiguration(
+    String profileId,
+    String yaml, {
+    required String source,
+    required VpnSettings settings,
+  }) async {}
+
+  @override
+  Future<void> clearProxySelection(String profileId, String group) async {
+    selections.remove(group);
+  }
+
+  @override
+  Future<void> discardPreparedMihomoConfiguration(String profileId) async {}
 
   @override
   Future<void> stopVpn() async {

@@ -1,12 +1,53 @@
-# Phase 2b Android runtime integration
+# Phase 3.3 Android runtime contract
 
-Phase 3.3 is not integrated: `lib/core/mihomo_config_assembly.dart` is an
-offline prototype and is not a source of configuration for this service. The
-existing Kotlin projection and execution contract below remain authoritative.
-TUN addresses continue to belong to Android's Builder; native admission rejects
-address fields in the executable YAML. A Dart-to-worker FD path, settings
-consistency validation, and non-Flutter start/restart entry points still need
-to be implemented before replacing the projection.
+Mihomo executable YAML is now produced **only in Dart**. The old Kotlin
+single-VLESS projection has been removed, not retained as a fallback. Xray's
+configuration, native adapters and start path are unchanged.
+
+```text
+subscription YAML / share links / legacy comment-based profile
+  │
+  ├─ import admission preview ──> ProfileRepository metadata (counts/reasons)
+  └─ immutable source ──────────> ProfileRepository profile file
+                                  │ every explicit start/restart
+                                  ▼
+AppController → MihomoConfigAssembly → final MihomoProxyAdmission recheck
+  │  mode + MTU + IPv6 + saved node; missing selection cleared persistently
+  ▼
+MethodChannelVpnBridge (UTF-8, <= 8 MiB, sequential <= 64 KiB chunks)
+  ▼
+MainActivity → app-private MihomoConfigSidecar (.part → ready .yaml)
+  │ source SHA-256 + settings fingerprint + random one-use capability
+  │ startVpn(profileId); Intent carries capability, never YAML
+  ▼
+ProximaVpnService consumes/deletes sidecar, checks source/settings identity
+  │ MihomoProfileAssembler.verify: MTU / fixed mips stack / IPv6 consistency
+  │ VpnService.Builder owns all TUN addresses/routes
+  ▼
+MihomoVpnSession → MihomoConfiguration immutable byte snapshot
+  ▼
+MihomoBinderTransport: app-private file → read-only PFD → unlink
+  │ Binder v3 carries PFD + length/SHA-256, never configuration bytes
+  ▼
+:mihomo worker → verify/duplicate FD → unchanged NativeEngine.start
+  └─ native Go admission + constructors are authoritative
+```
+
+An import preview is not execution approval. Assembly/final admission failures
+refuse start in Dart with an error snapshot. Missing/incomplete/stale/oversized
+sidecars, Builder mismatch, worker/native errors also refuse start, without an
+Xray retry. A ready capability is removed from MainActivity before launch and
+the service destroys the file on consumption, including failure. Each Flutter
+start, profile refresh/reselection, connected node change and mode change builds
+a fresh document. Native `updateConfig`/`changeProxy` cannot trigger an old
+Kotlin rebuild. Cancellation/start rejection discards a prepared capability;
+Activity destruction also discards its pending uploads. Process-crash orphans
+have no capability in the new Activity and are never used by a later start.
+
+Tile/widget/service starts without Dart preparation deliberately fail with
+“Mihomo 설정 사이드카가 없습니다. 앱에서 다시 연결해 주세요.” They do not
+read a last-successful config. Adding headless Flutter preparation for these
+entry points is future work; their existing Xray behavior is unchanged.
 
 ## Engine boundary
 
@@ -24,48 +65,44 @@ An unexpectedly lost running worker publishes `disconnected` after retirement;
 there is no automatic reconnect. Both services remain `START_NOT_STICKY`, the
 worker remains bound-only, and always-on remains false.
 
-## Temporary profile projection (move to Dart in Phase 3)
+## Immutable storage and Dart assembly
 
-`MihomoProfileAssembler` is Android/native-independent Kotlin. It reads the
-base64url `# proxima-vless-reality-link:` comments, chooses one node using saved
-PROXY/GLOBAL selections (otherwise the first usable link), and emits flow-style
-YAML (the JSON subset accepted by Go yaml.v3). It never executes the YAML stored
-beside the metadata. Strings are quoted/escaped; unknown/duplicate URI options
-are errors, not ignored transport requests. The original profile is not changed.
+- In Mihomo mode, subscriptions retain their original YAML bytes (including
+  comments, unsupported items and provider definitions). Admission is a separate
+  metadata record: valid proxy count and skipped type/reason rows. Import/refresh
+  feedback and profile tiles show counts and up to three distinct reasons.
+- Supported share links use the generic Dart parser. A local legacy single
+  VLESS link still uses the compatible `# proxima-vless-reality-link:` format.
+  Existing legacy files are not migrated or rewritten; their links, source URL,
+  inline rules and routing metadata remain intact, including on edit/export.
+- All admitted static nodes and groups are instantiated. The app adds a `PROXY`
+  select group, ordering the saved GLOBAL/PROXY node first. A disappeared node
+  clears the saved selection, updates the offline UI to the first node and asks
+  for reselection; it never persists that fallback as a user choice.
+- Global: `MATCH,PROXY`. Direct: `MATCH,DIRECT`. Rule: admitted subscription rules
+  plus trailing `MATCH,PROXY`. Native provider definitions pass through, subject
+  to HTTPS/no-userinfo, relative path and native option/behavior policies. Missing
+  provider references fail before the channel transfer. Unknown protocols/options,
+  invalid references and unsupported rules remain in the source and are reported
+  as skipped by the import preview, not silently destroyed in storage.
+- Legacy expanded domain/IP rule metadata is reconstructed with its candidate
+  policies. Original group types were not stored by the old converter, so
+  multi-candidate legacy policies use a select group (first candidate). Compound
+  and geodata legacy conditions cannot be safely widened: rule-mode startup
+  explicitly requests refresh rather than silently replacing them with MATCH.
+- JSON is the unambiguous YAML subset sent to Kotlin. `MihomoProfileAssembler`
+  retains its historical name but **only verifies** extracted envelope fields;
+  it contains no protocol parser, node selector or YAML builder.
+- `tun` contains required enable plus MTU/stack only. IPv4/IPv6 addresses and
+  routes belong exclusively to Android Builder. The stack is fixed `mips`, not
+  the Xray-only system/gvisor/mixed preference. MTU and top-level IPv6 must match
+  Builder values, otherwise start fails. DNS is omitted: the unchanged engine
+  injects its defaults and `172.19.0.2:53` interception (see `DNS.md`).
 
-- One VLESS proxy, one `PROXY` select group referencing it.
-- TCP/raw; gRPC service name; WS path/Host; HTTPUpgrade via the admitted
-  `ws-opts.v2ray-http-upgrade` flag. TLS SNI, ALPN and client fingerprint; REALITY
-  public key/short ID and optional `xtls-rprx-vision` flow.
-- XHTTP/splitHTTP and REALITY-over-WS/HTTPUpgrade are rejected. This reflects the
-  existing native admission contract; no Go capability is widened. HTTPUpgrade
-  projection is tested, but the unchanged Dart import parser still restricts
-  the transports users can newly import in this phase.
-- `global` and `rule` -> `MATCH,PROXY`; `direct` -> `MATCH,DIRECT`.
-  **Subscription rules/providers, automatic fastest-node selection and multiple
-  live nodes are NOT translated in Phase 2b.** Saved rule-list UI can still show
-  stored metadata; it is not evidence that Mihomo executes those rules. Settings
-  explicitly warn that rule mode currently sends everything through the proxy.
-- DNS is omitted: the native engine supplies its documented protected-direct
-  DoH defaults. This differs from Xray's proxy-routed DNS; see `DNS.md`.
-- `tun.stack` is always `mips`; existing system/gvisor/mixed preference does not
-  select another native stack. MTU and top-level IPv6 match the Builder settings.
-  Native admission forbids `tun.inet4-address` and nonempty `inet6-address`.
-  Accordingly the app-owned addresses/routes stay solely in Android Builder;
-  the YAML records them as comments, not unsupported device-creation fields.
-  `172.19.0.2:53` is explicitly retained in `dns-hijack`.
-
-Projection-time validation checks the Kotlin-supported link subset, not a
-second native session. `NativeEngine.start` is the authoritative admission and
-semantic validator. Only the selected link is projected/validated. A saved
-subscription's other links are not all instantiated or certified.
-
-Phase 3 should move metadata/link parsing, stable names and selected-node
-projection, YAML encoding, full group/provider/rule translation, DNS/stack
-policy and the single-node UI limitations into the Dart config pipeline.
-Android retains only Builder/socket-protection/IPC/process lifetime ownership.
-Public-IP probing and connection closing are explicitly unsupported by the
-current Mihomo JNI surface; they never invoke `XrayProbe` as a substitute.
+Final Dart admission rechecks executable nodes/groups/provider references/rules;
+native Go admission and constructors still decide upstream value validity.
+Public-IP probing, connection closing and provider inventory/refresh remain
+unsupported by the current JNI surface; no Xray substitute is invoked.
 
 ## Runtime bridge
 
@@ -88,7 +125,9 @@ lease gate and socket-FD protection checks. Binder worker protocol v3 adds:
 
 `VpnRuntime` retains the *running* session/engine independently of saved settings.
 `MainActivity` branches core actions against that captured engine. Management is
-off-main, and only the single instantiated node is advertised while connected.
+off-main. All instantiated static nodes are advertised while connected; selected
+node changes restart through fresh Dart assembly, not a native selector API.
+Provider-backed dynamic nodes/group selection are not exposed by this JNI API.
 No native engine is instantiated/loaded in the main process for Mihomo.
 `coreInfo` names the pinned bundled version and only reports loaded when a
 session is published; it is not a native version query or packaging proof.
@@ -136,9 +175,15 @@ original descriptor rather than falsely declaring it safe to close/reuse.
 
 ## Host gates and device limitations
 
+Phase 3.3 host run (2026-11-13): Flutter tests **304 passed, 4 capture-only
+tests skipped**; Kotlin discovery **4/4 passed** (26 boundary + 10 runtime
+cases, settings suite and source-wiring assertions); JDK 21 `:app:assembleDebug`
+**successful**, 215 actionable tasks; root `bash build.sh test` **7/7 native
+module gates successful**. No `native/` source changes are part of this phase.
+
 See [`../native/mihomo-engine/VERIFICATION.md`](../native/mihomo-engine/VERIFICATION.md)
 for gate commands/results and the required device checklist. Host tests execute
-the production pure Kotlin dispatch, assembler, lease, handshake and retirement
+the production pure Kotlin dispatch, sidecar, consistency checker, lease, handshake and retirement
 fence. Wiring assertions inspect the Android source; they do **not** emulate
 Binder, real PFD duplication, actual process death, or Android TUN traffic.
 Successful native host gates and APK assembly cannot replace those checks.
@@ -146,5 +191,5 @@ Successful native host gates and APK assembly cannot replace those checks.
 Remaining risks: native library actors still require whole-process exit; native
 Stop/handshake RPC hangs are not falsely bypassed by a timeout; actual Android
 process scheduling/binding race behavior remains unverified. LAN exclusions on
-pre-33 devices have the existing Builder platform limitation; this temporary
-MATCH-only Mihomo projection adds no separate LAN-direct routing policy.
+pre-33 devices have the existing Builder platform limitation; the app adds no
+separate LAN-direct policy beyond the subscription rules.

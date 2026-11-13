@@ -31,7 +31,7 @@ rules:
     expect(result['proxy-groups'][1]['proxies'], ['two', 'one']);
     expect(result['rules'], ['DOMAIN,example.com,regional', 'MATCH,PROXY']);
     expect(result['tun']['mtu'], 1400);
-    expect(result['tun']['inet6-address'], isEmpty);
+    expect(result['tun'].containsKey('inet6-address'), isFalse);
     expect(result['ipv6'], true);
   });
 

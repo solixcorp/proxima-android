@@ -13,7 +13,27 @@ data class StoredProfile(
     val sourceUrl: String?,
     val updatedAt: Long,
     val subscriptionInfo: StoredSubscriptionInfo? = null,
+    val admissionSummary: StoredAdmissionSummary? = null,
 )
+
+data class StoredAdmissionSummary(val validProxyCount: Int, val skipped: List<Map<String, String>>) {
+    fun asMap(): Map<String, Any> = mapOf("validProxyCount" to validProxyCount, "skipped" to skipped)
+    companion object {
+        fun fromMap(value: Map<*, *>): StoredAdmissionSummary = StoredAdmissionSummary(
+            (value["validProxyCount"] as? Number)?.toInt()?.coerceAtLeast(0) ?: 0,
+            (value["skipped"] as? List<*>)?.filterIsInstance<Map<*, *>>()?.map {
+                mapOf("type" to it["type"].toString().take(80), "reason" to it["reason"].toString().take(300))
+            } ?: emptyList(),
+        )
+        fun fromJson(value: JSONObject): StoredAdmissionSummary {
+            val rows = value.optJSONArray("skipped") ?: JSONArray()
+            return StoredAdmissionSummary(value.optInt("validProxyCount").coerceAtLeast(0),
+                (0 until rows.length()).mapNotNull { i -> rows.optJSONObject(i)?.let {
+                    mapOf("type" to it.optString("type"), "reason" to it.optString("reason"))
+                } })
+        }
+    }
+}
 
 data class StoredSubscriptionInfo(
     val upload: Long = 0,
@@ -65,6 +85,7 @@ class ProfileRepository(context: Context) {
                 "updatedAt" to profile.updatedAt,
                 "isActive" to (profile.id == active),
                 "subscriptionInfo" to profile.subscriptionInfo?.asMap(),
+                "admissionSummary" to profile.admissionSummary?.asMap(),
             )
         }
     }
@@ -88,6 +109,7 @@ class ProfileRepository(context: Context) {
         sourceUrl: String?,
         content: String,
         subscriptionInfo: StoredSubscriptionInfo? = null,
+        admissionSummary: StoredAdmissionSummary? = null,
     ): Map<String, Any?> {
         require(name.isNotBlank()) { "Profile name is required" }
         require(content.isNotBlank()) { "Profile content is required" }
@@ -102,6 +124,7 @@ class ProfileRepository(context: Context) {
             sourceUrl = sourceUrl?.trim()?.takeIf { it.isNotEmpty() },
             updatedAt = System.currentTimeMillis(),
             subscriptionInfo = subscriptionInfo ?: existing.takeIf { it >= 0 }?.let { profiles[it].subscriptionInfo },
+            admissionSummary = admissionSummary,
         )
         writeAtomically(profileFile(profileId), content)
         if (existing >= 0) profiles[existing] = next else profiles.add(0, next)
@@ -151,6 +174,7 @@ class ProfileRepository(context: Context) {
                             ?: sourceFromStoredContent(profileFile(id)),
                         updatedAt = item.optLong("updatedAt"),
                         subscriptionInfo = item.optJSONObject("subscriptionInfo")?.let(StoredSubscriptionInfo::fromJson),
+                        admissionSummary = item.optJSONObject("admissionSummary")?.let(StoredAdmissionSummary::fromJson),
                     ),
                 )
             }
@@ -168,6 +192,7 @@ class ProfileRepository(context: Context) {
                     .put("updatedAt", profile.updatedAt)
                     .apply {
                         profile.subscriptionInfo?.let { put("subscriptionInfo", JSONObject(it.asMap())) }
+                        profile.admissionSummary?.let { put("admissionSummary", JSONObject(it.asMap())) }
                     },
             )
         }

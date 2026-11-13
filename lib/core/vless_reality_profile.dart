@@ -319,6 +319,11 @@ class VlessRealityProfile {
     }
   }
 
+  /// Read-only compatibility view; callers must not rewrite the stored profile.
+  static Map<String, Object?>? routingMetadataFromStoredConfig(
+    String content,
+  ) => _routingMetadata(content);
+
   List<String> _proxyYaml(String nodeName) => [
     '  - name: ${_yaml(nodeName)}',
     '    type: vless',

@@ -60,14 +60,16 @@ class ProximaVpnService : AndroidVpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> intent.getStringExtra(EXTRA_PROFILE_ID)?.let(::beginConnection) ?: stopSelf()
+            ACTION_START -> intent.getStringExtra(EXTRA_PROFILE_ID)?.let {
+                beginConnection(it, intent.getStringExtra(EXTRA_MIHOMO_CONFIG))
+            } ?: stopSelf()
             ACTION_STOP -> disconnectAndStop()
             else -> if (VpnRuntime.snapshot()["state"] == "disconnected") stopSelf()
         }
         return START_NOT_STICKY
     }
 
-    private fun beginConnection(profileId: String) {
+    private fun beginConnection(profileId: String, mihomoConfigToken: String?) {
         val repository = ProfileRepository(this)
         val profile = repository.profile(profileId) ?: run {
             fail(null, "선택한 프로필을 찾을 수 없습니다.")
@@ -88,7 +90,7 @@ class ProximaVpnService : AndroidVpnService() {
             runCatching {
                 stopCurrentEngine()
                 if (token != generation.get() || stopping || destroyed) return@runCatching
-                establishTunnel(profile, repository.readContent(profileId), token, preserveSession)
+                establishTunnel(profile, repository.readContent(profileId), token, preserveSession, mihomoConfigToken)
             }.onFailure {
                 if (token == generation.get() && !stopping) {
                     fail(profile, readableError(it), token)
@@ -102,8 +104,17 @@ class ProximaVpnService : AndroidVpnService() {
         content: String,
         token: Int,
         preserveSession: Boolean,
+        mihomoConfigToken: String?,
     ) {
         val settings = VpnSettingsRepository(this).load()
+        // One-use Dart snapshot only; no Kotlin projection or stale sidecar
+        // fallback, including non-Flutter tile/widget/service entry points.
+        val mihomoConfig = if (settings.engine == "mihomo") {
+            val bytes = MihomoConfigSidecar(File(filesDir, "mihomo-configs")).consume(
+                mihomoConfigToken, profile.id, content,
+                MihomoConfigSidecar.settingsKey(settings.mtu, settings.ipv6, settings.mode))
+            MihomoRuntimeConfig(bytes, settings.mtu, settings.ipv6)
+        } else null
         synchronized(tunnelLock) {
             if (destroyed) return
             activeEngine = settings.engine
@@ -160,7 +171,7 @@ class ProximaVpnService : AndroidVpnService() {
             setUnderlyingNetworks(underlying.network?.let { arrayOf(it) })
         }
         dispatchVpnEngine(settings.engine, xray = {}, mihomo = {
-            establishMihomo(profile, content, settings, fd, token, preserveSession)
+            establishMihomo(profile, checkNotNull(mihomoConfig), settings, fd, token, preserveSession)
         })
         if (settings.engine == "mihomo") return
         XrayConfig.VpnSettingsRepositoryHolder.selected = { id -> VpnSettingsRepository(this).selectedProxies(id) }
@@ -206,11 +217,9 @@ class ProximaVpnService : AndroidVpnService() {
     }
 
     private fun establishMihomo(
-        profile: StoredProfile, content: String, settings: NativeVpnSettings,
+        profile: StoredProfile, config: MihomoRuntimeConfig, settings: NativeVpnSettings,
         fd: Int, token: Int, preserveSession: Boolean,
     ) {
-        val config = MihomoProfileAssembler.build(profile.name, content, settings.mtu, settings.ipv6,
-            settings.mode, VpnSettingsRepository(this).selectedProxies(profile.id))
         val session = MihomoVpnSession(this) {
             // No auto-rebind/retry: only a new ACTION_START may create a worker.
             // Death can already be queued on main when onDestroy shuts down
@@ -242,7 +251,7 @@ class ProximaVpnService : AndroidVpnService() {
             return
         }
         VpnRuntime.setMihomoSession(session)
-        VpnRuntime.connected(profile, config.node.takeUnless { settings.mode == "direct" }, settings.mode, preserveSession)
+        VpnRuntime.connected(profile, config.selected.takeUnless { settings.mode == "direct" }, settings.mode, preserveSession)
         updateNotification("보호됨")
         startMihomoTrafficUpdates(token, preserveSession, session)
     }
@@ -517,6 +526,7 @@ class ProximaVpnService : AndroidVpnService() {
         const val ACTION_START = "kr.kimrasng.proxima.action.START"
         const val ACTION_STOP = "kr.kimrasng.proxima.action.STOP"
         const val EXTRA_PROFILE_ID = "profile_id"
+        const val EXTRA_MIHOMO_CONFIG = "mihomo_config_token"
         private const val CHANNEL_ID = "proxima_vpn"
         private const val NOTIFICATION_ID = 4301
         private const val IPV4_ADDRESS = "172.19.0.1"
