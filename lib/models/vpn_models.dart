@@ -223,6 +223,19 @@ enum AppThemeMode {
   );
 }
 
+enum VpnEngine {
+  xray('Xray'),
+  mihomo('Mihomo');
+
+  const VpnEngine(this.label);
+  final String label;
+
+  static VpnEngine fromWire(Object? value) => values.firstWhere(
+    (engine) => engine.name == value,
+    orElse: () => VpnEngine.xray,
+  );
+}
+
 class VpnSettings {
   const VpnSettings({
     this.stack = 'mixed',
@@ -230,6 +243,7 @@ class VpnSettings {
     this.mtu = 1400,
     this.mode = OutboundMode.rule,
     this.themeMode = AppThemeMode.system,
+    this.engine = VpnEngine.xray,
   });
 
   factory VpnSettings.fromMap(Map<Object?, Object?> map) {
@@ -239,6 +253,7 @@ class VpnSettings {
       mtu: _integer(map['mtu'], fallback: 1400),
       mode: OutboundMode.fromWire(map['mode']),
       themeMode: AppThemeMode.fromWire(map['themeMode']),
+      engine: VpnEngine.fromWire(map['engine']),
     );
   }
 
@@ -247,6 +262,7 @@ class VpnSettings {
   final int mtu;
   final OutboundMode mode;
   final AppThemeMode themeMode;
+  final VpnEngine engine;
 
   VpnSettings copyWith({
     String? stack,
@@ -254,6 +270,7 @@ class VpnSettings {
     int? mtu,
     OutboundMode? mode,
     AppThemeMode? themeMode,
+    VpnEngine? engine,
   }) {
     return VpnSettings(
       stack: stack ?? this.stack,
@@ -261,6 +278,7 @@ class VpnSettings {
       mtu: mtu ?? this.mtu,
       mode: mode ?? this.mode,
       themeMode: themeMode ?? this.themeMode,
+      engine: engine ?? this.engine,
     );
   }
 
@@ -270,6 +288,7 @@ class VpnSettings {
     'mtu': mtu,
     'mode': mode.wireName,
     'themeMode': themeMode.name,
+    'engine': engine.name,
   };
 }
 

@@ -722,6 +722,9 @@ class AppController extends ChangeNotifier {
     await bridge.saveSettings(next);
   }
 
+  Future<void> setEngine(VpnEngine engine) =>
+      updateSettings(settings.copyWith(engine: engine));
+
   Future<void> setMode(OutboundMode mode) async {
     if (snapshot.isBusy) {
       throw StateError('연결 상태가 바뀐 뒤 모드를 변경해 주세요.');

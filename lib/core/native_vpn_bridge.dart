@@ -27,6 +27,7 @@ abstract interface class VpnBridge {
   Future<bool> requestVpnPermission();
   Future<void> startVpn(String profileId);
   Future<void> stopVpn();
+  /// The engine setting is persisted only; VPN execution still uses Xray.
   Future<VpnSettings> loadSettings();
   Future<void> saveSettings(VpnSettings settings);
   Future<ImportedProfile?> pickProfileFile();

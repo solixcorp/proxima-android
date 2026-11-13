@@ -9,8 +9,9 @@ data class NativeVpnSettings(
     val mtu: Int,
     val mode: String,
     val themeMode: String = "system",
+    val engine: String = "xray",
 ) {
-    fun asMap(): Map<String, Any> = mapOf("stack" to stack, "ipv6" to ipv6, "mtu" to mtu, "mode" to mode, "themeMode" to themeMode)
+    fun asMap(): Map<String, Any> = mapOf("stack" to stack, "ipv6" to ipv6, "mtu" to mtu, "mode" to mode, "themeMode" to themeMode, "engine" to engine)
 }
 
 class VpnSettingsRepository(context: Context) {
@@ -22,9 +23,10 @@ class VpnSettingsRepository(context: Context) {
         mtu = preferences.getInt("mtu", 1400).takeIf { it in ALLOWED_MTUS } ?: 1400,
         mode = preferences.getString("mode", "rule")?.takeIf { it in ALLOWED_MODES } ?: "rule",
         themeMode = preferences.getString("themeMode", "system")?.takeIf { it in ALLOWED_THEMES } ?: "system",
+        engine = preferences.getString("engine", "xray")?.takeIf { it in ALLOWED_ENGINES } ?: "xray",
     )
 
-    fun save(stack: String?, ipv6: Boolean?, mtu: Int?, mode: String?, themeMode: String? = null) {
+    fun save(stack: String?, ipv6: Boolean?, mtu: Int?, mode: String?, themeMode: String? = null, engine: String? = null) {
         val current = load()
         preferences.edit()
             .putString("stack", stack?.takeIf { it in ALLOWED_STACKS } ?: current.stack)
@@ -32,6 +34,7 @@ class VpnSettingsRepository(context: Context) {
             .putInt("mtu", mtu?.takeIf { it in ALLOWED_MTUS } ?: current.mtu)
             .putString("mode", mode?.takeIf { it in ALLOWED_MODES } ?: current.mode)
             .putString("themeMode", themeMode?.takeIf { it in ALLOWED_THEMES } ?: current.themeMode)
+            .putString("engine", engine?.takeIf { it in ALLOWED_ENGINES } ?: current.engine)
             .apply()
     }
 
@@ -60,5 +63,6 @@ class VpnSettingsRepository(context: Context) {
         private val ALLOWED_MTUS = setOf(1280, 1400, 1500, 9000)
         private val ALLOWED_MODES = setOf("rule", "global", "direct")
         private val ALLOWED_THEMES = setOf("system", "light", "dark")
+        private val ALLOWED_ENGINES = setOf("xray", "mihomo")
     }
 }

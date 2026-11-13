@@ -113,6 +113,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                         mtu = call.argument("mtu"),
                         mode = call.argument("mode"),
                         themeMode = call.argument("themeMode"),
+                        engine = call.argument("engine"),
                     )
                     result.success(null)
                 }

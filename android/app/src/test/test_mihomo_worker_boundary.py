@@ -31,11 +31,25 @@ class MihomoWorkerBoundaryHostTest(unittest.TestCase):
             )
         ]
         files.append(source / "test" / package / "MihomoBoundaryHostTest.kt")
+        self.run_host(files, "MihomoBoundaryHostTest", r"PASS [1-9][0-9]* deterministic Mihomo boundary host tests")
+
+    def test_settings_engine_persistence_and_defaults(self):
+        source = Path(__file__).resolve().parents[1]
+        package = Path("kotlin/kr/kimrasng/proxima/client/android/proxima")
+        files = [
+            source / "main" / package / "VpnSettingsRepository.kt",
+            source / "test" / package / "VpnSettingsHostTest.kt",
+            source / "test/fixtures/settings/Context.kt",
+            source / "test/fixtures/settings/JSONObject.kt",
+        ]
+        self.run_host(files, "VpnSettingsHostTest", r"PASS VpnSettings engine persistence and defaults")
+
+    def run_host(self, files, test_class, expected):
         java_home = os.environ.get("JAVA_HOME")
         java = str(Path(java_home) / "bin/java") if java_home else shutil.which("java")
         self.assertTrue(java, "JDK 17/21 is required; set JAVA_HOME")
         compiler = os.environ.get("KOTLINC") or shutil.which("kotlinc")
-        main_class = "kr.kimrasng.proxima.client.android.proxima.MihomoBoundaryHostTest"
+        main_class = f"kr.kimrasng.proxima.client.android.proxima.{test_class}"
 
         def run(command):
             result = subprocess.run(command, capture_output=True, text=True, timeout=180)
@@ -81,7 +95,7 @@ class MihomoWorkerBoundaryHostTest(unittest.TestCase):
                 ])
                 runtime = os.pathsep.join((target, jars[1]))
             stdout = run([java, "-cp", runtime, main_class])
-            self.assertRegex(stdout, r"PASS [1-9][0-9]* deterministic Mihomo boundary host tests")
+            self.assertRegex(stdout, expected)
             print(stdout, end="")
 
 

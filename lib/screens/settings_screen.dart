@@ -143,6 +143,26 @@ class SettingsScreen extends StatelessWidget {
           child: Column(
             children: [
               ListTile(
+                leading: const Icon(Icons.settings_ethernet_rounded),
+                title: const Text('VPN 엔진'),
+                subtitle: const Text('선택만 저장되며 현재는 항상 Xray로 연결합니다.'),
+                trailing: DropdownButton<VpnEngine>(
+                  key: const Key('vpn_engine'),
+                  value: settings.engine,
+                  underline: const SizedBox.shrink(),
+                  items: VpnEngine.values
+                      .map((engine) => DropdownMenuItem(
+                            value: engine,
+                            child: Text(engine.label),
+                          ))
+                      .toList(),
+                  onChanged: (engine) {
+                    if (engine != null) controller.setEngine(engine);
+                  },
+                ),
+              ),
+              const Divider(height: 1, indent: 56),
+              ListTile(
                 leading: const Icon(Icons.memory_rounded),
                 title: const Text('Xray TUN'),
                 subtitle: const Text('사용자 공간 Xray 네트워크 스택'),

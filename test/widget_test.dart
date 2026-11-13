@@ -21,6 +21,51 @@ import 'package:proxima/state/app_controller.dart';
 import 'package:proxima/widgets/app_page.dart';
 
 void main() {
+  test('engine settings default and round trip', () {
+    expect(const VpnSettings().engine, VpnEngine.xray);
+    expect(VpnSettings.fromMap(const {}).engine, VpnEngine.xray);
+    expect(VpnSettings.fromMap(const {'engine': 'invalid'}).engine, VpnEngine.xray);
+    for (final engine in VpnEngine.values) {
+      final settings = const VpnSettings(mtu: 1500).copyWith(engine: engine);
+      final restored = VpnSettings.fromMap(settings.toMap());
+      expect(restored.engine, engine);
+      expect(restored.copyWith(ipv6: false).engine, engine);
+      expect(restored.mtu, 1500);
+    }
+  });
+
+  testWidgets('engine selection is saved and survives reload', (tester) async {
+    final bridge = _ThemeBridge();
+    final controller = AppController(bridge);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await tester.pumpWidget(ProximaApp(controller: controller));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.more_horiz_rounded).last);
+    await tester.pumpAndSettle();
+    final dropdown = find.byKey(const Key('vpn_engine'));
+    await tester.scrollUntilVisible(
+      dropdown,
+      300,
+      scrollable: find.descendant(
+        of: find.byType(SettingsScreen),
+        matching: find.byType(Scrollable),
+      ).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(dropdown);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mihomo').last);
+    await tester.pumpAndSettle();
+    expect(controller.settings.engine, VpnEngine.mihomo);
+    expect(bridge.saved.engine, VpnEngine.mihomo);
+    final reloaded = AppController(bridge);
+    addTearDown(reloaded.dispose);
+    await reloaded.initialize();
+    expect(reloaded.settings.engine, VpnEngine.mihomo);
+    expect(tester.takeException(), isNull);
+  });
+
   test('theme settings round trip and preserve tunnel settings', () {
     expect(VpnSettings.fromMap(const {}).themeMode, AppThemeMode.system);
     expect(
