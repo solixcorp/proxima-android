@@ -7,7 +7,10 @@ require (
 	github.com/metacubex/sing v0.5.8
 	github.com/metacubex/sing-tun v0.4.28
 	golang.org/x/sys v0.30.0
+	proxima.local/mihomo-dns v0.0.0
 )
+
+replace proxima.local/mihomo-dns => ../mihomo-dns
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect

@@ -21,6 +21,7 @@ import (
 	M "github.com/metacubex/sing/common/metadata"
 	N "github.com/metacubex/sing/common/network"
 	"golang.org/x/sys/unix"
+	mihomodns "proxima.local/mihomo-dns"
 )
 
 // Options describes the already-established raw-IP device. MTU must match the
@@ -29,6 +30,8 @@ type Options struct {
 	Stack                string
 	MTU                  uint32
 	TCPCongestionControl string
+	// Optional pinned sing_tun DNS hijack destinations. DNS must be initialized.
+	DNSHijack []netip.AddrPort
 }
 
 // Session is a single-use packet-stack owner. A successful OpenBorrowed means
@@ -111,6 +114,12 @@ func OpenBorrowed(fd int, options Options, tunnel C.Tunnel) (session *Session, e
 		return nil, fmt.Errorf("create Mihomo packet handler: %w", err)
 	}
 	s.handler = &flowHandler{ListenerHandler: handler, conns: make(map[net.Conn]struct{})}
+	if len(options.DNSHijack) != 0 {
+		s.handler.dns, err = mihomodns.NewHijack(options.DNSHijack)
+		if err != nil {
+			return nil, fmt.Errorf("initialize DNS interception: %w", err)
+		}
+	}
 	stack, err := tun.NewStack(options.Stack, tun.StackOptions{
 		Context:              ctx,
 		Tun:                  s.device,
@@ -173,6 +182,9 @@ func (s *Session) Close() error {
 	}
 	if s.handler != nil {
 		s.handler.calls.Wait()
+		if s.handler.dns != nil {
+			s.handler.dns.Wait()
+		}
 	}
 	s.closeErr = errors.Join(deviceErr, stackErr)
 	return s.closeErr
@@ -186,6 +198,7 @@ type flowHandler struct {
 	stopped bool
 	conns   map[net.Conn]struct{}
 	calls   sync.WaitGroup
+	dns     *mihomodns.Session
 }
 
 func (h *flowHandler) NewConnection(ctx context.Context, conn net.Conn, metadata M.Metadata) error {
@@ -205,6 +218,11 @@ func (h *flowHandler) NewConnection(ctx context.Context, conn net.Conn, metadata
 		h.mu.Unlock()
 		h.calls.Done()
 	}()
+	if h.dns != nil {
+		if handled, err := h.dns.HandleTCP(ctx, conn, metadata.Destination.AddrPort()); handled {
+			return err
+		}
+	}
 	return h.ListenerHandler.NewConnection(ctx, conn, metadata)
 }
 
@@ -218,6 +236,13 @@ func (h *flowHandler) NewPacket(ctx context.Context, key netip.AddrPort, buffer 
 	h.calls.Add(1)
 	h.mu.Unlock()
 	defer h.calls.Done()
+	if h.dns != nil && h.dns.Matches(metadata.Destination.AddrPort()) {
+		writer := init(nil)
+		// Own this dispatcher before dropping the callback's admission count.
+		h.calls.Add(1)
+		go func() { defer h.calls.Done(); _, _ = h.dns.HandleUDP(ctx, buffer, metadata.Destination, writer) }()
+		return
+	}
 	h.ListenerHandler.NewPacket(ctx, key, buffer, metadata, init)
 }
 
@@ -229,6 +254,9 @@ func (h *flowHandler) PrepareConnection(string, M.Socksaddr, M.Socksaddr, tun.Di
 func (h *flowHandler) stopAdmission() {
 	h.mu.Lock()
 	h.stopped = true
+	if h.dns != nil {
+		h.dns.Stop()
+	}
 	conns := make([]net.Conn, 0, len(h.conns))
 	for conn := range h.conns {
 		conns = append(conns, conn)

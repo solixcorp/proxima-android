@@ -2,8 +2,9 @@
 
 This is an independently built **mips-only TCP/UDP packet component**, not a
 complete Mihomo runtime or an Android VPN. It does not replace the app's engine,
-parse/apply configuration, initialize providers, install DNS, or report connected.
-It is not wired into `native/mihomo/`, JNI, Dart, Gradle, or Android services.
+parse/apply configuration, initialize providers, initialize a DNS resolver, or
+report connected. It is used by the standalone engine/JNI adapter, not wired into
+Dart, Gradle, or Android services.
 Other stack selections, including an unspecified stack, fail explicitly.
 
 The production path calls the actual pinned Mihomo
@@ -84,9 +85,19 @@ prevents a delayed handler from delivering new work through this component after
 Close. Existing UDP packets and work retained/spawned by the supplied tunnel
 remain that tunnel's responsibility. ICMP is explicitly dropped; this component
 does not open a raw ICMP socket or manufacture successful pings. DNS packets are
-ordinary UDP/TCP; no global DNS hijacking is installed.
+ordinary UDP/TCP by default; no global DNS hijacking is installed. An owner may
+explicitly supply `Options.DNSHijack` after configuring real protected native DNS.
+The runtime then owns a `mihomo-dns.NewHijack` seam: UDP dispatchers are joined,
+TCP is synchronous, Stop cancels DNS before interrupting packet writers, and
+Close drains every dispatcher/relay. Empty options retain ordinary packet behavior.
 
-## Blocking DNS integration gap
+## DNS integration ownership
+
+Phase 1.2 of `../mihomo-engine` now initializes native DNS and supplies targets
+through the raw `sing_tun.New` path. It scopes/closes DNS sockets before releasing
+the lease, but still requires process exit for unexported resolver workers. The
+runtime never configures those globals itself. The original constraints below
+explain why an ordinary tunnel alone remains insufficient.
 
 The current Android service advertises `172.19.0.2` as VPN DNS
 (`ProximaVpnService.kt:120`, `XrayConfig.kt:19`) and forces its /32 route into
@@ -119,7 +130,8 @@ Its UDP worker must retain/drop packets correctly and expose its own stop/join
 operation. This component's Close drains delivery into that wrapper; it cannot
 join work the wrapper retains after HandleUDPPacket returns. The integration
 owner must then stop/join DNS before releasing the protected lease.
-No DNS module is imported or wired by this component.
+The optional `Options.DNSHijack` path now imports the seam and implements this
+callback/dispatcher ordering; omitted options do not install it.
 
 For the planned process-per-session architecture, this component and the
 foundation lease must run in the same child process. Transfer the TUN through

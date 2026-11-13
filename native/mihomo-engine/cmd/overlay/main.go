@@ -18,6 +18,8 @@ var pins = map[string]string{
 	"listener/sing_tun/server.go": "6aec285afd721a40a859dac8b6539c1c481d2c53c7ca33eb10e2f40eb992e7a1",
 	"tunnel/tunnel.go":            "bd0818dddd04779aad3f078819b3ca050bd8bdce29ba57e5a377770539278596",
 	"config/config.go":            "14d577a607eb5fff79513057bc16052520b62731d9af9817481f3baf980e8653",
+	"tunnel/dns_dialer.go":        "1324413474edc70c52510cb44576ae084f3f7875e5ecf4b34ddbfce97f6a0003",
+	"dns/doh.go":                  "978559eb93b791a4269c1993c866322b2851f20e75657b246dc6dd63cc9f0073",
 }
 
 func patch(path string, source []byte) ([]byte, error) {
@@ -32,6 +34,15 @@ func patch(path string, source []byte) ([]byte, error) {
 		text = strings.Replace(text, old, next, 1)
 	}
 	switch path {
+	case "tunnel/dns_dialer.go":
+		replace(`"context"`, "\"context\"\n\"io\"\n\"sync\"")
+		replace("func (d *DNSDialer) DialContext(", "func (d *DNSDialer) proximaDialContext(")
+		replace("func (d *DNSDialer) ListenPacket(", "func (d *DNSDialer) proximaListenPacket(")
+		text += dnsDialerSeam
+	case "dns/doh.go":
+		// No redirect may downgrade HTTPS, change authority or select another
+		// upstream. Keep upstream TLS verification and its protected transport.
+		replace("client := &http.Client{", "client := &http.Client{\nCheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf(\"DNS upstream redirects are forbidden\") },")
 	case "config/config.go":
 		replace("func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {", `func ParseRawConfig(rawCfg *RawConfig) (*Config, error) { return parseRawConfig(rawCfg, false) }
 func ParseRawConfigWithError(rawCfg *RawConfig) (*Config, error) { return parseRawConfig(rawCfg, true) }
@@ -76,9 +87,16 @@ func ProximaStopPackets() {
 // platform tun.New: adoption/close-on-failure differs across OS constructors.
 // OpenBorrowed owns its own duplicate and joins the real sing-tun packet loops.
 if options.ProximaRawFD {
- packets, openErr := runtimepacket.OpenBorrowed(options.FileDescriptor, runtimepacket.Options{
-  Stack: strings.ToLower(options.Stack.String()), MTU: options.MTU,
-  TCPCongestionControl: options.CongestionController,
+	var dnsTargets []netip.AddrPort
+	for _, target := range options.DNSHijack {
+	 addr, parseErr := netip.ParseAddrPort(target)
+	 if parseErr != nil { return nil, fmt.Errorf("parse dns-hijack: %w", parseErr) }
+	 dnsTargets = append(dnsTargets, addr)
+	}
+  packets, openErr := runtimepacket.OpenBorrowed(options.FileDescriptor, runtimepacket.Options{
+   Stack: strings.ToLower(options.Stack.String()), MTU: options.MTU,
+   TCPCongestionControl: options.CongestionController,
+	 DNSHijack: dnsTargets,
  }, tunnel)
  if openErr != nil { return nil, openErr }
  return &Listener{options: options, rawPackets: packets, addrStr: "PROXIMA-RAW-TUN"}, nil
@@ -119,7 +137,9 @@ func ApplyConfigWithError(cfg *config.Config) (*sing_tun.Listener, error) {
  updateProxies(cfg.Proxies, cfg.Providers)
  updateRules(cfg.Rules, cfg.SubRules, cfg.RuleProviders)
  updateHosts(cfg.Hosts)
- updateGeneral(cfg.General, true)
+  updateGeneral(cfg.General, true)
+	if err := tunnel.ProximaStartDNS(); err != nil { return nil, err }
+	updateDNS(cfg.DNS, cfg.General.IPv6)
  dispatcher, err := sniffer.NewDispatcher(cfg.Sniffer)
  if err != nil { return nil, fmt.Errorf("sniffer: %w", err) }
  tunnel.UpdateSniffer(dispatcher)
@@ -139,7 +159,8 @@ func StopConfig(cfg *config.Config) error {
  mux.Lock()
  defer mux.Unlock()
  tunnel.OnSuspend()
- tunnel.ProximaStopPackets()
+  tunnel.ProximaStopPackets()
+	tunnel.ProximaStopDNS()
  Shutdown()
  var result error
  for _, provider := range cfg.Providers { if closer, ok := provider.(interface{ Close() error }); ok { result = errors.Join(result, closer.Close()) } }

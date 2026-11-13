@@ -20,12 +20,18 @@ var topLevel = map[string]bool{
 }
 
 var nestedKeys = map[string]map[string]bool{
-	"tun":     {"enable": true, "stack": true, "mtu": true, "auto-route": true, "auto-detect-interface": true, "dns-hijack": true, "inet6-address": true, "congestion-controller": true, "disable-icmp-forwarding": true},
-	"dns":     {"enable": true},
+	"tun": {"enable": true, "stack": true, "mtu": true, "auto-route": true, "auto-detect-interface": true, "dns-hijack": true, "inet6-address": true, "congestion-controller": true, "disable-icmp-forwarding": true},
+	"dns": {"enable": true, "enhanced-mode": true, "nameserver": true, "default-nameserver": true,
+		"fallback": true, "ipv6": true, "ipv6-timeout": true, "prefer-h3": true,
+		"use-hosts": true, "use-system-hosts": true, "respect-rules": true,
+		"cache-algorithm": true, "cache-max-size": true},
 	"profile": {"store-selected": true, "store-fake-ip": true},
 }
 
 func admit(source []byte, raw *config.RawConfig) error {
+	if raw.DNS.EnhancedMode.String() == "fake-ip" {
+		return fmt.Errorf("dns enhanced-mode fake-ip: not supported yet")
+	}
 	var node yaml.Node
 	if err := yaml.NewDecoder(bytes.NewReader(source)).Decode(&node); err != nil {
 		return err
@@ -55,14 +61,10 @@ func admit(source []byte, raw *config.RawConfig) error {
 			}
 		}
 	}
-	if raw.DNS.Enable {
-		return fmt.Errorf("engine DNS configuration not implemented (Phase 1.2)")
+	if err := admitDNS(node.Content[0], raw); err != nil {
+		return err
 	}
-	// Even disabled DNS fields may perform semantic geodata/fake-IP work.
 	defaults := config.DefaultRawConfig()
-	if !reflect.DeepEqual(raw.DNS, defaults.DNS) {
-		return fmt.Errorf("non-default DNS options not implemented (Phase 1.2)")
-	}
 	if raw.Profile.StoreFakeIP || raw.Profile.StoreSelected {
 		return fmt.Errorf("profile persistence not implemented")
 	}
@@ -80,9 +82,7 @@ func admit(source []byte, raw *config.RawConfig) error {
 	// never to the raw os.File mips path. Non-default requests are still rejected.
 	allowedTun.RecvMsgX = defaults.Tun.RecvMsgX
 	allowedTun.ProcessorsPerChannel = defaults.Tun.ProcessorsPerChannel
-	if len(raw.Tun.DNSHijack) == 0 {
-		allowedTun.DNSHijack = raw.Tun.DNSHijack
-	}
+	allowedTun.DNSHijack = raw.Tun.DNSHijack
 	if len(raw.Tun.Inet6Address) == 0 {
 		allowedTun.Inet6Address = raw.Tun.Inet6Address
 	}

@@ -26,11 +26,12 @@ var (
 // installing its protected socket hook. Do not replace either global while it
 // is running. An old process must exit before another session uses its state.
 type Session struct {
-	targets map[netip.AddrPort]struct{}
-	mu      sync.Mutex
-	stopped bool
-	active  map[*operation]struct{}
-	calls   sync.WaitGroup
+	targets  map[netip.AddrPort]struct{}
+	wildcard bool
+	mu       sync.Mutex
+	stopped  bool
+	active   map[*operation]struct{}
+	calls    sync.WaitGroup
 }
 
 type operation struct {
@@ -41,15 +42,27 @@ type operation struct {
 // New selects only the supplied exact destinations. It has no implicit Android
 // address, wildcard hijacking, DNS config rewrite, or routing fallback.
 func New(targets []netip.AddrPort) (*Session, error) {
+	return newRelaySession(targets, false)
+}
+
+// NewHijack additionally accepts explicit unspecified-address :53 targets,
+// matching pinned sing_tun's wildcard semantics for BOTH UDP and TCP.
+func NewHijack(targets []netip.AddrPort) (*Session, error) {
+	return newRelaySession(targets, true)
+}
+
+func newRelaySession(targets []netip.AddrPort, allowWildcard bool) (*Session, error) {
 	if len(targets) == 0 {
 		return nil, ErrTargets
 	}
 	selected := make(map[netip.AddrPort]struct{}, len(targets))
+	wildcard := false
 	for _, target := range targets {
-		if !target.IsValid() || target.Port() == 0 || target.Addr().IsUnspecified() {
+		if !target.IsValid() || target.Port() == 0 || (target.Addr().IsUnspecified() && (!allowWildcard || target.Port() != 53)) {
 			return nil, fmt.Errorf("%w: %s", ErrTargets, target)
 		}
 		selected[target] = struct{}{}
+		wildcard = wildcard || target.Addr().IsUnspecified()
 	}
 	if resolver.DefaultService == nil {
 		return nil, ErrService
@@ -57,14 +70,14 @@ func New(targets []netip.AddrPort) (*Session, error) {
 	if dialer.DefaultSocketHook == nil {
 		return nil, ErrSocketHook
 	}
-	return &Session{targets: selected, active: make(map[*operation]struct{})}, nil
+	return &Session{targets: selected, wildcard: wildcard, active: make(map[*operation]struct{})}, nil
 }
 
 // Matches allows the TUN owner to select the path before obtaining a UDP writer.
 // Matching stays stable after Stop so late DNS packets cannot escape to routing.
 func (s *Session) Matches(destination netip.AddrPort) bool {
 	_, ok := s.targets[destination]
-	return ok
+	return ok || (s.wildcard && destination.Port() == 53)
 }
 
 func (s *Session) begin(ctx context.Context) (*operation, error) {

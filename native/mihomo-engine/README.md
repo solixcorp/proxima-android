@@ -1,6 +1,6 @@
 # Mihomo engine adapter and configuration building blocks
 
-This module now contains the standalone Phase 1.1 Go/JNI Start/Stop/Version
+This module now contains the standalone Phase 1.2 Go/JNI Start/Stop/Version
 adapter. **Read [ENGINE.md](ENGINE.md) for its executable capability subset,
 descriptor ownership, one-session process boundary and verification.** It is not
 integrated into the Android application and never publishes connected state.
@@ -106,20 +106,21 @@ still needs error propagation/rollback for every additional listener, DNS, NTP,
 controller and update path, plus a supervised process lifetime.
 
 Unsupported full-profile paths include arbitrary proxy/group/provider execution,
-geodata, DNS interception, additional listeners/controllers/NTP/updaters, Android
+geodata, advanced DNS policies/fake-IP, additional listeners/controllers/NTP/updaters, Android
 worker/IPC supervision and device/live external verification. Snapshot decoding
 retains these raw fields; executable Start rejects them explicitly rather than
 running unproven initialization paths. Raw TUN startup and JNI are now implemented
 for the bounded subset in ENGINE.md.
 
-Future packet/DNS integration must include `native/mihomo-dns`, rather than
-forwarding the Android synthetic DNS address as ordinary upstream traffic. Its
+Packet/DNS integration now includes `native/mihomo-dns`, rather than forwarding
+the Android synthetic DNS address as ordinary upstream traffic. Its
 actual resolver relay contract requires configured `resolver.DefaultService`,
 explicit interception destinations, stopped TUN admission, DNS `Stop`,
 interrupted packet transport, joined worker dispatchers, then DNS `Wait`.
 Resolver refresh/exchange workers still require process termination and reaping.
 See that component's README for packet-buffer ownership and writer interruption;
-this module does not replace, wire, or validate that path.
+the engine's raw-TUN host tests validate that path. See [DNS.md](DNS.md) for
+admission, defaults, upstream policy, scoped sockets and remaining device gaps.
 
 ## Source pin and overlay composition
 
@@ -129,7 +130,8 @@ Mihomo v1.19.33, commit
 The dependency graph is pinned in `go.mod`/`go.sum`, including the upstream
 protobuf replacement. Local dependencies are `../mihomo` for the permanent
 socket hook, `../mihomo-provider` for its path capability, and `../mihomo-runtime`
-for joined packet ownership. The build reuses the provider/network/packet overlay
+for joined packet ownership and `../mihomo-dns` for DNS relay ownership.
+The build reuses the provider/network/packet overlay
 generators without modifying their own generated outputs or module caches.
 
 `build.sh` verifies downloaded modules, copies the core to one fresh staged

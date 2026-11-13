@@ -1,8 +1,9 @@
 # Native Mihomo DNS interception seam
 
 This independent Go module implements selected UDP and TCP DNS interception
-using Mihomo v1.19.33. It is not wired into `mihomo-runtime`, the provider, or
-Android. Passing its tests does not establish VPN connectivity or complete
+using Mihomo v1.19.33. Phase 1.2 now wires it into the standalone engine through
+`mihomo-runtime.Options.DNSHijack`, not the Android application. Passing its tests
+does not establish VPN connectivity or complete
 the Mihomo migration.
 
 The production code calls `resolver.RelayDnsPacket` and `resolver.RelayDnsConn`,
@@ -34,6 +35,7 @@ The import is `proxima.local/mihomo-dns`, package name `mihomodns`.
 
 ```go
 func New(targets []netip.AddrPort) (*Session, error)
+func NewHijack(targets []netip.AddrPort) (*Session, error)
 func (*Session) Matches(destination netip.AddrPort) bool
 func (*Session) HandleTCP(ctx context.Context, conn net.Conn, destination netip.AddrPort) (bool, error)
 func (*Session) HandleUDP(ctx context.Context, request *buf.Buffer, destination metadata.Socksaddr, writer network.PacketWriter) (bool, error)
@@ -46,6 +48,11 @@ one session with the explicitly approved destinations. For the existing Android
 DNS address, the caller can explicitly select `172.19.0.2:53`. The module has no
 default destination, wildcard, or silently expanded port-53 route. An empty,
 invalid, unspecified-address or zero-port selection is rejected.
+
+`NewHijack` is the explicit engine variant: it also accepts unspecified-address
+**port 53 only**, matching pinned sing_tun wildcard semantics for UDP and TCP.
+It has no implicit targets; `New` keeps its original concrete-address contract.
+The engine supplies the app's synthetic address and validates profile targets.
 
 In the TUN TCP callback, call `HandleTCP` before the ordinary sing handler. A
 `false` result leaves the stream untouched for normal routing. A `true` result

@@ -6,6 +6,7 @@ require (
 	github.com/metacubex/mihomo v1.19.33
 	go.yaml.in/yaml/v3 v3.0.5
 	proxima.local/mihomo v0.0.0
+	proxima.local/mihomo-dns v0.0.0
 	proxima.local/mihomo-provider v0.0.0
 	proxima.local/mihomo-runtime v0.0.0
 )
@@ -145,6 +146,8 @@ require (
 )
 
 replace proxima.local/mihomo => ../mihomo
+
+replace proxima.local/mihomo-dns => ../mihomo-dns
 
 replace proxima.local/mihomo-provider => ../mihomo-provider
 

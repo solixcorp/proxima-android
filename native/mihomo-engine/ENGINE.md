@@ -1,4 +1,6 @@
-# Phase 1.1 executable engine contract
+# Phase 1.2 executable engine contract
+
+DNS admission, defaults, upstream security and lifetime: see [DNS.md](DNS.md).
 
 ## Public API
 
@@ -43,7 +45,7 @@ rules: ['MATCH,DIRECT']
 Mode, IPv6 and log level are also configurable. Rules support MATCH, IP-CIDR,
 IP-CIDR6, SRC-IP-CIDR, DST-PORT, SRC-PORT and NETWORK, with actual semantic
 validation and built-in DIRECT/REJECT targets. Imported fd numbers, arbitrary
-proxies/groups/providers, geodata, custom hosts, DNS customization, persistence,
+proxies/groups/providers, geodata, custom hosts, advanced DNS policies, persistence,
 extra listeners/controllers, NTP, updater and platform routing options fail
 explicitly **before semantic parsing**. Unknown top-level fields are rejected,
 not silently ignored. Snapshot Decode still preserves arbitrary raw YAML.
@@ -52,9 +54,9 @@ This admission boundary is necessary because factories can create resources
 before returning parse errors, while complete provider/resolver joins and
 custom-dialer auditing are later phases. Do not present this as arbitrary profile
 support. Inert upstream batch/gvisor defaults are accepted but never applied to
-the raw os.File mips path; non-default requests are rejected. DNS does not work
-through the app's synthetic address yet: this is not a replacement for the
-existing Android engine/service.
+the raw os.File mips path; non-default requests are rejected. Redir-host DNS now
+works through the synthetic address in the host gate. This is still not an
+integrated replacement for the existing Android engine/service.
 
 ## State machine and descriptor ownership
 
@@ -67,15 +69,17 @@ existing Android engine/service.
    attempts require worker-process termination/reaping before another session.
    This also fences direct foundation Prepare callers, not just engine Start.
 4. Parse with rollback; apply actual routing/general/hosts/sniffer/provider
-   helpers; error-returning listener startup calls the actual `sing_tun.New`.
+   helpers plus real DNS initialization; error-returning listener startup calls
+   the actual `sing_tun.New`.
    Its non-YAML app capability selects `mihomo-runtime.OpenBorrowed`, which owns
    another duplicate and starts the real sing-tun stack. No transfer is passed
    into ambiguous platform tun.New adoption. OnRunning is reached only after
    successful TUN startup; this core status is never Android connected state.
 5. On failure or Stop, close/join the packet stack, close the adapter transfer,
-   suspend routing, drain scoped UDP initialization/pumps, close real
-   providers/proxies, clear routing maps, then release the foundation lease and
-   callback. The transfer stays open until after TUN shutdown, even on startup
+   suspend routing, drain scoped UDP initialization/pumps, close DNS socket
+   admission/transports and real providers/proxies, clear routing maps, then
+   release the foundation lease and callback. The transfer stays open until
+   after TUN shutdown, even on startup
    errors. The foundation never closes a transferred descriptor.
 6. An unexpected packet input exit automatically triggers local shutdown.
    Done/Wait expose its cause. Stop must still release JNI resources from an
@@ -93,10 +97,11 @@ from using a new lease in this process after Stop.
 ## Source/build layout
 
 - `engine.go`: single running-core owner; foundation lease and transfer cleanup.
-- `admit.go`: fail-closed executable capability admission before semantic parse.
-- `cmd/overlay`: six complete-source SHA-256 pins and unique patch anchors for
+- `admit.go`, `dns.go`: fail-closed capability admission and executable DNS defaults.
+- `cmd/overlay`: eight complete-source SHA-256 pins and unique patch anchors for
   parser rollback, error-returning executor/listener, raw sing_tun.New and joined
-  packet worker instrumentation. Legacy void APIs remain unchanged and unused.
+  packet worker instrumentation, scoped DNS sockets and DoH redirect denial.
+  Legacy void APIs remain unchanged and unused.
 - `cmd/compose`: conflict-free provider/network/engine overlay composition plus
   separately pinned sing-tun packet-loop composition.
 - `cmd/enginebridge`, `java/…/NativeEngine.java`: standalone JNI/Java API.
@@ -126,6 +131,6 @@ These tests do not establish Android TUN/device behavior or a whole-process
 goroutine-leak proof. Root `bash build.sh android` builds the three standalone
 shared libraries (covering all modules) for all four ABIs.
 
-Remaining work: Phase 1.2 DNS; Phase 1.3 arbitrary providers and joined worker
+Remaining work: Phase 1.3 arbitrary providers and joined worker
 shutdown/supervision; Phase 1.4 full custom-dialer/protocol audit; Phase 1.5
 statistics/latency/connection APIs; application integration.

@@ -1,4 +1,40 @@
-# Verification on November 9, 2026
+# Phase 1.2 verification on November 13, 2026
+
+Final repository-root gates both completed with exit 0:
+
+- `bash build.sh test`: all seven native modules; vet, race+shuffle suites,
+  foundation/engine JNI/JVM tests and integrated diagnostic tests.
+- `bash build.sh android`: foundation, engine and diagnostic c-shared libraries
+  for arm64-v8a, armeabi-v7a, x86 and x86_64. No app packaging or binary check-in.
+- `git diff --check`: exit 0.
+
+New `TestEngineDNSProcess` passed 13 reaped child scenarios: UDP, AAAA,
+TCP upstream, raw-TUN TCP/TXT, HTTPS DoH, DoH redirect denial, UDP/TCP/DoH/DoQ
+protector refusal, pending DNS drain, DNS initialization failure rollback and
+explicit wildcard hijack. All use the actual pinned core and mips raw-IP path.
+Refusal checks also inspect real DNSDialer DialContext/ListenPacket errors for
+`session.ErrProtection`; callbacks verify sockets are not bound before protection.
+Post-stop DNS socket admission is denied before reaching the old protector.
+
+`TestDNSAdmissionAndSafeDefaults` verifies omitted/partial DNS injection,
+redir-host, supported upstream schemes, unsafe URL/system/custom-dialer rejection,
+fake-IP's clear "not supported yet" error, unchanged raw snapshots and rollback
+descriptor counts. Existing Phase 1.1 lifecycle/FD/lease tests also passed.
+
+During implementation, actual UDP round trips caught a transport-wrapper error:
+net.Conn wrapping hid net.PacketConn, causing miekg/dns to use TCP framing over
+UDP. The wrapper now preserves that capability. Policy tests also caught the
+upstream's special bare `system` spelling; it is explicitly rejected. A private
+helper/test-fixture name collision was renamed. No failing gate was ignored.
+
+Full final output is retained in ignored `build/phase12-all-test.log` and
+`build/phase12-android.log`. See [DNS.md](DNS.md) for admitted configuration,
+security policy and remaining scope. Successful DoQ/TLS/HTTP3 exchanges and real
+Android TUN/VpnService behavior are not established by these host tests; DoQ
+configuration and both native UDP socket protection entry points are tested.
+Unexported resolver/HTTP/QUIC workers still require process termination/reaping.
+
+## Historical verification on November 9, 2026
 
 Scope: host raw decoder/provider stages with the reviewed provider overlay only.
 The blocked network overlay was **not applied**. The combined `build.sh test`

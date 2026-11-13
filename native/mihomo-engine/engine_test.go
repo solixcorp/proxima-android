@@ -79,7 +79,7 @@ func TestStartRollbackBeforeSemanticParsing(t *testing.T) {
 		{minimal, -1}, {"broken: [", fd}, {"mode: bogus", fd},
 		{strings.Replace(minimal, "stack: mips", "stack: system", 1), fd},
 		{minimal + "proxy-providers: {x: {type: http}}\n", fd},
-		{minimal + "dns: {enable: true}\n", fd},
+		{minimal + "dns: {enhanced-mode: fake-ip}\n", fd},
 		{minimal + "unknown-engine-option: true\n", fd},
 		{strings.Replace(minimal, "stack: mips, ", "", 1), fd},
 		{strings.Replace(minimal, "mtu: 1500", "mtu: 1500, file-descriptor: 0", 1), fd},
