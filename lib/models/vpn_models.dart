@@ -261,19 +261,6 @@ enum AppThemeMode {
   );
 }
 
-enum VpnEngine {
-  xray('Xray'),
-  mihomo('Mihomo');
-
-  const VpnEngine(this.label);
-  final String label;
-
-  static VpnEngine fromWire(Object? value) => values.firstWhere(
-    (engine) => engine.name == value,
-    orElse: () => VpnEngine.xray,
-  );
-}
-
 class VpnSettings {
   const VpnSettings({
     this.stack = 'mixed',
@@ -281,7 +268,6 @@ class VpnSettings {
     this.mtu = 1400,
     this.mode = OutboundMode.rule,
     this.themeMode = AppThemeMode.system,
-    this.engine = VpnEngine.xray,
   });
 
   factory VpnSettings.fromMap(Map<Object?, Object?> map) {
@@ -291,7 +277,6 @@ class VpnSettings {
       mtu: _integer(map['mtu'], fallback: 1400),
       mode: OutboundMode.fromWire(map['mode']),
       themeMode: AppThemeMode.fromWire(map['themeMode']),
-      engine: VpnEngine.fromWire(map['engine']),
     );
   }
 
@@ -300,7 +285,6 @@ class VpnSettings {
   final int mtu;
   final OutboundMode mode;
   final AppThemeMode themeMode;
-  final VpnEngine engine;
 
   VpnSettings copyWith({
     String? stack,
@@ -308,7 +292,6 @@ class VpnSettings {
     int? mtu,
     OutboundMode? mode,
     AppThemeMode? themeMode,
-    VpnEngine? engine,
   }) {
     return VpnSettings(
       stack: stack ?? this.stack,
@@ -316,7 +299,6 @@ class VpnSettings {
       mtu: mtu ?? this.mtu,
       mode: mode ?? this.mode,
       themeMode: themeMode ?? this.themeMode,
-      engine: engine ?? this.engine,
     );
   }
 
@@ -326,7 +308,6 @@ class VpnSettings {
     'mtu': mtu,
     'mode': mode.wireName,
     'themeMode': themeMode.name,
-    'engine': engine.name,
   };
 }
 
@@ -343,18 +324,15 @@ class RoutingRule {
   factory RoutingRule.fromMap(Map<String, Object?> map) {
     final raw = map['raw']?.toString();
     final parts = raw?.split(',');
-    final compoundRule = parts != null &&
+    final compoundRule =
+        parts != null &&
         const {'AND', 'OR', 'NOT'}.contains(parts.first.toUpperCase());
-    final simpleRule = parts != null &&
-        parts.length >= 3 &&
-        !compoundRule;
-    final destinations = [
-      ...?map['domain'] as List?,
-      ...?map['ip'] as List?,
-    ];
+    final simpleRule = parts != null && parts.length >= 3 && !compoundRule;
+    final destinations = [...?map['domain'] as List?, ...?map['ip'] as List?];
     final policy = simpleRule
         ? parts[2].trim()
-        : map['policy']?.toString() ?? (compoundRule ? parts.last.trim() : null);
+        : map['policy']?.toString() ??
+              (compoundRule ? parts.last.trim() : null);
     final target = switch (map['target'] ?? policy) {
       'direct' || 'DIRECT' => '직접 연결',
       'block' || 'REJECT' || 'REJECT-DROP' => '차단',

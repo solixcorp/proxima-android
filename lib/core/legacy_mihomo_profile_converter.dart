@@ -100,7 +100,7 @@ class LegacyMihomoProfileConverter {
     }
     for (var index = 0; index < profiles.length; index++) {
       proxies[index].addAll(_transport(profiles[index], 'links[$index]'));
-      // The old Dart generator invented chrome even when libXray received no fp.
+      // The old Dart generator invented chrome even without an explicit fp.
       if (!Uri.parse(links[index]).queryParameters.containsKey('fp')) {
         proxies[index].remove('client-fingerprint');
       }
@@ -211,7 +211,7 @@ class LegacyMihomoProfileConverter {
       }
       group['default-selected'] = entry.value;
     }
-    // Xray's manual rule mode falls back to the saved GLOBAL selection.
+    // Legacy manual rule mode falls back to the saved GLOBAL selection.
     if (!selectedProxies.containsKey('PROXY') &&
         selectedProxies.containsKey('GLOBAL')) {
       groups['PROXY']!['default-selected'] = selectedProxies['GLOBAL'];

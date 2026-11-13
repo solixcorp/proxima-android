@@ -40,7 +40,7 @@ abstract interface class VpnBridge {
   Future<void> clearProxySelection(String profileId, String group);
   Future<void> stopVpn();
 
-  /// Android selects Xray or the isolated Mihomo worker on the next connection.
+  /// Tunnel settings apply to the isolated Mihomo worker on the next connection.
   Future<VpnSettings> loadSettings();
   Future<void> saveSettings(VpnSettings settings);
   Future<ImportedProfile?> pickProfileFile();

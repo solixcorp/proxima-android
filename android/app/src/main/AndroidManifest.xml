@@ -47,7 +47,7 @@
                 android:value="false" />
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Routes user-selected traffic through an on-device Xray VPN tunnel" />
+                android:value="Routes user-selected traffic through an on-device Mihomo VPN tunnel" />
         </service>
         <service
             android:name=".MihomoWorkerService"

@@ -15,18 +15,13 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
-import android.util.Log
 import java.io.File
 import java.net.InetAddress
 import java.net.Inet4Address
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import libXray.DialerController
-import org.json.JSONObject
 import android.net.VpnService as AndroidVpnService
 
 class ProximaVpnService : AndroidVpnService() {
@@ -34,28 +29,19 @@ class ProximaVpnService : AndroidVpnService() {
     private val trafficScheduler = Executors.newSingleThreadScheduledExecutor()
     private val generation = AtomicInteger(0)
     private var trafficTask: ScheduledFuture<*>? = null
-    private var runningProfile: StoredProfile? = null
     private var stopping = false
     private val tunnelLock = Any()
-    @Volatile private var activeEngine = "xray"
     @Volatile private var mihomoSession: MihomoVpnSession? = null
     @Volatile private var destroyed = false
 
     // `ParcelFileDescriptor.detachFd()` transfers ownership to us. Keep that
-    // ownership explicitly: an Xray stop alone does not guarantee Android
-    // tears down the VPN interface and its system-level VPN indicator.
+    // ownership explicitly so cleanup tears down the Android VPN interface.
     @Volatile
     private var tunnelFd: Int? = null
-
-    private val socketController = object : DialerController {
-        override fun protectFd(fd: Long): Boolean = this@ProximaVpnService.protect(fd.toInt())
-    }
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        activeEngine = VpnSettingsRepository(this).load().engine
-        if (activeEngine == "xray") runCatching { XrayCore.ensureLoaded() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -81,7 +67,6 @@ class ProximaVpnService : AndroidVpnService() {
             (current["startedAt"] as? Long ?: 0L) > 0L
         val token = generation.incrementAndGet()
         stopping = false
-        runningProfile = profile
         trafficTask?.cancel(false)
         trafficTask = null
         if (preserveSession) VpnRuntime.reconnecting(profile) else VpnRuntime.connecting(profile)
@@ -109,34 +94,21 @@ class ProximaVpnService : AndroidVpnService() {
         val settings = VpnSettingsRepository(this).load()
         // One-use Dart snapshot only; no Kotlin projection or stale sidecar
         // fallback, including non-Flutter tile/widget/service entry points.
-        val mihomoConfig = if (settings.engine == "mihomo") {
+        val mihomoConfig = run {
             val bytes = MihomoConfigSidecar(File(filesDir, "mihomo-configs")).consume(
                 mihomoConfigToken, profile.id, content,
                 MihomoConfigSidecar.settingsKey(settings.mtu, settings.ipv6, settings.mode))
             MihomoRuntimeConfig(bytes, settings.mtu, settings.ipv6)
-        } else null
-        synchronized(tunnelLock) {
-            if (destroyed) return
-            activeEngine = settings.engine
         }
-        VpnRuntime.setEngine(settings.engine)
-        // Capture the resolver before establishing the VPN. Afterwards Android
-        // may report this VPN's own DNS server as the active network resolver.
+        synchronized(tunnelLock) { if (destroyed) return }
+        // Capture the underlying network before Android reports the VPN as active.
         val underlying = currentUnderlyingNetwork()
-        val systemDns = underlying.linkProperties?.dnsServers
-            ?.mapNotNull(InetAddress::getHostAddress)
-            .orEmpty()
-        val upstreamDns = systemDns.firstOrNull { '.' in it }
-            ?: systemDns.firstOrNull()
-            ?: IPV4_DNS
         val descriptor = Builder()
             .setSession(profile.name)
             .setMtu(settings.mtu)
             .addAddress(IPV4_ADDRESS, IPV4_PREFIX)
             .addRoute("0.0.0.0", 0)
-            // Android sends plain DNS to this address inside the TUN. Xray
-            // intercepts both UDP and TCP port 53 and resolves A/AAAA over
-            // DoH through the selected VLESS node.
+            // Keep app DNS routed inside the shared TUN interface.
             .addDnsServer(VPN_DNS)
             .apply {
                 if (settings.ipv6) {
@@ -158,7 +130,7 @@ class ProximaVpnService : AndroidVpnService() {
                         }
                 }
                 // More specific than the private LAN exclusions: app DNS must
-                // still reach Xray's synthetic resolver, not the Wi-Fi router.
+                // still reach the tunnel resolver, not the Wi-Fi router.
                 addRoute(VPN_DNS, 32)
             }.establish() ?: error("Android가 VPN 인터페이스 생성을 거부했습니다.")
         if (token != generation.get() || stopping) {
@@ -170,50 +142,7 @@ class ProximaVpnService : AndroidVpnService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
             setUnderlyingNetworks(underlying.network?.let { arrayOf(it) })
         }
-        dispatchVpnEngine(settings.engine, xray = {}, mihomo = {
-            establishMihomo(profile, checkNotNull(mihomoConfig), settings, fd, token, preserveSession)
-        })
-        if (settings.engine == "mihomo") return
-        XrayConfig.VpnSettingsRepositoryHolder.selected = { id -> VpnSettingsRepository(this).selectedProxies(id) }
-        XrayCore.configureVpn(socketController, dnsEndpoint(upstreamDns))
-        val nodeNames = XrayConfig.nodeNames(profile, content)
-        // Reserve a dedicated rule-mode SOCKS port as well as one per node.
-        // The former follows the translated subscription rules, while the
-        // latter always targets one concrete node for latency measurements.
-        val ports = XrayCore.freePorts(nodeNames.size + 2)
-        val metricsPort = ports.first()
-        val probePorts = buildMap {
-            putAll(nodeNames.zip(ports.drop(1).take(nodeNames.size)))
-            put(XrayConfig.RULE_PROBE_KEY, ports.last())
-        }
-        val accessLog = File(filesDir, "xray-access.log").apply { writeText("") }
-        val runtimeConfig = XrayConfig.build(
-            profile = profile,
-            content = content,
-            settings = settings,
-            tunFd = fd,
-            metricsPort = metricsPort,
-            probePorts = probePorts,
-            accessLogPath = accessLog.absolutePath,
-            upstreamDns = upstreamDns,
-        )
-        XrayCore.run(runtimeConfig.json)
-        check(XrayCore.isRunning()) { "Xray 코어가 시작되지 않았습니다." }
-        if (token != generation.get() || stopping) {
-            XrayCore.stop()
-            closeTunnel()
-            return
-        }
-        VpnRuntime.setProbePorts(runtimeConfig.probePorts)
-        VpnRuntime.setAccessLogPath(accessLog.absolutePath)
-        VpnRuntime.connected(
-            profile = profile,
-            activeNode = runtimeConfig.activeNode,
-            activeMode = settings.mode,
-            preserveSession = preserveSession,
-        )
-        updateNotification("보호됨")
-        startTrafficUpdates(token, preserveSession, metricsPort)
+        establishMihomo(profile, mihomoConfig, settings, fd, token, preserveSession)
     }
 
     private fun establishMihomo(
@@ -279,81 +208,12 @@ class ProximaVpnService : AndroidVpnService() {
     }
 
     private fun stopCurrentEngine() {
-        if (activeEngine == "mihomo") {
-            VpnRuntime.setMihomoSession(null)
-            // Request stop -> native join -> PID exit/Binder death -> original fd.
-            closeMihomoTunnel(stopAndJoin = { mihomoSession?.close() }, closeOriginal = {
-                mihomoSession = null
-                closeTunnel()
-            })
-        } else {
+        VpnRuntime.setMihomoSession(null)
+        // Request stop -> native join -> PID exit/Binder death -> original fd.
+        closeMihomoTunnel(stopAndJoin = { mihomoSession?.close() }, closeOriginal = {
+            mihomoSession = null
             closeTunnel()
-            XrayCore.stop()
-        }
-    }
-
-    private fun startTrafficUpdates(token: Int, preserveSession: Boolean, metricsPort: Int) {
-        trafficTask?.cancel(false)
-        val current = VpnRuntime.snapshot()
-        val uploadOffset = if (preserveSession) (current["totalUpload"] as? Number)?.toLong() ?: 0L else 0L
-        val downloadOffset = if (preserveSession) (current["totalDownload"] as? Number)?.toLong() ?: 0L else 0L
-        var previousUpload = 0L
-        var previousDownload = 0L
-        var samples = 0
-        var trafficReadFailed = false
-        trafficTask = trafficScheduler.scheduleAtFixedRate({
-            if (token != generation.get() || stopping) return@scheduleAtFixedRate
-            val counters = runCatching { readXrayTraffic(metricsPort) }
-                .onFailure { error ->
-                    if (!trafficReadFailed) Log.w("ProximaVpnService", "Unable to read Xray traffic counters", error)
-                    trafficReadFailed = true
-                }.getOrNull()
-            if (token != generation.get() || stopping) return@scheduleAtFixedRate
-            val uploadSpeed = counters?.let { (it.upload - previousUpload).coerceAtLeast(0) } ?: 0L
-            val downloadSpeed = counters?.let { (it.download - previousDownload).coerceAtLeast(0) } ?: 0L
-            if (counters != null) {
-                trafficReadFailed = false
-                previousUpload = counters.upload
-                previousDownload = counters.download
-            }
-            // Keep the UI clock ticking even when a metrics request fails.
-            VpnRuntime.traffic(
-                up = uploadSpeed,
-                down = downloadSpeed,
-                totalUp = uploadOffset + previousUpload,
-                totalDown = downloadOffset + previousDownload,
-            )
-            updateNotificationWithCurrentSnapshot()
-            samples++
-            if (samples % 5 == 0 && !runCatching { XrayCore.isRunning() }.getOrDefault(false)) {
-                worker.execute {
-                    if (token == generation.get() && !stopping) {
-                        fail(runningProfile, "Xray 코어가 예기치 않게 종료되었습니다.", token)
-                    }
-                }
-            }
-        }, 1, 1, TimeUnit.SECONDS)
-    }
-
-    private data class TrafficCounters(val upload: Long, val download: Long)
-
-    private fun readXrayTraffic(port: Int): TrafficCounters {
-        val connection = URL("http://127.0.0.1:$port/debug/vars").openConnection() as HttpURLConnection
-        connection.connectTimeout = 750
-        connection.readTimeout = 750
-        return try {
-            val payload = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            val inbound = JSONObject(payload)
-                .optJSONObject("stats")
-                ?.optJSONObject("inbound")
-                ?.optJSONObject("proxima-tun")
-            TrafficCounters(
-                upload = inbound?.optLong("uplink", 0L) ?: 0L,
-                download = inbound?.optLong("downlink", 0L) ?: 0L,
-            )
-        } finally {
-            connection.disconnect()
-        }
+        })
     }
 
     private data class UnderlyingNetwork(
@@ -386,24 +246,20 @@ class ProximaVpnService : AndroidVpnService() {
         trafficTask?.cancel(false)
         trafficTask = null
         worker.execute {
-            // Closing the TUN descriptor first is what tells Android that this
-            // VPN has ended. Do it even if the native core shutdown is slow.
-            if (activeEngine == "mihomo") stopCurrentEngine() else closeTunnel()
-            if (activeEngine == "mihomo" && token != generation.get()) return@execute
+            stopCurrentEngine()
+            if (token != generation.get()) return@execute
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
                 setUnderlyingNetworks(null)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
             else @Suppress("DEPRECATION") stopForeground(true)
-            if (activeEngine == "xray") XrayCore.stop()
             VpnRuntime.disconnected()
-            runningProfile = null
             stopSelf()
         }
     }
 
     private fun fail(profile: StoredProfile?, message: String, token: Int? = null) {
-        if (activeEngine == "mihomo" && android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
             worker.execute { fail(profile, message, token) }
             return
         }
@@ -412,10 +268,9 @@ class ProximaVpnService : AndroidVpnService() {
         trafficTask?.cancel(false)
         trafficTask = null
         stopCurrentEngine()
-        if (activeEngine == "mihomo" && (failedToken != generation.get() || destroyed)) return
+        if (failedToken != generation.get() || destroyed) return
         VpnRuntime.failed(profile, message)
         updateNotification("연결 오류")
-        runningProfile = profile
         stopping = false
     }
 
@@ -427,17 +282,11 @@ class ProximaVpnService : AndroidVpnService() {
         trafficTask?.cancel(false)
         trafficTask = null
         trafficScheduler.shutdownNow()
-        if (activeEngine == "mihomo") {
-            // Never block main: Binding.close must run there while this worker
-            // joins process death. Do not interrupt the retirement fence.
-            mihomoSession?.requestRetirementOnMain()
-            worker.execute { stopCurrentEngine() }
-            worker.shutdown()
-        } else {
-            closeTunnel()
-            XrayCore.stop()
-            worker.shutdownNow()
-        }
+        // Never block main: Binding.close must run there while this worker
+        // joins process death. Do not interrupt the retirement fence.
+        mihomoSession?.requestRetirementOnMain()
+        worker.execute { stopCurrentEngine() }
+        worker.shutdown()
         if (VpnRuntime.snapshot()["state"] != "error") VpnRuntime.disconnected()
         super.onDestroy()
     }
@@ -515,7 +364,6 @@ class ProximaVpnService : AndroidVpnService() {
         return String.format(java.util.Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
     }
     private fun readableError(error: Throwable): String = if (error is PackageManager.NameNotFoundException) "앱 정보를 확인하지 못했습니다." else error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
-    private fun dnsEndpoint(address: String): String = if (':' in address) "[$address]:53" else "$address:53"
     private fun ipPrefix(value: String): IpPrefix {
         val address = value.substringBefore('/')
         val prefixLength = value.substringAfter('/').toInt()
@@ -531,11 +379,16 @@ class ProximaVpnService : AndroidVpnService() {
         private const val NOTIFICATION_ID = 4301
         private const val IPV4_ADDRESS = "172.19.0.1"
         private const val IPV4_PREFIX = 30
-        private const val IPV4_DNS = "1.1.1.1"
-        private const val VPN_DNS = XrayConfig.VPN_DNS
+        private const val VPN_DNS = "172.19.0.2"
         private const val IPV6_ADDRESS = "fdfe:dcba:9876::1"
         private const val IPV6_PREFIX = 126
-        private val LOCAL_BYPASS_ROUTES = XrayConfig.LOCAL_NETWORK_ROUTES + listOf(
+        private val LOCAL_BYPASS_ROUTES = listOf(
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+            "169.254.0.0/16",
+            "fc00::/7",
+            "fe80::/10",
             "224.0.0.0/4",
             "ff00::/8",
         )

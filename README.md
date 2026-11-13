@@ -24,11 +24,11 @@ Proxima는 네트워크 연결 요청부터 데이터 전송까지 **3단계 자
 
 ```mermaid
 graph LR
-    A["1. 연결 주소 읽기 (vless:// 또는 URL)"] --> B["2. 자동 설정 변환 (Xray JSON 생성)"] --> C["3. 기기 전체 VPN 연결 (VpnService / TUN)"]
+    A["1. 공유 링크 또는 Clash YAML/URL 읽기"] --> B["2. Dart Mihomo 설정 조립"] --> C["3. 기기 전체 VPN 연결 (VpnService / TUN)"]
 ```
 
 1. **연결 주소 읽기 및 검증**: 사용자가 입력한 `vless://` 단일 링크 또는 구독(Subscription) HTTPS URL을 해석하여 서버 위치, 전송 프로토콜 및 보안 설정값(`tls`, `reality`, `none`)을 안전하게 읽어 들입니다.
-2. **자동 설정 변환 (Xray Core)**: 파싱된 정보를 바탕으로 네트워크 엔진인 **Xray-core**가 구동될 수 있는 최적의 상세 설정 구조체(JSON)를 앱 내부에서 자동으로 생성합니다.
+2. **자동 설정 조립 (Mihomo)**: 원본 구독을 보존하고 Dart에서 검증한 Mihomo 실행 설정을 조립해 격리된 Android worker에 전달합니다.
 3. **기기 전체 인터넷 연결 (Android VpnService)**: 안드로이드 OS의 `VpnService`를 구동하여 가상 터널(TUN 인터페이스)을 생성하고, 기기에서 발생하는 모든 네트워크 트래픽을 선별된 프록시 서버로 안전하게 터널링합니다.
 
 ---
@@ -95,13 +95,13 @@ proxima-android/
 ├── lib/                        # Flutter 애플리케이션 코어 (Dart)
 │   ├── main.dart & app/        # 앱 엔트리포인트 및 테마 설정
 │   ├── models/                 # 노드, 구독, 사용자 프로필 데이터 모델
-│   ├── core/                   # vless 파서, Xray JSON 변환기, 네트워크 진단 엔진
+│   ├── core/                   # 공유 링크 파서, Mihomo 설정 조립, 네트워크 진단
 │   ├── state/                  # 상태 관리 (VPN 상태, 실시간 속도, 활성 노드)
 │   ├── screens/                # 홈, 서버 선택, 계정/구독, 진단, 설정 화면
 │   └── widgets/                # 공통 UI 컴포넌트 (버튼, 카드, 상태 바)
 ├── android/                    # 안드로이드 네이티브 서비스 (Kotlin)
 │   ├── app/src/main/kotlin/    # VpnService, Quick Settings Tile, 샌드박스 프로필 저장소
-│   └── app/libs/               # Xray 네트워크 암호화 엔진 (libxray-android-v26.9.9.aar)
+│   └── app/src/                # VPN 서비스 및 격리된 Mihomo worker
 └── docs & configs/
     ├── DESIGN.md               # 아키텍처 및 시스템 설계 문서
     ├── pubspec.yaml            # Flutter 종속성 및 패키지 정의
@@ -143,4 +143,4 @@ flutter build apk --debug
 
 이 프로젝트는 **[GNU General Public License v3.0 (GPL-3.0-only)](LICENSE)** 하에 오픈소스로 제공됩니다.
 
-Xray-core 및 수반된 안드로이드 바이너리 라이브러리의 자세한 라이선스 및 저작권 정보는 **[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)** 파일에서 확인하실 수 있습니다.
+Mihomo 및 포함된 라이브러리의 자세한 라이선스 및 저작권 정보는 **[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)** 파일에서 확인하실 수 있습니다. 배포 시 GPL-3.0 소스 제공 의무를 준수해야 합니다.

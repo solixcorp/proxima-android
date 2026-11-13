@@ -54,7 +54,7 @@ class SettingsScreen extends StatelessWidget {
     final network = controller.networkInfo;
     return AppPage(
       title: '더보기',
-      subtitle: '네트워크 도구와 Xray 터널 설정을 관리합니다.',
+      subtitle: '네트워크 도구와 Mihomo 터널 설정을 관리합니다.',
       onRefresh: controller.refreshNetworkInfo,
       children: [
         const SectionHeader('화면'),
@@ -130,11 +130,11 @@ class SettingsScreen extends StatelessWidget {
             ],
           ),
         ),
-        const SectionHeader('Xray 프로필'),
+        const SectionHeader('프로필'),
         const Card(
           child: ListTile(
             leading: Icon(Icons.cloud_sync_outlined),
-            title: Text('VLESS 구독'),
+            title: Text('Mihomo 구독'),
             subtitle: Text('노드와 HTTPS 구독은 프로필 탭에서 추가·업데이트합니다.'),
           ),
         ),
@@ -143,33 +143,9 @@ class SettingsScreen extends StatelessWidget {
           child: Column(
             children: [
               ListTile(
-                leading: const Icon(Icons.settings_ethernet_rounded),
-                title: const Text('VPN 엔진'),
-                subtitle: const Text(
-                  '다음 연결부터 적용됩니다. Mihomo는 지원되는 구독 노드와 규칙을 실행합니다.',
-                ),
-                trailing: DropdownButton<VpnEngine>(
-                  key: const Key('vpn_engine'),
-                  value: settings.engine,
-                  underline: const SizedBox.shrink(),
-                  items: VpnEngine.values
-                      .map(
-                        (engine) => DropdownMenuItem(
-                          value: engine,
-                          child: Text(engine.label),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (engine) {
-                    if (engine != null) controller.setEngine(engine);
-                  },
-                ),
-              ),
-              const Divider(height: 1, indent: 56),
-              ListTile(
                 leading: const Icon(Icons.memory_rounded),
-                title: const Text('Xray TUN'),
-                subtitle: const Text('사용자 공간 Xray 네트워크 스택'),
+                title: const Text('Mihomo TUN'),
+                subtitle: const Text('사용자 공간 mips 네트워크 스택'),
               ),
               const Divider(height: 1, indent: 56),
               SwitchListTile(
@@ -240,11 +216,11 @@ class SettingsScreen extends StatelessWidget {
               const Divider(height: 1, indent: 56),
               ListTile(
                 leading: const Icon(Icons.info_outline_rounded),
-                title: const Text('Xray Core'),
+                title: const Text('Mihomo Core'),
                 subtitle: Text(
                   controller.core['loaded'] == true
-                      ? 'v${formatCoreVersion(controller.core['coreVersion'])} · ${controller.core['bridgeAbi'] ?? 'libXray-v3'}'
-                      : '코어를 불러올 수 없음',
+                      ? '${formatCoreVersion(controller.core['coreVersion'])} · ${controller.core['bridgeAbi'] ?? 'mihomo-worker-v3'}'
+                      : 'Mihomo v1.19.33 (연결 대기)',
                 ),
               ),
               const Divider(height: 1, indent: 56),
@@ -256,8 +232,7 @@ class SettingsScreen extends StatelessWidget {
                   context: context,
                   applicationName: 'Proxima',
                   applicationVersion: '1.0.0',
-                  applicationLegalese:
-                      'Xray-core MPL-2.0 및 libXray MIT 구성 요소 포함',
+                  applicationLegalese: 'Mihomo GPL-3.0 구성 요소 포함',
                 ),
               ),
             ],
@@ -268,7 +243,7 @@ class SettingsScreen extends StatelessWidget {
   }
 
   String _publicIpLabel(PublicIpInfo? info) {
-    if (info == null) return '요청할 때만 현재 Xray 노드를 통해 조회합니다.';
+    if (info == null) return 'Mihomo JNI 공인 IP 검사는 아직 지원하지 않습니다.';
     if (info.rejected) return '현재 노드 또는 조회 정책에서 차단됨';
     final detail = [
       info.ip,

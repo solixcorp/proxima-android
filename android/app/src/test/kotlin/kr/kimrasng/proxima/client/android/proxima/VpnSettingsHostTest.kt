@@ -23,18 +23,17 @@ object VpnSettingsHostTest {
     @JvmStatic fun main(args: Array<String>) {
         val prefs = MemoryPreferences()
         val repository = VpnSettingsRepository(MemoryContext(prefs))
-        check(repository.load().engine == "xray")
-        check(repository.load().asMap()["engine"] == "xray")
-        repository.save(null, null, 1500, null, engine = "mihomo")
+        // Obsolete preferences are harmless and never returned to callers.
+        prefs.values["engine"] = "obsolete"
+        check("engine" !in repository.load().asMap())
+        check(repository.load().mtu == 1400)
+        repository.save(null, null, 1500, null)
         val reloaded = VpnSettingsRepository(MemoryContext(prefs))
-        check(reloaded.load().engine == "mihomo")
         check(reloaded.load().mtu == 1500)
-        reloaded.save(null, false, null, null, engine = "invalid")
-        check(reloaded.load().engine == "mihomo")
-        reloaded.save(null, null, null, null, engine = "xray")
-        check(reloaded.load().engine == "xray")
-        prefs.values["engine"] = "invalid"
-        check(reloaded.load().engine == "xray")
-        println("PASS VpnSettings engine persistence and defaults")
+        reloaded.save(null, false, null, null)
+        check(!reloaded.load().ipv6)
+        check(reloaded.load().mtu == 1500)
+        check(prefs.values["engine"] == "obsolete")
+        println("PASS VpnSettings persistence and defaults")
     }
 }

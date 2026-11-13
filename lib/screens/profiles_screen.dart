@@ -50,9 +50,7 @@ class ProfilesScreen extends StatelessWidget {
         entryMode: entryMode,
       ),
     );
-    if (saved == true &&
-        context.mounted &&
-        controller.settings.engine == VpnEngine.mihomo) {
+    if (saved == true && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(controller.message ?? '프로필을 가져왔습니다.')),
       );
@@ -196,13 +194,7 @@ class ProfilesScreen extends StatelessWidget {
       await controller.refreshProfile(profile);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              controller.settings.engine == VpnEngine.mihomo
-                  ? controller.message ?? '구독을 업데이트했습니다.'
-                  : '구독을 업데이트했습니다.',
-            ),
-          ),
+          SnackBar(content: Text(controller.message ?? '구독을 업데이트했습니다.')),
         );
       }
     } catch (error) {
@@ -232,9 +224,7 @@ class ProfilesScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return AppPage(
       title: '프로필',
-      subtitle: controller.settings.engine == VpnEngine.mihomo
-          ? '공유 링크와 Clash YAML·HTTPS 구독을 관리합니다.'
-          : 'VLESS 링크와 HTTPS 구독을 관리합니다.',
+      subtitle: '공유 링크와 Clash YAML·HTTPS 구독을 관리합니다.',
       onRefresh: controller.reloadProfiles,
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showAddOptions(context),
@@ -316,16 +306,7 @@ class ProfilesScreen extends StatelessWidget {
                                   inUse: inUse,
                                   selected: selected,
                                 ),
-                                maxLines:
-                                    controller.settings.engine ==
-                                        VpnEngine.mihomo
-                                    ? null
-                                    : 1,
-                                overflow:
-                                    controller.settings.engine ==
-                                        VpnEngine.mihomo
-                                    ? TextOverflow.clip
-                                    : TextOverflow.ellipsis,
+                                overflow: TextOverflow.clip,
                               ),
                               onTap: current || busy
                                   ? null
@@ -402,8 +383,7 @@ class ProfilesScreen extends StatelessWidget {
         : null;
     return [
       [state, profile.sourceLabel, usage].whereType<String>().join(' · '),
-      if (controller.settings.engine == VpnEngine.mihomo &&
-          profile.admissionSummary != null)
+      if (profile.admissionSummary != null)
         profile.admissionSummary!.description,
     ].join('\n');
   }
@@ -465,9 +445,7 @@ class _ProfileEditorState extends State<_ProfileEditor> {
       _error = null;
     });
     try {
-      var content = widget.controller.settings.engine == VpnEngine.mihomo
-          ? _yaml.text
-          : _yaml.text.trim();
+      var content = _yaml.text;
       var subscriptionInfo =
           widget.profile?.subscriptionInfo ?? widget.initialSubscriptionInfo;
       if (content.trim().isEmpty && _url.text.trim().isNotEmpty) {
@@ -549,10 +527,7 @@ class _ProfileEditorState extends State<_ProfileEditor> {
                     height: 1.35,
                   ),
                   decoration: InputDecoration(
-                    labelText:
-                        widget.controller.settings.engine == VpnEngine.mihomo
-                        ? '공유 링크 또는 Clash YAML'
-                        : 'VLESS 링크 목록',
+                    labelText: '공유 링크 또는 Clash YAML',
                     hintText:
                         'vless://uuid@server:8080?security=none&type=ws&path=%2F\n'
                         '여러 노드는 줄바꿈으로 붙여넣을 수 있습니다.\n'

@@ -22,7 +22,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.ByteArrayOutputStream
-import java.util.UUID
 import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
@@ -35,8 +34,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private var importResult: MethodChannel.Result? = null
     private var exportResult: MethodChannel.Result? = null
     private var exportContent: String? = null
-    // Node probes are independent SOCKS routes. A single worker made the
-    // "measure all" button wait for every timeout one by one.
+    // Run independent node probes concurrently instead of serializing timeouts.
     private val coreWorker = Executors.newFixedThreadPool(8)
     private val runtimeListener: (Map<String, Any?>) -> Unit = { value -> eventSink?.success(value) }
 
@@ -58,9 +56,6 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 "readProfile" -> result.success(profiles.readContent(requiredString(call, "id")))
                 "saveProfile" -> {
                     val content = requiredString(call, "content")
-                    require(settings.load().engine == "mihomo" || VlessRealityConfig.isGeneratedProfile(content)) {
-                        "VLESS 링크로 만든 프로필만 저장할 수 있습니다."
-                    }
                     result.success(
                         profiles.save(
                             id = call.argument("id"),
@@ -108,7 +103,6 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     result.success(null)
                 }
                 "beginMihomoConfiguration" -> {
-                    require(settings.load().engine == "mihomo") { "Mihomo 엔진을 선택해 주세요." }
                     val id = requiredString(call, "profileId")
                     require(profiles.profile(id) != null) { "Profile not found" }
                     // Any previous upload (including a cancelled preparation)
@@ -162,7 +156,6 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                         mtu = call.argument("mtu"),
                         mode = call.argument("mode"),
                         themeMode = call.argument("themeMode"),
-                        engine = call.argument("engine"),
                     )
                     result.success(null)
                 }
@@ -175,10 +168,10 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 "getNetworkInfo" -> result.success(networkInfo())
                 "requestQuickSettingsTile" -> requestQuickSettingsTile(result)
                 "requestPinAppWidget" -> requestPinAppWidget(result)
-                "coreInfo" -> result.success(if (settings.load().engine == "mihomo") mapOf(
+                "coreInfo" -> result.success(mapOf(
                     "loaded" to (VpnRuntime.mihomoSession() != null),
                     "coreVersion" to "Mihomo v1.19.33 (bundled)", "bridgeAbi" to "mihomo-worker-v3", "error" to null,
-                ) else XrayCore.info(this))
+                ))
                 "coreAction" -> invokeCore(
                     method = requiredString(call, "method"),
                     data = call.argument<String>("data") ?: "",
@@ -194,10 +187,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private fun validateProfile(content: String, result: MethodChannel.Result) {
         require(content.toByteArray(Charsets.UTF_8).size <= MAX_PROFILE_BYTES) { "프로필은 8MB보다 작아야 합니다." }
         runCatching {
-            if (settings.load().engine == "mihomo") {
-                val value = settings.load()
-                MihomoRuntimeConfig(content.toByteArray(Charsets.UTF_8), value.mtu, value.ipv6)
-            } else XrayConfig.validate(content)
+            val value = settings.load()
+            MihomoRuntimeConfig(content.toByteArray(Charsets.UTF_8), value.mtu, value.ipv6)
         }.onSuccess { result.success(null) }
             .onFailure { result.success(it.message ?: "프로필을 검증하지 못했습니다.") }
     }
@@ -220,14 +211,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private fun startVpn(profileId: String, result: MethodChannel.Result) {
         require(VpnService.prepare(this) == null) { "VPN permission is required" }
         val profile = profiles.profile(profileId) ?: error("Profile not found")
-        val mihomo = settings.load().engine == "mihomo"
-        val configToken = if (mihomo) {
-            checkNotNull(mihomoUploads.remove(profileId)) { "Mihomo 설정 사이드카가 없습니다. 앱에서 다시 연결해 주세요." }
-                .also(mihomoSidecars::requireReady)
-        } else null
-        require(mihomo || VlessRealityConfig.isGeneratedProfile(profiles.readContent(profileId))) {
-            "VLESS 링크로 만든 프로필만 연결할 수 있습니다."
-        }
+        val configToken = checkNotNull(mihomoUploads.remove(profileId)) { "Mihomo 설정 사이드카가 없습니다. 앱에서 다시 연결해 주세요." }
+            .also(mihomoSidecars::requireReady)
         profiles.select(profileId)
         val state = VpnRuntime.snapshot()
         val preserveSession = state["state"] in setOf("connected", "connecting") &&
@@ -248,42 +233,16 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private fun invokeCore(method: String, data: String, result: MethodChannel.Result) {
         require(VpnRuntime.snapshot()["state"] == "connected") { "VPN is not connected" }
         // Capture the running capability before queueing. A delayed Mihomo
-        // request must never borrow a replacement session or switch to Xray.
-        val mihomo = if (VpnRuntime.engine() == "mihomo") {
-            checkNotNull(VpnRuntime.mihomoSession()) { "Mihomo session is not running" }
-        } else null
+        // request must never borrow a replacement session.
+        val mihomo = checkNotNull(VpnRuntime.mihomoSession()) { "Mihomo session is not running" }
         val operation = {
-            val payload: Any = if (mihomo != null) invokeMihomo(mihomo, method, data) else when (method) {
-                "getProxies" -> currentProxyState()
-                "changeProxy" -> {
-                    changeProxy(data)
-                    JSONObject()
-                }
-                "updateConfig" -> {
-                    restartCurrentVpn()
-                    JSONObject()
-                }
-                "getConnections" -> recentConnections()
-                "getMemory" -> Debug.getPss().toLong() * 1024L
-                "queryExternalProviders" -> subscriptionProviders()
-                "testDelay" -> testDelay(data)
-                "closeConnection", "closeAllConnections" -> error("Xray는 개별 연결 종료를 지원하지 않습니다.")
-                "updateExternalProvider" -> error("Xray 구독은 프로필 탭에서 업데이트합니다.")
-                "probeCurrentProxyIp" -> probeCurrentProxyIp()
-                else -> error("지원하지 않는 코어 작업입니다: $method")
-            }
+            val payload: Any = invokeMihomo(mihomo, method, data)
             JSONObject().put("code", 0).put("data", payload).toString()
         }
-        if (method in setOf("testDelay", "probeCurrentProxyIp") || mihomo != null) {
-            coreWorker.execute {
-                runCatching(operation)
-                    .onSuccess { payload -> runOnUiThread { result.success(payload) } }
-                    .onFailure { error -> runOnUiThread { result.error("core_action_error", error.message, null) } }
-            }
-        } else {
+        coreWorker.execute {
             runCatching(operation)
-                .onSuccess(result::success)
-                .onFailure { error -> result.error("core_action_error", error.message, null) }
+                .onSuccess { payload -> runOnUiThread { result.success(payload) } }
+                .onFailure { error -> runOnUiThread { result.error("core_action_error", error.message, null) } }
         }
     }
 
@@ -313,107 +272,6 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             "closeConnection", "closeAllConnections", "updateExternalProvider" -> error("Mihomo JNI가 지원하지 않는 작업입니다: $method")
             else -> error("지원하지 않는 Mihomo 작업입니다: $method")
         }
-    }
-
-    private fun currentProfile(): StoredProfile {
-        val profileId = VpnRuntime.snapshot()["profileId"] as? String
-            ?: error("연결 중인 프로필을 찾을 수 없습니다.")
-        return profiles.profile(profileId) ?: error("연결 중인 프로필을 찾을 수 없습니다.")
-    }
-
-    private fun currentProxyState(): JSONObject {
-        val profile = currentProfile()
-        return XrayConfig.proxyState(
-            profile = profile,
-            content = profiles.readContent(profile.id),
-            selected = settings.selectedProxies(profile.id),
-            activeNode = VpnRuntime.snapshot()["activeNode"] as? String,
-            activeMode = VpnRuntime.snapshot()["activeMode"] as? String,
-        )
-    }
-
-    private fun recentConnections(): JSONObject {
-        val runtime = VpnRuntime.snapshot()
-        return JSONObject()
-            .put("uploadTotal", runtime["totalUpload"] ?: 0)
-            .put("downloadTotal", runtime["totalDownload"] ?: 0)
-            .put(
-                "connections",
-                XrayConnectionLog.recent(
-                    path = VpnRuntime.accessLogPath(),
-                ),
-            )
-    }
-
-    private fun testDelay(data: String): Int {
-        val request = JSONObject(data)
-        val node = request.optString("proxy-name").trim()
-        require(node.isNotEmpty()) { "검사할 노드를 선택해 주세요." }
-        val port = VpnRuntime.probePort(node) ?: error("이 노드는 현재 Xray 검사 준비가 되지 않았습니다.")
-        return XrayProbe.delay(
-            port = port,
-            target = request.optString("test-url", "https://www.gstatic.com/generate_204"),
-            timeoutMillis = request.optInt("timeout", 3_000),
-        )
-    }
-
-    private fun probeCurrentProxyIp(): JSONObject {
-        val snapshot = VpnRuntime.snapshot()
-        val rulePort = if (snapshot["activeMode"] == "rule") {
-            VpnRuntime.probePort(XrayConfig.RULE_PROBE_KEY)
-        } else null
-        val port = rulePort ?: (snapshot["activeNode"] as? String)
-            ?.let(VpnRuntime::probePort)
-            ?: error("직접 연결 모드에서는 프록시 IP를 확인할 수 없습니다.")
-        return XrayProbe.publicIp(this, port)
-    }
-
-    private fun subscriptionProviders(): JSONArray = JSONArray().apply {
-        profiles.list().forEach { item ->
-            val source = item["sourceUrl"]?.toString()?.takeIf { it.isNotBlank() } ?: return@forEach
-            val id = item["id"]?.toString() ?: return@forEach
-            val count = runCatching { XrayConfig.nodeNames(profiles.profile(id)!!, profiles.readContent(id)).size }.getOrDefault(0)
-            put(
-                JSONObject()
-                    .put("name", item["name"]?.toString().orEmpty())
-                    .put("type", "subscription")
-                    .put("vehicle-type", "http")
-                    .put("count", count)
-                    .put("path", source),
-            )
-        }
-    }
-
-    private fun changeProxy(data: String) {
-        val profile = currentProfile()
-        val selection = JSONObject(data)
-        val group = selection.optString("group-name")
-        val proxy = selection.optString("proxy-name")
-        require(group == "GLOBAL") { "노드는 전역 모드에서만 직접 선택할 수 있습니다." }
-        require(proxy in XrayConfig.nodeNames(profile, profiles.readContent(profile.id))) {
-            "선택할 수 없는 노드입니다."
-        }
-        settings.saveSelectedProxy(profile.id, group, proxy)
-        restartVpn(profile.id)
-    }
-
-    private fun restartCurrentVpn() {
-        restartVpn(currentProfile().id)
-    }
-
-    private fun restartVpn(profileId: String) {
-        val profile = profiles.profile(profileId) ?: error("연결 중인 프로필을 찾을 수 없습니다.")
-        // Publish the transition before returning over MethodChannel so a
-        // second mode/node change cannot target the outgoing generation.
-        VpnRuntime.reconnecting(profile)
-        val intent = Intent(this, ProximaVpnService::class.java)
-            .setAction(ProximaVpnService.ACTION_START)
-            .putExtra(ProximaVpnService.EXTRA_PROFILE_ID, profileId)
-        runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
-        }.onFailure {
-            VpnRuntime.failed(profile, it.message ?: "VPN을 다시 시작하지 못했습니다.")
-        }.getOrThrow()
     }
 
     private fun pickProfileFile(result: MethodChannel.Result) {

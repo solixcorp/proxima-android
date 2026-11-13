@@ -244,11 +244,3 @@ class ProfileRepository(context: Context) {
 
     }
 }
-
-object VlessRealityConfig {
-    private const val METADATA_PREFIX = "# proxima-vless-reality-link:"
-
-    fun isGeneratedProfile(content: String): Boolean = content.lineSequence().any { line ->
-        line.trimStart().startsWith(METADATA_PREFIX)
-    }
-}

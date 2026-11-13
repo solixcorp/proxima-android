@@ -4,7 +4,7 @@ package kr.kimrasng.proxima.client.android.proxima
  * Historical name, now ONLY a Builder/config consistency check. Dart owns all
  * link/subscription/rule assembly. Never reconstruct or repair its document here.
  * Android owns TUN addresses/routes; the engine always uses the mips stack,
- * independently of the Xray-only system/gvisor/mixed preference.
+ * independently of the legacy system/gvisor/mixed preference.
  */
 object MihomoProfileAssembler {
     fun verify(tunMtu: Any?, tunStack: Any?, configIpv6: Any?, builderMtu: Int, builderIpv6: Boolean) {
@@ -16,11 +16,4 @@ object MihomoProfileAssembler {
             "Mihomo 설정 IPv6와 Android 빌더 설정이 다릅니다. 다시 연결해 주세요."
         }
     }
-}
-
-/** Exact engine dispatch: no implicit fallback after a Mihomo failure. */
-internal fun <T> dispatchVpnEngine(engine: String, xray: () -> T, mihomo: () -> T): T = when (engine) {
-    "xray" -> xray()
-    "mihomo" -> mihomo()
-    else -> error("Unsupported VPN engine: $engine")
 }

@@ -43,24 +43,10 @@ object VpnRuntime {
     @Volatile
     private var current = NativeVpnSnapshot()
 
-    @Volatile
-    private var probePorts: Map<String, Int> = emptyMap()
-
-    @Volatile
-    private var accessLogPath: String? = null
-
     @Volatile private var mihomo: MihomoVpnSession? = null
-    @Volatile private var engine = "xray"
-
-    fun setEngine(value: String) { engine = value }
-    fun engine(): String = engine
 
     fun setMihomoSession(session: MihomoVpnSession?) {
         mihomo = session
-        if (session != null) {
-            clearProbePorts()
-            setAccessLogPath(null)
-        }
     }
 
     fun mihomoSession(): MihomoVpnSession? = mihomo
@@ -132,33 +118,13 @@ object VpnRuntime {
         },
     )
 
-    fun setProbePorts(value: Map<String, Int>) {
-        probePorts = value.toMap()
-    }
-
-    fun probePort(node: String): Int? = probePorts[node]
-
-    fun clearProbePorts() {
-        probePorts = emptyMap()
-    }
-
-    fun setAccessLogPath(path: String?) {
-        accessLogPath = path
-    }
-
-    fun accessLogPath(): String? = accessLogPath
-
     fun disconnecting() = publish(current.copy(state = "disconnecting", error = null))
 
     fun disconnected() {
-        clearProbePorts()
-        setAccessLogPath(null)
         publish(NativeVpnSnapshot())
     }
 
     fun failed(profile: StoredProfile?, message: String) {
-        clearProbePorts()
-        setAccessLogPath(null)
         publish(NativeVpnSnapshot(
             state = "error",
             profileId = profile?.id,

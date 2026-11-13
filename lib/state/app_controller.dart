@@ -208,7 +208,6 @@ class AppController extends ChangeNotifier {
       bridge.validateProfile(content);
 
   Future<void> _startProfile(String id, {int? connectionAttempt}) async {
-    if (settings.engine != VpnEngine.mihomo) return bridge.startVpn(id);
     var prepared = false;
     var started = false;
     try {
@@ -377,75 +376,14 @@ class AppController extends ChangeNotifier {
     if (snapshot.isBusy) {
       throw StateError('연결 상태가 바뀐 뒤 프로필을 저장해 주세요.');
     }
-    if (settings.engine == VpnEngine.mihomo) {
-      return _saveMihomoProfile(
-        id: id,
-        name: name,
-        sourceUrl: sourceUrl,
-        content: content,
-        subscriptionInfo: subscriptionInfo,
-        connectionAttempt: connectionAttempt,
-      );
-    }
-    VlessRealityProfile.parseMany(content);
-    final requestedName = name.trim();
-    final effectiveName =
-        requestedName.isEmpty ||
-            VlessRealityProfile.isAutomaticProfileName(requestedName)
-        ? VlessRealityProfile.suggestedProfileName(
-            content,
-            sourceUrl: sourceUrl,
-            fallbackName: requestedName,
-          )
-        : requestedName;
-    if (kDebugMode) {
-      debugPrint('[subscription-import] stage=rule-sets begin');
-    }
-    final ruleSets = await ClashSubscriptionParser.loadRuleSets(
-      content,
-      fetch: fetchRuleSet,
-    );
-    final generatedConfig = VlessRealityProfile.attachSubscriptionSource(
-      VlessRealityProfile.storedConfigFromInput(
-        content,
-        profileName: effectiveName,
-        ruleSetPayloads: ruleSets,
-      ),
-      sourceUrl,
-    );
-    if (kDebugMode) {
-      debugPrint(
-        '[subscription-import] stage=validation begin ruleSets=${ruleSets.length}',
-      );
-    }
-    final validationError = await validateProfile(generatedConfig);
-    if (connectionAttempt != null &&
-        (connectionAttempt != _connectionAttempt || id != activeProfile?.id)) {
-      return;
-    }
-    if (validationError != null && validationError.isNotEmpty) {
-      if (kDebugMode) {
-        debugPrint('[subscription-import] stage=validation result=rejected');
-      }
-      throw FormatException(validationError);
-    }
-    if (kDebugMode) {
-      debugPrint('[subscription-import] stage=save-profile begin');
-    }
-    final saved = await bridge.saveProfile(
+    return _saveMihomoProfile(
       id: id,
-      name: effectiveName,
-      sourceUrl: sourceUrl?.trim(),
-      content: generatedConfig,
+      name: name,
+      sourceUrl: sourceUrl,
+      content: content,
       subscriptionInfo: subscriptionInfo,
+      connectionAttempt: connectionAttempt,
     );
-    await reloadProfiles();
-    if (!snapshot.isConnected && settings.mode != OutboundMode.direct) {
-      await loadProxyGroups();
-    }
-    if (snapshot.isConnected && snapshot.profileId == saved.id) {
-      await _startProfile(saved.id);
-    }
   }
 
   Future<void> selectProfile(String id) async {
@@ -482,21 +420,8 @@ class AppController extends ChangeNotifier {
     );
   }
 
-  Future<String> readProfileLink(VpnProfile profile) async {
-    final config = await bridge.readProfile(profile.id);
-    if (settings.engine == VpnEngine.mihomo) return config;
-    final links = VlessRealityProfile.linksFromStoredConfig(config);
-    if (links.isNotEmpty) {
-      final rules = VlessRealityProfile.inlineRulesFromStoredConfig(config);
-      return [
-        links.join('\n'),
-        if (rules != null && rules.isNotEmpty) rules,
-      ].join('\n');
-    }
-    throw const FormatException(
-      '이전 Mihomo YAML 프로필입니다. VLESS 링크로 새 프로필을 추가해 주세요.',
-    );
-  }
+  Future<String> readProfileLink(VpnProfile profile) =>
+      bridge.readProfile(profile.id);
 
   String _safeFileName(String value) {
     final cleaned = value.replaceAll(RegExp(r'[^a-zA-Z0-9._\-가-힣 ]'), '_');
@@ -691,10 +616,9 @@ class AppController extends ChangeNotifier {
 
     final subscription =
         await (subscriptionFetcher ?? fetchSubscriptionDetails)(payload);
-    final hasNodes = settings.engine == VpnEngine.mihomo
-        ? MihomoConfigAssembly.preview(subscription.content).proxies.isNotEmpty
-        : VlessRealityProfile.linksFromSubscription(subscription.content)
-              .isNotEmpty;
+    final hasNodes = MihomoConfigAssembly.preview(subscription.content)
+        .proxies
+        .isNotEmpty;
     if (!hasNodes) {
       throw const FormatException('구독에서 VLESS 노드를 찾지 못했습니다.');
     }
@@ -725,7 +649,7 @@ class AppController extends ChangeNotifier {
       return await fetchPreferredSubscription(
         (_) => _fetchSubscriptionWithUserAgent(client, uri, userAgent),
         userAgent: userAgent,
-        mihomo: settings.engine == VpnEngine.mihomo,
+        mihomo: true,
       );
     } catch (error, stack) {
       if (kDebugMode) {
@@ -859,7 +783,7 @@ class AppController extends ChangeNotifier {
             profile.id != activeProfile?.id)) {
       return;
     }
-    // Mihomo preserves the source; only the existing Xray branch normalizes it.
+    // Preserve the subscription source for Mihomo assembly.
     final content = subscription.content;
     await saveProfile(
       id: profile.id,
@@ -873,36 +797,11 @@ class AppController extends ChangeNotifier {
     );
   }
 
-  Future<VpnProfile> _refreshRuleSubscriptionIfNeeded(
-    VpnProfile profile,
-  ) async {
-    if (!await _needsRuleSubscriptionRefresh(profile)) return profile;
-    try {
-      await refreshProfile(profile);
-    } catch (error) {
-      throw StateError('규칙 모드를 시작하려면 구독 업데이트가 필요합니다: $error');
-    }
-    return activeProfile ?? profile;
-  }
-
-  Future<bool> _needsRuleSubscriptionRefresh(VpnProfile profile) async {
-    if (settings.engine == VpnEngine.mihomo) return false;
-    if (settings.mode != OutboundMode.rule ||
-        profile.sourceUrl?.trim().isEmpty != false) {
-      return false;
-    }
-    final content = await bridge.readProfile(profile.id);
-    return !VlessRealityProfile.hasCurrentRoutingMetadata(content);
-  }
-
   Future<void> updateSettings(VpnSettings next) async {
     settings = next;
     notifyListeners();
     await bridge.saveSettings(next);
   }
-
-  Future<void> setEngine(VpnEngine engine) =>
-      updateSettings(settings.copyWith(engine: engine));
 
   Future<void> setMode(OutboundMode mode) async {
     if (snapshot.isBusy) {
@@ -912,41 +811,13 @@ class AppController extends ChangeNotifier {
     final previous = settings;
     await updateSettings(settings.copyWith(mode: mode));
     if (!snapshot.isConnected) {
-      if (mode == OutboundMode.rule) {
-        final profile = activeProfile;
-        if (profile != null) await _refreshRuleSubscriptionIfNeeded(profile);
-      }
       await loadProxyGroups();
       return;
     }
     try {
-      if (settings.engine == VpnEngine.mihomo) {
-        final profile = activeProfile;
-        if (profile == null) throw StateError('먼저 프로필을 추가해 주세요.');
-        await _startProfile(profile.id);
-        return;
-      }
-      if (mode == OutboundMode.rule) {
-        final profile = activeProfile;
-        if (profile != null && await _needsRuleSubscriptionRefresh(profile)) {
-          // refreshProfile restarts the active VPN using the mode already
-          // saved above, so avoid issuing a second restart below.
-          await refreshProfile(profile);
-          return;
-        }
-      }
-      ensureCoreSuccess(
-        await bridge.invokeCore(
-          'updateConfig',
-          jsonEncode({'mode': mode.wireName}),
-        ),
-      );
-      // Xray applies a mode change by restarting. Build the selector from the
-      // saved links while it is connecting; the connected event will reload
-      // the authoritative state after the new core is ready.
-      proxyGroups = await _offlineProxyGroups();
-      _clearProxyMessage();
-      notifyListeners();
+      final profile = activeProfile;
+      if (profile == null) throw StateError('먼저 프로필을 추가해 주세요.');
+      await _startProfile(profile.id);
     } catch (_) {
       settings = previous;
       await bridge.saveSettings(previous);
@@ -983,21 +854,13 @@ class AppController extends ChangeNotifier {
     loadingProxies = true;
     notifyListeners();
     try {
-      var content = profile == null ? '' : await bridge.readProfile(profile.id);
+      final content = profile == null
+          ? ''
+          : await bridge.readProfile(profile.id);
       if (!isCurrent()) return;
-      List<RoutingRule> rules = profile == null
+      final List<RoutingRule> rules = profile == null
           ? const []
           : _profileRoutingRules(content);
-      if (profile != null &&
-          settings.engine != VpnEngine.mihomo &&
-          !snapshot.isConnected &&
-          settings.mode == OutboundMode.rule &&
-          profile.sourceUrl?.trim().isNotEmpty == true &&
-          VlessRealityProfile.needsRoutingListRefresh(content)) {
-        await refreshProfile(profile);
-        content = await bridge.readProfile(profile.id);
-        rules = VlessRealityProfile.routingRulesFromStoredConfig(content);
-      }
       final List<ProxyGroup> groups;
       if (snapshot.isConnected) {
         groups = parseProxyGroups(
@@ -1028,8 +891,7 @@ class AppController extends ChangeNotifier {
   }
 
   List<RoutingRule> _profileRoutingRules(String content) {
-    if (settings.engine != VpnEngine.mihomo ||
-        VlessRealityProfile.linksFromStoredConfig(content).isNotEmpty) {
+    if (VlessRealityProfile.linksFromStoredConfig(content).isNotEmpty) {
       return VlessRealityProfile.routingRulesFromStoredConfig(content);
     }
     return MihomoConfigAssembly.preview(content).rules
@@ -1053,41 +915,12 @@ class AppController extends ChangeNotifier {
       throw StateError('연결 상태가 바뀐 뒤 노드를 변경해 주세요.');
     }
     if (snapshot.isConnected) {
-      if (settings.engine == VpnEngine.mihomo) {
-        final profile = activeProfile;
-        if (profile == null ||
-            currentProxyGroup?.proxies.contains(proxy) != true) {
-          throw StateError('선택할 수 없는 노드입니다.');
-        }
-        var changed = false;
-        try {
-          ensureCoreSuccess(
-            await bridge.invokeCore(
-              'changeProxy',
-              jsonEncode({'group-name': group, 'proxy-name': proxy}),
-            ),
-          );
-          changed = true;
-        } catch (_) {
-          // The existing reassembly and restart remains the second method.
-        }
-        await bridge.saveProxySelection(
-          profileId: profile.id,
-          group: group,
-          proxy: proxy,
-        );
-        if (changed) {
-          _setProxySelection(group, proxy);
-          _clearProxyMessage();
-          notifyListeners();
-        } else {
-          await _startProfile(profile.id);
-        }
-        return;
+      final profile = activeProfile;
+      if (profile == null ||
+          currentProxyGroup?.proxies.contains(proxy) != true) {
+        throw StateError('선택할 수 없는 노드입니다.');
       }
-      final previousGroups = proxyGroups;
-      _setProxySelection(group, proxy);
-      notifyListeners();
+      var changed = false;
       try {
         ensureCoreSuccess(
           await bridge.invokeCore(
@@ -1095,16 +928,22 @@ class AppController extends ChangeNotifier {
             jsonEncode({'group-name': group, 'proxy-name': proxy}),
           ),
         );
+        changed = true;
+      } catch (_) {
+        // The existing reassembly and restart remains the second method.
+      }
+      await bridge.saveProxySelection(
+        profileId: profile.id,
+        group: group,
+        proxy: proxy,
+      );
+      if (changed) {
+        _setProxySelection(group, proxy);
         _clearProxyMessage();
         notifyListeners();
-      } catch (_) {
-        proxyGroups = previousGroups;
-        notifyListeners();
-        rethrow;
+      } else {
+        await _startProfile(profile.id);
       }
-      // Xray restarts after changeProxy. The connecting -> connected snapshot
-      // transition calls _beginConnectedRefresh(), which safely reloads the
-      // authoritative proxy state after the new core is ready.
       return;
     }
     final profile = activeProfile;
@@ -1163,20 +1002,13 @@ class AppController extends ChangeNotifier {
     final profile = activeProfile;
     if (profile == null) return const [];
     final content = await bridge.readProfile(profile.id);
-    final nodes = settings.engine == VpnEngine.mihomo
-        ? MihomoConfigAssembly.preview(
-            content,
-            profileName: profile.name,
-          ).proxies.map((p) => p['name'] as String).toList()
-        : VlessRealityProfile.nodeNamesFromStoredConfig(
-            content,
-            profileName: profile.name,
-          );
+    final nodes = MihomoConfigAssembly.preview(
+      content,
+      profileName: profile.name,
+    ).proxies.map((p) => p['name'] as String).toList();
     if (nodes.isEmpty) return const [];
     final selections = await bridge.loadProxySelections(profile.id);
-    if (settings.engine == VpnEngine.mihomo) {
-      await _invalidateMissingSelections(profile.id, nodes, selections);
-    }
+    await _invalidateMissingSelections(profile.id, nodes, selections);
     final selected =
         selections[groupName] ??
         (groupName == 'PROXY' ? selections['GLOBAL'] : null);

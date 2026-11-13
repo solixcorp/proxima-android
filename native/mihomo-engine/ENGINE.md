@@ -151,7 +151,7 @@ Each Android variant's `build<Variant>Mihomo` runs this module's unchanged
 `bash build.sh android`, then copies only its engine libraries into the app's
 generated `build/app/generated/mihomoJniLibs/<variant>` directory. The JNI merge
 depends on that task; `verify<Variant>Mihomo`, also required by assemble, checks
-the selected libraries and compiled Java class. Xray remains a separate AAR.
+the selected libraries and compiled Java class. Mihomo is the sole bundled VPN engine.
 
 Gradle snapshots the native source tree (excluding generated `build` folders),
 including local overlays and Go module checksums, along with the ABI selection
@@ -174,7 +174,7 @@ four-ABI build or filter other dependencies; such an APK cannot use mihomo on
 an omitted ABI and must not be distributed as a complete build. Release ignores
 this variable. The engine links with 16 KiB ELF alignment; AGP 8.11 handles APK
 native-library alignment without a manifest change. This does not certify the
-alignment of Xray, Flutter, or any other library or verify a 16 KiB device.
+alignment of Flutter or any other library or verify a 16 KiB device.
 
 ## Verification scope
 

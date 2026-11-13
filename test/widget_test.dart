@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proxima/app/proxima_app.dart';
 import 'package:proxima/app/proxima_shell.dart';
 import 'package:proxima/core/native_vpn_bridge.dart';
+import 'package:proxima/core/mihomo_config_assembly.dart';
 import 'package:proxima/core/proxima_account.dart';
 import 'package:proxima/core/vless_reality_profile.dart';
 import 'package:proxima/models/vpn_models.dart';
@@ -21,50 +22,17 @@ import 'package:proxima/state/app_controller.dart';
 import 'package:proxima/widgets/app_page.dart';
 
 void main() {
-  test('engine settings default and round trip', () {
-    expect(const VpnSettings().engine, VpnEngine.xray);
-    expect(VpnSettings.fromMap(const {}).engine, VpnEngine.xray);
-    expect(VpnSettings.fromMap(const {'engine': 'invalid'}).engine, VpnEngine.xray);
-    for (final engine in VpnEngine.values) {
-      final settings = const VpnSettings(mtu: 1500).copyWith(engine: engine);
-      final restored = VpnSettings.fromMap(settings.toMap());
-      expect(restored.engine, engine);
-      expect(restored.copyWith(ipv6: false).engine, engine);
-      expect(restored.mtu, 1500);
-    }
-  });
-
-  testWidgets('engine selection is saved and survives reload', (tester) async {
-    final bridge = _ThemeBridge();
-    final controller = AppController(bridge);
-    addTearDown(controller.dispose);
-    await controller.initialize();
-    await tester.pumpWidget(ProximaApp(controller: controller));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.more_horiz_rounded).last);
-    await tester.pumpAndSettle();
-    final dropdown = find.byKey(const Key('vpn_engine'));
-    await tester.scrollUntilVisible(
-      dropdown,
-      300,
-      scrollable: find.descendant(
-        of: find.byType(SettingsScreen),
-        matching: find.byType(Scrollable),
-      ).first,
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(dropdown);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Mihomo').last);
-    await tester.pumpAndSettle();
-    expect(controller.settings.engine, VpnEngine.mihomo);
-    expect(bridge.saved.engine, VpnEngine.mihomo);
-    final reloaded = AppController(bridge);
-    addTearDown(reloaded.dispose);
-    await reloaded.initialize();
-    expect(reloaded.settings.engine, VpnEngine.mihomo);
-    expect(tester.takeException(), isNull);
-  });
+  test(
+    'obsolete engine settings are ignored and omitted from serialization',
+    () {
+      final settings = VpnSettings.fromMap(const {
+        'engine': 'obsolete',
+        'mtu': 1500,
+      });
+      expect(settings.mtu, 1500);
+      expect(settings.toMap().containsKey('engine'), isFalse);
+    },
+  );
 
   test('theme settings round trip and preserve tunnel settings', () {
     expect(VpnSettings.fromMap(const {}).themeMode, AppThemeMode.system);
@@ -99,9 +67,8 @@ void main() {
     await tester.pumpWidget(ProximaApp(controller: controller));
     await tester.pumpAndSettle();
 
-    Brightness brightness() => Theme.of(
-      tester.element(find.byType(ProximaShell)),
-    ).brightness;
+    Brightness brightness() =>
+        Theme.of(tester.element(find.byType(ProximaShell))).brightness;
 
     tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
     await tester.pumpAndSettle();
@@ -194,18 +161,14 @@ void main() {
             final name = '${width.toInt()}-${mode.name}-${icon.codePoint}';
             await expectLater(
               find.byKey(const Key('theme_capture')),
-              matchesGoldenFile(
-                '../.omo/evidence/dark-mode/$name-top.png',
-              ),
+              matchesGoldenFile('../.omo/evidence/dark-mode/$name-top.png'),
             );
             if (icon == Icons.more_horiz_rounded) {
               await tester.tap(find.byKey(const Key('theme_mode')));
               await tester.pumpAndSettle();
               await expectLater(
                 find.byKey(const Key('theme_capture')),
-                matchesGoldenFile(
-                  '../.omo/evidence/dark-mode/$name-menu.png',
-                ),
+                matchesGoldenFile('../.omo/evidence/dark-mode/$name-menu.png'),
               );
               await tester.sendKeyEvent(LogicalKeyboardKey.escape);
               await tester.pumpAndSettle();
@@ -221,22 +184,17 @@ void main() {
             scroll.position.jumpTo(scroll.position.maxScrollExtent);
             await tester.pumpAndSettle();
             debugPrint(
-              'THEME_SCROLL $name: ${find.byType(Scrollable).evaluate().map(
-                (element) {
-                  final state = (element as StatefulElement).state
-                      as ScrollableState;
-                  return '${element.widget.runtimeType}:'
-                      '${state.axisDirection}:'
-                      '${state.position.pixels}/'
-                      '${state.position.maxScrollExtent}';
-                },
-              ).join(', ')}',
+              'THEME_SCROLL $name: ${find.byType(Scrollable).evaluate().map((element) {
+                final state = (element as StatefulElement).state as ScrollableState;
+                return '${element.widget.runtimeType}:'
+                    '${state.axisDirection}:'
+                    '${state.position.pixels}/'
+                    '${state.position.maxScrollExtent}';
+              }).join(', ')}',
             );
             await expectLater(
               find.byKey(const Key('theme_capture')),
-              matchesGoldenFile(
-                '../.omo/evidence/dark-mode/$name-end.png',
-              ),
+              matchesGoldenFile('../.omo/evidence/dark-mode/$name-end.png'),
             );
             expect(tester.takeException(), isNull);
           }
@@ -257,9 +215,9 @@ void main() {
       await textFont.load();
       final icons = FontLoader('MaterialIcons');
       icons.addFont(
-        File(
-          const String.fromEnvironment('CAPTURE_ICON_FONT'),
-        ).readAsBytes().then(ByteData.sublistView),
+        File(const String.fromEnvironment('CAPTURE_ICON_FONT'))
+            .readAsBytes()
+            .then(ByteData.sublistView),
       );
       await icons.load();
     });
@@ -366,7 +324,8 @@ void main() {
             );
             final scrollOwners = <Map<String, Object>>[];
             for (final element in find.byType(Scrollable).evaluate()) {
-              final owner = (element as StatefulElement).state as ScrollableState;
+              final owner =
+                  (element as StatefulElement).state as ScrollableState;
               final ancestors = <String>[];
               element.visitAncestorElements((ancestor) {
                 ancestors.add(ancestor.widget.runtimeType.toString());
@@ -951,12 +910,9 @@ void main() {
 
         await controller.toggleVpn();
 
-        final links = VlessRealityProfile.linksFromStoredConfig(
-          bridge.profileContent,
-        );
-        expect(links.map((link) => Uri.parse(link).host), [
-          'new-edge.example.com',
-        ]);
+        final nodes = MihomoConfigAssembly.preview(bridge.profileContent)
+            .proxies;
+        expect(nodes.map((node) => node['server']), ['new-edge.example.com']);
         expect(bridge.startedProfileId, 'account-profile');
       },
     );
@@ -1038,7 +994,9 @@ rules:
   );
 
   test('local profiles connect without a subscription fetch', () async {
-    final bridge = _FakeBridge();
+    final bridge = _FakeBridge()
+      ..profileContent =
+          'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?security=tls&type=tcp#Local';
     final controller = _AccountImportController(bridge)..failFetch = true;
     addTearDown(controller.dispose);
     await controller.initialize();
@@ -1149,15 +1107,16 @@ rules:
   }
 
   test('invalidates displayed rules when the native profile changes', () async {
-    const link =
-        'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?security=tls&type=tcp#First';
     final events = StreamController<VpnSnapshot>(sync: true);
     final bridge = _AccountImportBridge()
       ..snapshotEvents = events.stream
-      ..profileContent = VlessRealityProfile.storedConfigFromInput(
-        '$link\nDOMAIN-SUFFIX,first.example.com,PROXY',
-        profileName: 'First',
-      );
+      ..profileContent = '''
+proxies:
+  - {name: First, type: vless, server: edge.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000}
+rules:
+  - DOMAIN-SUFFIX,first.example.com,First
+  - MATCH,First
+''';
     final controller = AppController(bridge);
     addTearDown(() async {
       controller.dispose();
@@ -1242,7 +1201,7 @@ rules:
 
   for (final reconnect in [false, true]) {
     test(
-      'cancellation during validation discards its write ($reconnect)',
+      'cancellation during permission prevents late startup ($reconnect)',
       () async {
         final bridge = _AccountImportBridge();
         final controller = _AccountImportController(bridge);
@@ -1253,10 +1212,10 @@ rules:
         );
         controller.subscriptionContent = 'vless://123e4567-e89b-42d3-a456-426614174000@cancelled.example.com:443?security=tls&type=tcp#Cancelled';
         final requested = Completer<void>();
-        final response = Completer<String?>();
+        final response = Completer<bool>();
         bridge
-          ..validationRequested = requested
-          ..pendingValidation = response.future;
+          ..permissionRequested = requested
+          ..pendingPermission = response.future;
         final cancelledConnection = controller.toggleVpn();
         await requested.future.timeout(const Duration(seconds: 5));
         controller.cancelConnectionPreparation();
@@ -1266,7 +1225,7 @@ rules:
         }
         final currentContent = bridge.profileContent;
         final currentSaveCount = bridge.savedIds.length;
-        response.complete(null);
+        response.complete(true);
         await cancelledConnection;
         expect(bridge.profileContent, currentContent);
         expect(bridge.savedIds, hasLength(currentSaveCount));
@@ -1275,7 +1234,7 @@ rules:
           reconnect ? controller.activeProfile?.id : isNull,
         );
         expect(controller.preparingConnection, isFalse);
-        expect(controller.message, isNull);
+        expect(controller.message, '사용 가능 1개 · 건너뜀 0개');
       },
     );
   }
@@ -1298,32 +1257,31 @@ rules:
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  test(
-    'changes a connected node optimistically without an immediate reload',
-    () async {
-      final bridge = _FakeBridge();
-      final controller = AppController(bridge)
-        ..snapshot = const VpnSnapshot(state: VpnConnectionState.connected)
-        ..settings = const VpnSettings(mode: OutboundMode.global)
-        ..proxyGroups = const [
-          ProxyGroup(
-            name: 'GLOBAL',
-            type: 'Selector',
-            selected: 'Tokyo',
-            proxies: ['Tokyo', 'Seoul'],
-          ),
-        ]
-        ..message = '노드 목록을 불러오지 못했습니다: restarting';
+  test('changes a connected Mihomo node and persists it without an immediate reload', () async {
+    final bridge = _FakeBridge();
+    final controller = AppController(bridge)
+      ..profiles = [bridge.profile]
+      ..snapshot = const VpnSnapshot(state: VpnConnectionState.connected)
+      ..settings = const VpnSettings(mode: OutboundMode.global)
+      ..proxyGroups = const [
+        ProxyGroup(
+          name: 'GLOBAL',
+          type: 'Selector',
+          selected: 'Tokyo',
+          proxies: ['Tokyo', 'Seoul'],
+        ),
+      ]
+      ..message = '노드 목록을 불러오지 못했습니다: restarting';
 
-      await controller.selectProxy('GLOBAL', 'Seoul');
+    await controller.selectProxy('GLOBAL', 'Seoul');
 
-      expect(controller.currentProxyGroup?.selected, 'Seoul');
-      expect(bridge.invokedMethods, ['changeProxy']);
-      expect(controller.message, isNull);
-    },
-  );
+    expect(controller.currentProxyGroup?.selected, 'Seoul');
+    expect(bridge.invokedMethods, ['changeProxy']);
+    expect(bridge.selections['GLOBAL'], 'Seoul');
+    expect(controller.message, isNull);
+  });
 
-  test('rejects mode and node mutations while Xray is restarting', () async {
+  test('rejects mode and node mutations while the VPN is restarting', () async {
     final controller = AppController(_FakeBridge())
       ..snapshot = const VpnSnapshot(state: VpnConnectionState.connecting)
       ..settings = const VpnSettings(mode: OutboundMode.rule)
@@ -1349,8 +1307,10 @@ rules:
   });
 
   test('node details use canonical aliases and duplicate names', () async {
-    const first = 'vless://11111111-1111-4111-8111-111111111111@first.example:443?security=tls&type=ws&path=%2Fsocket#Same';
-    const second = 'vless://22222222-2222-4222-8222-222222222222@second.example:8443?security=none&type=grpc&serviceName=tunnel#Same';
+    const first =
+        'vless://11111111-1111-4111-8111-111111111111@first.example:443?security=tls&type=ws&path=%2Fsocket#Same';
+    const second =
+        'vless://22222222-2222-4222-8222-222222222222@second.example:8443?security=none&type=grpc&serviceName=tunnel#Same';
     final bridge = _FakeBridge()
       ..profileContent = VlessRealityProfile.storedConfigFromInput(
         '$first\n$second',
@@ -1383,7 +1343,9 @@ rules:
       );
     final controller = AppController(bridge)..profiles = [bridge.profile];
     addTearDown(controller.dispose);
-    await tester.pumpWidget(MaterialApp(home: ProxiesScreen(controller: controller)));
+    await tester.pumpWidget(
+      MaterialApp(home: ProxiesScreen(controller: controller)),
+    );
     await tester.tap(find.byTooltip('노드 정보'));
     await tester.pumpAndSettle();
     await tester.tap(find.text(bridge.profile.name));
@@ -1404,7 +1366,9 @@ rules:
     final bridge = _FakeBridge()..profileReadError = 'secret-link';
     final controller = AppController(bridge)..profiles = [bridge.profile];
     addTearDown(controller.dispose);
-    await tester.pumpWidget(MaterialApp(home: ProxiesScreen(controller: controller)));
+    await tester.pumpWidget(
+      MaterialApp(home: ProxiesScreen(controller: controller)),
+    );
     await tester.tap(find.byTooltip('노드 정보'));
     await tester.pumpAndSettle();
     expect(find.text('다시 시도'), findsOneWidget);
@@ -1529,7 +1493,7 @@ rules:
     expect(formatBytes(1024 * 1024), '1.0 MB');
   });
 
-  test('formats Xray version payloads', () {
+  test('formats legacy core version payloads', () {
     expect(formatCoreVersion('{"version":"*26.9.9"}'), '26.9.9');
     expect(formatCoreVersion({'version': '*26.9.9'}), '26.9.9');
     expect(formatCoreVersion('v26.9.9'), '26.9.9');
@@ -1590,7 +1554,9 @@ rules:
   });
 
   test('an error can retry with the newly selected profile', () async {
-    final bridge = _FakeBridge();
+    final bridge = _FakeBridge()
+      ..profileContent =
+          'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?security=tls&type=tcp#Selected';
     final controller = AppController(bridge)
       ..profiles = [
         VpnProfile(
@@ -1640,7 +1606,10 @@ rules:
     expect(find.text('Connected subscription'), findsNothing);
     expect(find.text('example.com'), findsNothing);
     expect(find.text('구독 정보가 없습니다'), findsNothing);
-    expect(find.byKey(const Key('account_plan_usage_container')), findsOneWidget);
+    expect(
+      find.byKey(const Key('account_plan_usage_container')),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('account_services_container')), findsOneWidget);
   });
 
@@ -1824,7 +1793,7 @@ rules:
     expect(VlessRealityProfile.linksFromStoredConfig(config), [first, second]);
   });
 
-  test('converts Clash.Meta nodes and ordered rules into Xray metadata', () {
+  test('converts Clash.Meta nodes and ordered rules into legacy metadata', () {
     const yaml = '''
 proxies:
   - {name: '剩余流量：10 GB', type: vless, server: info.example.com, port: 443, uuid: 123e4567-e89b-42d3-a456-426614174000, network: tcp, servername: cdn.example.com, client-fingerprint: chrome, reality-opts: {public-key: abcdefghijklmnopqrstuvwxzy0123456789ABCD, short-id: 1a2b}}
@@ -2057,7 +2026,7 @@ rules:
     expect(VlessRealityProfile.linkFromStoredConfig(stored), link);
   });
 
-  test('rejects WebSocket because Xray REALITY does not support it', () {
+  test('legacy link parser rejects WebSocket with REALITY', () {
     expect(
       () => VlessRealityProfile.parse(
         'vless://123e4567-e89b-42d3-a456-426614174000@edge.example.com:443?encryption=none&security=reality&sni=cdn.example.com&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&type=ws&path=%2Fws',
@@ -2132,10 +2101,13 @@ rules:
     );
     await tester.pumpAndSettle();
     expect(find.textContaining('Everyday Plus'), findsOneWidget);
-    expect(find.descendant(
-      of: find.byKey(const Key('account_local_profile')),
-      matching: find.text('사용량'),
-    ), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('account_local_profile')),
+        matching: find.text('사용량'),
+      ),
+      findsNothing,
+    );
     expect(find.textContaining('남은 트래픽'), findsOneWidget);
     expect(
       find.descendant(
@@ -2192,36 +2164,42 @@ rules:
     expect(find.byKey(const Key('proxima_account_usage')), findsNothing);
     expect(find.textContaining('남은 트래픽'), findsNothing);
     expect(controller.activeProfile?.subscriptionInfo?.planName, 'Other plan');
-    expect(find.descendant(
-      of: find.byKey(const Key('account_local_profile')),
-      matching: find.text('Everyday Plus'),
-    ), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('account_local_profile')),
+        matching: find.text('Everyday Plus'),
+      ),
+      findsNothing,
+    );
   });
 
-  test('account import persists the API plan without replacing usage', () async {
-    final expiry = DateTime.utc(2027);
-    final bridge = _AccountImportBridge();
-    final controller = _AccountImportController(bridge)
-      ..subscriptionInfo = SubscriptionInfo(
-        upload: 12,
-        download: 34,
-        total: 1024,
-        expire: expiry,
-        planName: 'Proxima',
+  test(
+    'account import persists the API plan without replacing usage',
+    () async {
+      final expiry = DateTime.utc(2027);
+      final bridge = _AccountImportBridge();
+      final controller = _AccountImportController(bridge)
+        ..subscriptionInfo = SubscriptionInfo(
+          upload: 12,
+          download: 34,
+          total: 1024,
+          expire: expiry,
+          planName: 'Proxima',
+        );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.importAccountSubscription(
+        'https://sub.example.com/sub/account',
+        planName: 'Everyday Plus',
       );
-    addTearDown(controller.dispose);
-    await controller.initialize();
-    await controller.importAccountSubscription(
-      'https://sub.example.com/sub/account',
-      planName: 'Everyday Plus',
-    );
-    final info = bridge.savedProfiles.last.subscriptionInfo!;
-    expect(info.planName, 'Everyday Plus');
-    expect(info.upload, 12);
-    expect(info.download, 34);
-    expect(info.total, 1024);
-    expect(info.expire, expiry);
-  });
+      final info = bridge.savedProfiles.last.subscriptionInfo!;
+      expect(info.planName, 'Everyday Plus');
+      expect(info.upload, 12);
+      expect(info.download, 34);
+      expect(info.total, 1024);
+      expect(info.expire, expiry);
+    },
+  );
 
   const ruleSetAccountContent = '''
 proxies:
@@ -2237,38 +2215,33 @@ rules:
   - MATCH,Default
 ''';
 
-  test('account import resolves remote rule sets before persisting routing',
-      () async {
-    final bridge = _AccountImportBridge();
-    final requested = <Uri>[];
-    final controller = _AccountImportController(bridge)
-      ..subscriptionContent = ruleSetAccountContent
-      ..ruleSetFetcher = (uri) async {
-        requested.add(uri);
-        return utf8.encode('payload:\n  - +.ipdata.co\n  - +.myip.wtf\n');
-      };
-    addTearDown(controller.dispose);
-    await controller.initialize();
-    await controller.importAccountSubscription(
-      'https://sub.example.com/sub/account',
-    );
-    expect(requested, [Uri.parse('https://rules.example.com/ip.yaml')]);
-    final rules = VlessRealityProfile.routingRulesFromStoredConfig(
-      bridge.profileContent,
-    );
-    expect(rules.first.destination, 'RULE-SET,ip_check');
-    expect(rules.first.supported, isTrue);
-    expect(rules.first.candidates, ['Hong Kong ISP']);
-    expect(rules.last.candidates, ['Korea ISP']);
-    expect(VlessRealityProfile.routingMetadataVersion(bridge.profileContent), 3);
-  });
+  test(
+    'account import preserves native rule providers without fetching them',
+    () async {
+      final bridge = _AccountImportBridge();
+      final requested = <Uri>[];
+      final controller = _AccountImportController(bridge)
+        ..subscriptionContent = ruleSetAccountContent
+        ..ruleSetFetcher = (uri) async {
+          requested.add(uri);
+          return utf8.encode('payload:\n  - +.ipdata.co\n  - +.myip.wtf\n');
+        };
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.importAccountSubscription(
+        'https://sub.example.com/sub/account',
+      );
+      expect(requested, isEmpty);
+      expect(bridge.profileContent, ruleSetAccountContent);
+      final preview = MihomoConfigAssembly.preview(bridge.profileContent);
+      expect(preview.rules, ['RULE-SET,ip_check,IP lookup', 'MATCH,Default']);
+    },
+  );
 
-  test('failed remote rule loading preserves the existing profile', () async {
+  test('rejected Mihomo admission preserves the existing profile', () async {
     final bridge = _AccountImportBridge();
-    final failure = const SocketException('rules unavailable');
     final controller = _AccountImportController(bridge)
-      ..subscriptionContent = ruleSetAccountContent
-      ..ruleSetFetcher = (_) async => throw failure;
+      ..subscriptionContent = 'proxies: []\nrules: [MATCH,DIRECT]\n';
     addTearDown(controller.dispose);
     await controller.initialize();
     final previous = bridge.profileContent;
@@ -2276,7 +2249,7 @@ rules:
       controller.importAccountSubscription(
         'https://sub.example.com/sub/account',
       ),
-      throwsA(same(failure)),
+      throwsFormatException,
     );
     expect(bridge.savedIds, isEmpty);
     expect(bridge.profileContent, previous);
@@ -2377,7 +2350,8 @@ class _ThemeBridge extends _FakeBridge {
   VpnSettings saved = const VpnSettings();
 
   @override
-  Future<VpnSettings> loadSettings() async => VpnSettings.fromMap(saved.toMap());
+  Future<VpnSettings> loadSettings() async =>
+      VpnSettings.fromMap(saved.toMap());
 
   @override
   Future<void> saveSettings(VpnSettings settings) async {
@@ -2403,6 +2377,8 @@ class _FakeBridge implements VpnBridge {
   Future<String>? pendingProfileRead;
   Completer<void>? validationRequested;
   Future<String?>? pendingValidation;
+  Completer<void>? permissionRequested;
+  Future<bool>? pendingPermission;
   Stream<VpnSnapshot>? snapshotEvents;
   final selections = <String, String>{};
   String? startedProfileId;
@@ -2475,7 +2451,16 @@ class _FakeBridge implements VpnBridge {
   }
 
   @override
-  Future<bool> requestVpnPermission() async => true;
+  Future<bool> requestVpnPermission() async {
+    final pending = pendingPermission;
+    if (pending != null) {
+      pendingPermission = null;
+      permissionRequested?.complete();
+      permissionRequested = null;
+      return pending;
+    }
+    return true;
+  }
 
   @override
   Future<String> requestQuickSettingsTile() async => 'added';

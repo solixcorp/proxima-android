@@ -33,7 +33,7 @@ class MihomoWorkerBoundaryHostTest(unittest.TestCase):
         files.append(source / "test" / package / "MihomoBoundaryHostTest.kt")
         self.run_host(files, "MihomoBoundaryHostTest", r"PASS [1-9][0-9]* deterministic Mihomo boundary host tests")
 
-    def test_settings_engine_persistence_and_defaults(self):
+    def test_settings_persistence_and_defaults(self):
         source = Path(__file__).resolve().parents[1]
         package = Path("kotlin/kr/kimrasng/proxima/client/android/proxima")
         files = [
@@ -42,9 +42,9 @@ class MihomoWorkerBoundaryHostTest(unittest.TestCase):
             source / "test/fixtures/settings/Context.kt",
             source / "test/fixtures/settings/JSONObject.kt",
         ]
-        self.run_host(files, "VpnSettingsHostTest", r"PASS VpnSettings engine persistence and defaults")
+        self.run_host(files, "VpnSettingsHostTest", r"PASS VpnSettings persistence and defaults")
 
-    def test_engine_dispatch_sidecar_consistency_death_and_join_order(self):
+    def test_sidecar_consistency_death_and_join_order(self):
         source = Path(__file__).resolve().parents[1]
         package = Path("kotlin/kr/kimrasng/proxima/client/android/proxima")
         files = [source / "main" / package / name for name in (
@@ -54,7 +54,7 @@ class MihomoWorkerBoundaryHostTest(unittest.TestCase):
         files.append(source / "test" / package / "MihomoRuntimeHostTest.kt")
         self.run_host(files, "MihomoRuntimeHostTest", r"PASS [1-9][0-9]* deterministic Mihomo runtime host tests")
 
-    def test_android_wiring_keeps_isolation_and_original_xray_adapters(self):
+    def test_android_wiring_keeps_isolation_and_direct_mihomo_start(self):
         source = Path(__file__).resolve().parents[1]
         package = source / "main/kotlin/kr/kimrasng/proxima/client/android/proxima"
         service = (package / "ProximaVpnService.kt").read_text()
@@ -67,8 +67,8 @@ class MihomoWorkerBoundaryHostTest(unittest.TestCase):
         self.assertIn("Process.killProcess(Process.myPid())", worker)
         self.assertIn("binding.awaitRetired()", (package / "MihomoVpnSession.kt").read_text())
         self.assertIn("closeMihomoTunnel(stopAndJoin", service)
-        self.assertIn("dispatchVpnEngine(settings.engine", service)
-        self.assertLess(service.index('if (settings.engine == "mihomo") return'), service.index("XrayCore.configureVpn"))
+        self.assertIn("establishMihomo(profile, mihomoConfig, settings, fd, token, preserveSession)", service)
+        self.assertNotIn("settings.engine", service + activity)
         self.assertIn("worker.linkToDeath(recipient, 0)", boundary)
         self.assertIn("retired.observedDeath()", boundary)
         self.assertNotIn("MihomoProfileAssembler.build", service + activity)

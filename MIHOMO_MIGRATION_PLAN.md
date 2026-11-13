@@ -1,13 +1,13 @@
-# Mihomo 전환 계획
+# Mihomo 전환 계획 및 이력
 
 ## 목표와 원칙
 
-libXray를 최종 제거하고 mihomo v1.19.33으로 전환한다. Mihomo가 지원하는 모든 프로토콜을 대상으로 Clash YAML을 패스스루하고 제네릭 검증한다. 앱이 프로토콜별로 변환하는 방식을 확장하지 않는다. 기존 구독 호환은 별도 검증한다.
+libXray 제거와 mihomo v1.19.33 단일 엔진 전환을 구현했다. Mihomo가 지원하는 모든 프로토콜을 대상으로 Clash YAML을 패스스루하고 제네릭 검증한다. 앱이 프로토콜별로 변환하는 방식을 확장하지 않는다. 기존 구독 호환은 별도 검증한다.
 
 ## 확정 설계
 
 - `:mihomo` 별도 프로세스와 JNI 세션을 유지한다. 시작 오류는 호출자에 반환하고 획득한 자원을 롤백한다. 종료는 업스트림 3계약 패치를 통한 joined shutdown으로 완료를 기다린다.
-- Xray 기본값의 듀얼 엔진 플래그로 점진적으로 전환한다. Phase 0에서는 선택을 저장만 하며 실제 실행은 Xray다.
+- 이력: Phase 0에서는 Xray 기본값의 듀얼 엔진 플래그로 점진적으로 전환했다. Phase 6에서 플래그·전용 코드·AAR를 삭제했으며 현재는 Mihomo만 실행한다.
 - 트래픽, 연결 목록·부하 및 지연 측정 관제 데이터는 external-controller HTTP 대신 JNI 콜백으로 전달한다.
 - DNS는 redir-host를 우선 사용하고 fake-ip는 이후 옵션으로 검토한다. YAML 조립은 Dart에서 수행한다.
 
@@ -17,7 +17,7 @@ libXray를 최종 제거하고 mihomo v1.19.33으로 전환한다. Mihomo가 지
 
 ## 단계 및 완료 조건
 
-Phase 3.3 구현: Mihomo 저장·실행 경로를 Dart 조립으로 전환했다.
+Phase 3.3 이력: Mihomo 저장·실행 경로를 Dart 조립으로 전환했다.
 구독 YAML 원문과 admission 요약을 분리 저장하고, 시작/재시작마다 최종 재검증한
 설정을 64KiB 청크 → 앱 전용 일회용 사이드카(최대 8MiB) → 기존 Binder 설정 FD로
 전달한다. 원문 SHA-256·설정 지문 및 MTU/mips/IPv6 일치 실패는 시작을 거부한다.
@@ -31,19 +31,35 @@ Kotlin 임시 단일 VLESS 조립은 제거했으며 Xray/Go/native 동작은 �
 미지원이며, 사이드카 없는 시작은 앱에서 재연결하도록 명시적으로 거부한다.
 실행 계약과 이행 다이어그램은 `android/MIHOMO_RUNTIME.md`를 따른다.
 
-2026-11-13 호스트 게이트: Flutter 전체 304 통과/캡처 전용 4 건너뜀,
+Phase 3.3 당시 호스트 게이트: Flutter 전체 304 통과/캡처 전용 4 건너뜀,
 Kotlin discovery 4/4(경계 26·실행 10 + 설정·소스 연결 검증), JDK 21
 `:app:assembleDebug` 성공(215 tasks), 루트 native 7개 모듈 게이트 통과.
 
 | 단계 | 내용 | 완료 조건 |
 | --- | --- | --- |
-| 0 | 엔진 선택 저장, 계획과 라이선스 고지 | 기본 Xray, 설정 왕복·기본값 테스트 통과, 실행 경로 불변 |
+| 0 (이력) | 엔진 선택 저장, 계획과 라이선스 고지 | 당시 기본 Xray, 설정 왕복·기본값 테스트 통과, 실행 경로 불변 |
 | 1 | 세션 수명주기 및 프로세스 경계 | 시작 실패 롤백과 3계약 joined shutdown, 프로세스 종료·재시작 검증 |
 | 2 | TUN, 네트워크·DNS 연결 | FD 소유권, 보호 소켓, redir-host 및 IPv4/IPv6 기기 통신 검증 |
 | 3 | Dart YAML 조립과 프로필 입력 | Clash YAML 패스스루, 제네릭 오류 처리와 구독 호환 검증 |
 | 4 | JNI 관제 및 앱 연결 | 트래픽·연결 목록·지연 콜백과 UI 수명주기 검증 |
-| 5 | 듀얼 엔진 실제 전환 | 선택된 엔진 기동·중지, 오류 복구 및 기존 Xray 회귀 검증 |
-| 6 | Xray 제거 및 출시 준비 | GPL 정책 확정, 기기 검증 완료, Xray 코드·의존성 제거 및 배포 검토 |
+| 5 (이력) | 듀얼 엔진 실제 전환 | 당시 선택된 엔진 기동·중지, 오류 복구 및 기존 Xray 회귀 검증 |
+| 6 — 제거 완료 | Xray 코드·AAR 및 엔진 플래그 제거 | 제거·호스트 게이트 완료. GPL 배포 정책·실기기 검증·출시 승인은 별도 미완료 |
+
+### Phase 6 제거 완료 (출시 승인과 구분)
+
+- XrayCore/Config/Probe/ConnectionLog 및 서비스의 DialerController 구현과 전용
+  AAR를 실제 삭제했다. 공통 Android TUN 빌더의 주소·DNS·경로 제외는 유지한다.
+- Android/Dart `engine` 설정·엔진 선택 UI·전용 런타임 분기를 제거했다.
+  업그레이드 기기에 남은 SharedPreferences `engine` 키는 읽거나 쓰지 않으며 무해하다.
+- 노드 선택은 기존 Mihomo `changeProxy` → `select` → PROXY selector를 유지하고
+  실패 시 기존 Dart 재조립/재시작을 사용한다. Go/native 구현 변경은 없다.
+- APK의 libgojni.so는 제거되고 libproxima_mihomo_engine.so 3 ABI 패키징을 확인한다.
+- 기기 검증은 이전에도 미실행이었다. 사용자 요청에 따라 코드 제거를 먼저 수행했으며,
+  GPL 정책 확정·실기기 VPN/DNS/UDP/복구 검증 전에는 출시 완료로 판정하지 않는다.
+- 제거 후 호스트 게이트: `flutter analyze` 0 이슈, `flutter test` 304 통과/4 건너뜀,
+  Kotlin discovery 4/4(경계 26·실행 9 + 설정·소스 검증), native 7개 모듈 통과,
+  JDK 21 debug assemble 성공, `git diff --check` 오류 없음.
+  Flutter 306→304는 엔진 선택 위젯·제거된 엔진 시작 테스트 2건 삭제에 따른 차이다.
 
 ### Phase 5 CI/릴리스 (워크플로 반영, 실제 CI 검증 대기)
 
@@ -87,6 +103,6 @@ APK 검사에서 `arm64-v8a`, `armeabi-v7a`, `x86_64`의 엔진 라이브러리�
 
 ## 검증 게이트
 
-각 Phase 완료마다 `flutter analyze`, `flutter test`와 각 `native/*/build.sh test`가 모두 통과해야 한다. 호스트 테스트만으로 Android VPN 동작을 보증하지 않는다. 최종 Xray 제거 전에 실제 기기에서 연결·DNS·UDP·네트워크 전환·종료 및 복구를 검증해야 한다.
+각 Phase 완료마다 `flutter analyze`, `flutter test`와 각 `native/*/build.sh test`가 모두 통과해야 한다. 호스트 테스트만으로 Android VPN 동작을 보증하지 않는다. 이력상 최종 Xray 제거 전 기기 검증을 계획했으나 실행되지 않았고, 코드 제거는 요청에 따라 선행했다. 실제 기기에서 연결·DNS·UDP·네트워크 전환·종료 및 복구를 검증하기 전에는 출시하지 않는다.
 
 기기·에뮬레이터 실행 절차와 시나리오별 판정 기준은 [DEVICE_TEST_PLAN.md](DEVICE_TEST_PLAN.md)를 따른다. 기기 검증은 아직 실행되지 않았다.

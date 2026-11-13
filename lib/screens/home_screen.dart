@@ -375,8 +375,8 @@ class HomeScreen extends StatelessWidget {
               const Divider(height: 1, indent: 56),
               AppValueTile(
                 leading: const Icon(Icons.swap_horiz_rounded),
-                title: 'Xray 코어',
-                subtitle: '최근 Xray 연결과 사용 중인 메모리 확인',
+                title: 'Mihomo 코어',
+                subtitle: '활성 연결과 사용 중인 메모리 확인',
                 value: snapshot.isConnected ? '실행 중' : '정지됨',
                 onTap: snapshot.isConnected ? openConnections : null,
               ),

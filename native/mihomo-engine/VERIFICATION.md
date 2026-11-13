@@ -60,8 +60,8 @@ Required device checks (NOT established by Kotlin host tests or APK assembly):
   close, and no retained VPN indicator/FD. Verify main-owner process death also
   terminates the worker and cancels/join native management calls.
 - Reject binding/null binding/handshake/native library/admission failures and
-  verify precise Mihomo error states without Xray startup. Verify Xray remains
-  unchanged on-device and always-on remains disabled.
+  verify precise Mihomo error states without engine fallback. Verify always-on
+  remains disabled.
 - Exercise simultaneous delay tests, one-second traffic EventChannel updates,
   zero/failing polls, >1 MiB connections snapshots through FD transport, and
   retired-session management errors while disconnecting.

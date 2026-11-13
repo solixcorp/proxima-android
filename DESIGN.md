@@ -36,6 +36,10 @@ Layout: wide shell navigation - NavigationRail at widths of 600 logical pixels o
 
 ## 5. Components and states
 
+The tunnel settings use Mihomo only: there is no engine picker. Keep the existing
+IPv6, MTU and theme controls, and label core/connection information for Mihomo.
+Profile editors retain source YAML and display admission summaries without rewriting it.
+
 - AppPage: collapsing/pinned page title, optional refresh, single vertical scroller.
 - SectionHeader: grouped task heading using existing typography and spacing.
 - AppValueTile/ListTile: responsive labeled values; long values wrap.

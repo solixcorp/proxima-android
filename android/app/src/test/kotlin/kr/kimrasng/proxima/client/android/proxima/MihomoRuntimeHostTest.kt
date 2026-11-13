@@ -7,7 +7,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
-/** Production sidecar/consistency/dispatch/fence tests, not a Binder emulator. */
+/** Production sidecar/consistency/fence tests, not a Binder emulator. */
 object MihomoRuntimeHostTest {
     private const val PROFILE = "12345678-1234-1234-1234-123456789abc"
     private const val SETTINGS = "1400:true:rule:mips"
@@ -37,14 +37,6 @@ object MihomoRuntimeHostTest {
         var passed = 0
         fun test(name: String, operation: () -> Unit) {
             operation(); passed++; println("PASS $name")
-        }
-        test("exact dispatch selects one engine and never falls back on native failure") {
-            val calls = mutableListOf<String>()
-            check(dispatchVpnEngine("xray", { calls.add("xray"); 1 }, { error("wrong engine") }) == 1)
-            check(dispatchVpnEngine("mihomo", { error("fallback") }, { calls.add("mihomo"); 2 }) == 2)
-            fails("bind failed") { dispatchVpnEngine("mihomo", { error("fallback") }, { error("bind failed") }) }
-            fails("Unsupported") { dispatchVpnEngine("unknown", { error("xray") }, { error("mihomo") }) }
-            check(calls == listOf("xray", "mihomo"))
         }
         test("Dart MTU mips stack and IPv6 must match Android Builder") {
             for (mtu in listOf(1280, 1400, 1500, 9000)) for (ipv6 in listOf(true, false)) {

@@ -138,10 +138,7 @@ void main() {
           }
         });
     controller = _Controller(_Bridge())
-      ..settings = const VpnSettings(
-        engine: VpnEngine.mihomo,
-        mode: OutboundMode.global,
-      )
+      ..settings = const VpnSettings(mode: OutboundMode.global)
       ..profiles = [VpnProfile.fromMap(row)];
   });
   tearDown(() {
@@ -150,34 +147,28 @@ void main() {
         .setMockMethodCallHandler(channel, null);
   });
 
-  test(
-    'Mihomo saves original YAML and admission metadata without Xray validation',
-    () async {
-      await controller.saveProfile(
-        id: _id,
-        name: 'Subscription',
-        content: _source,
-        sourceUrl: 'https://subscription.example/profile',
-      );
-      expect(content, _source);
-      final summary = controller.profiles.single.admissionSummary!;
-      expect(summary.validProxyCount, 2);
-      expect(
-        summary.skipped,
-        hasLength(3),
-      ); // protocol, dangling reference, rule
-      expect(controller.message, contains('건너뜀 3개'));
-      expect(calls.any((c) => c.method == 'validateProfile'), isFalse);
-      expect(
-        controller.profiles.single.sourceUrl,
-        'https://subscription.example/profile',
-      );
-      expect(
-        await controller.readProfileLink(controller.profiles.single),
-        _source,
-      );
-    },
-  );
+  test('Mihomo saves original YAML and admission metadata without legacy validation', () async {
+    await controller.saveProfile(
+      id: _id,
+      name: 'Subscription',
+      content: _source,
+      sourceUrl: 'https://subscription.example/profile',
+    );
+    expect(content, _source);
+    final summary = controller.profiles.single.admissionSummary!;
+    expect(summary.validProxyCount, 2);
+    expect(summary.skipped, hasLength(3)); // protocol, dangling reference, rule
+    expect(controller.message, contains('건너뜀 3개'));
+    expect(calls.any((c) => c.method == 'validateProfile'), isFalse);
+    expect(
+      controller.profiles.single.sourceUrl,
+      'https://subscription.example/profile',
+    );
+    expect(
+      await controller.readProfileLink(controller.profiles.single),
+      _source,
+    );
+  });
 
   test('single VLESS keeps legacy comments; existing legacy bytes and routing survive resave', () async {
     await controller.saveProfile(id: _id, name: 'Legacy', content: _link);
@@ -261,16 +252,13 @@ void main() {
     },
   );
 
-  test(
-    'missing sidecar at start becomes error, never retries through Xray',
-    () async {
-      failMethod = 'startVpn';
-      await controller.toggleVpn();
-      expect(controller.snapshot.state, VpnConnectionState.error);
-      expect(controller.message, contains('사이드카'));
-      expect(calls.where((c) => c.method == 'startVpn'), hasLength(1));
-    },
-  );
+  test('missing sidecar at start becomes error without fallback', () async {
+    failMethod = 'startVpn';
+    await controller.toggleVpn();
+    expect(controller.snapshot.state, VpnConnectionState.error);
+    expect(controller.message, contains('사이드카'));
+    expect(calls.where((c) => c.method == 'startVpn'), hasLength(1));
+  });
 
   test('assembly/provider-reference and size failures never reach sidecar or start', () async {
     for (final source in [
@@ -320,24 +308,30 @@ void main() {
     );
   });
 
-  test('connected node switches live and mode change regenerates Dart config', () async {
-    await controller.loadProxyGroups();
-    controller.snapshot = const VpnSnapshot(
-      state: VpnConnectionState.connected,
-      profileId: _id,
-    );
-    await controller.selectProxy('GLOBAL', 'second');
-    expect(selections['GLOBAL'], 'second');
-    expect(calls.any((c) => c.method == 'coreAction'), isTrue);
-    expect(calls.any((c) => c.method == 'finishMihomoConfiguration'), isFalse);
-    expect(controller.currentProxyGroup?.selected, 'second');
-    calls.clear();
-    await controller.setMode(OutboundMode.direct);
-    expect((jsonDecode(utf8.decode(uploaded)) as Map)['rules'], [
-      'MATCH,DIRECT',
-    ]);
-    expect(calls.any((c) => c.method == 'coreAction'), isFalse);
-  });
+  test(
+    'connected node switches live and mode change regenerates Dart config',
+    () async {
+      await controller.loadProxyGroups();
+      controller.snapshot = const VpnSnapshot(
+        state: VpnConnectionState.connected,
+        profileId: _id,
+      );
+      await controller.selectProxy('GLOBAL', 'second');
+      expect(selections['GLOBAL'], 'second');
+      expect(calls.any((c) => c.method == 'coreAction'), isTrue);
+      expect(
+        calls.any((c) => c.method == 'finishMihomoConfiguration'),
+        isFalse,
+      );
+      expect(controller.currentProxyGroup?.selected, 'second');
+      calls.clear();
+      await controller.setMode(OutboundMode.direct);
+      expect((jsonDecode(utf8.decode(uploaded)) as Map)['rules'], [
+        'MATCH,DIRECT',
+      ]);
+      expect(calls.any((c) => c.method == 'coreAction'), isFalse);
+    },
+  );
 
   test('failed live node switch reassembles and restarts', () async {
     await controller.loadProxyGroups();
@@ -350,12 +344,6 @@ void main() {
     expect(selections['GLOBAL'], 'second');
     expect(calls.any((c) => c.method == 'finishMihomoConfiguration'), isTrue);
     expect(calls.any((c) => c.method == 'startVpn'), isTrue);
-  });
-
-  test('Xray start does not assemble or send a Mihomo sidecar', () async {
-    controller.settings = controller.settings.copyWith(engine: VpnEngine.xray);
-    await controller.toggleVpn();
-    expect(calls.map((c) => c.method), ['requestVpnPermission', 'startVpn']);
   });
 
   test('cancellation during sidecar transfer discards prepared config without starting', () async {

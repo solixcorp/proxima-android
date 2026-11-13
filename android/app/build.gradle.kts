@@ -107,11 +107,6 @@ androidComponents {
     }
 }
 
-dependencies {
-    // XTLS/libXray v26.9.9, built from Xray-core v26.9.9.
-    implementation(files("libs/libxray-android-v26.9.9.aar"))
-}
-
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17

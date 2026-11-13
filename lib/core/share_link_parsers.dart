@@ -15,7 +15,7 @@ class ShareLinkResult {
   final List<ShareLinkError> errors;
 }
 
-/// Converts share links to Mihomo proxy mappings, not Xray configuration.
+/// Converts share links to Mihomo proxy mappings.
 class ShareLinkParsers {
   static const maxInputLength = 1024 * 1024;
   static const maxLinkLength = 16384;

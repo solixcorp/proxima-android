@@ -267,7 +267,7 @@ object MihomoWorkerBoundary {
         /**
          * Transfer duplicates and start the native engine. Caller retains its original TUN.
          * The configuration travels as an unlinked, read-only file, not an 8 MB
-         * Binder payload. A native start error is returned without Xray fallback.
+         * Binder payload. A native start error is returned without fallback.
          */
         fun start(tun: ParcelFileDescriptor, configuration: MihomoConfiguration) {
             check(gate.isActive(lease)) { "Mihomo lease is inactive" }

@@ -4,7 +4,7 @@ import '../models/vpn_models.dart';
 import 'clash_subscription.dart';
 
 /// A VLESS share link using plain, TLS, or REALITY transport security.
-/// The original link is preserved for the bundled libXray converter.
+/// The original link is preserved for compatible legacy storage and Mihomo assembly.
 class VlessRealityProfile {
   static const routingMetadataPrefix = '# proxima-routing-rules:';
   static const inlineRulesPrefix = '# proxima-inline-rules:';
@@ -179,7 +179,7 @@ class VlessRealityProfile {
   }
 
   /// Converts either a share-link list or a Clash.Meta subscription into the
-  /// app-owned profile format consumed by the Android Xray runtime.
+  /// app-owned legacy profile format consumed by the Mihomo assembly adapter.
   static String storedConfigFromInput(
     String input, {
     required String profileName,

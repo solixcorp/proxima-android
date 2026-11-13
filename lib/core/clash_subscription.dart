@@ -26,12 +26,12 @@ class ClashAdmissionResult {
   final List<ClashSkippedItem> skipped;
 }
 
-/// The Xray-oriented representation of a Clash.Meta subscription.
+/// The legacy comment-based representation of a Clash.Meta subscription.
 ///
-/// Clash selectors do not have a direct Xray equivalent. For rule mode we
+/// Legacy storage has no direct selector equivalent. For rule mode we
 /// preserve the concrete nodes behind each policy group, so a regional group
 /// does not collapse into the global fastest-node pool when translated to
-/// Xray. A `select` group follows its provider-default (first) choice while
+/// legacy metadata. A `select` group follows its provider-default (first) choice while
 /// url-test/fallback/load-balance groups retain all of their candidates.
 class ClashSubscriptionConversion {
   const ClashSubscriptionConversion({
@@ -596,7 +596,7 @@ class ClashSubscriptionParser {
     'supported': parsed != null && supportsRule(parsed),
   };
 
-  // XrayConfig normalizes only these private-network geo conditions locally.
+  // Legacy routing metadata normalizes these private-network geo conditions.
   // Apply the same check when reading profiles saved by older app versions.
   static bool supportsRule(Map<String, Object?> rule) =>
       rule['supported'] != false &&

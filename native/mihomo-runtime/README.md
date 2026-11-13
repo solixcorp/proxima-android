@@ -102,10 +102,10 @@ runtime never configures those globals itself. The original constraints below
 explain why an ordinary tunnel alone remains insufficient.
 
 The current Android service advertises `172.19.0.2` as VPN DNS
-(`ProximaVpnService.kt:120`, `XrayConfig.kt:19`) and forces its /32 route into
-the TUN. That address is synthetic. Passing its port 53 packets to an ordinary
-tunnel is not a working replacement for the current Xray DNS interception.
-**This component cannot replace that service's engine yet.**
+(`ProximaVpnService.kt`) and forces its /32 route into the TUN. That address
+is synthetic. Passing its port 53 packets to an ordinary tunnel alone is not
+sufficient: the full Mihomo engine supplies DNS interception and resolver
+initialization (see `../mihomo-engine/DNS.md`).
 
 Pinned Mihomo `listener/sing_tun/dns.go` intercepts TCP/UDP and calls
 `resolver.RelayDnsConn`/`RelayDnsPacket`. Its UDP path starts untracked goroutines.

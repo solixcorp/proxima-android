@@ -1,8 +1,8 @@
-# Phase 3.3 Android runtime contract
+# Mihomo-only Android runtime contract (Phase 6 cleanup)
 
 Mihomo executable YAML is now produced **only in Dart**. The old Kotlin
-single-VLESS projection has been removed, not retained as a fallback. Xray's
-configuration, native adapters and start path are unchanged.
+single-VLESS projection has been removed, not retained as a fallback. Mihomo is
+the sole VPN engine; no engine-selection setting or legacy native AAR remains.
 
 ```text
 subscription YAML / share links / legacy comment-based profile
@@ -36,29 +36,30 @@ MihomoBinderTransport: app-private file → read-only PFD → unlink
 An import preview is not execution approval. Assembly/final admission failures
 refuse start in Dart with an error snapshot. Missing/incomplete/stale/oversized
 sidecars, Builder mismatch, worker/native errors also refuse start, without an
-Xray retry. A ready capability is removed from MainActivity before launch and
+engine fallback. A ready capability is removed from MainActivity before launch and
 the service destroys the file on consumption, including failure. Each Flutter
-start, profile refresh/reselection, connected node change and mode change builds
-a fresh document. Native `updateConfig`/`changeProxy` cannot trigger an old
-Kotlin rebuild. Cancellation/start rejection discards a prepared capability;
+start, profile refresh/reselection and mode change builds a fresh document.
+Connected node selection first uses `changeProxy` → `MihomoVpnSession.select`
+→ native `PROXY` selector; if that call fails, Dart reassembles and restarts.
+Native `updateConfig` cannot trigger an old Kotlin rebuild.
+Cancellation/start rejection discards a prepared capability;
 Activity destruction also discards its pending uploads. Process-crash orphans
 have no capability in the new Activity and are never used by a later start.
 
 Tile/widget/service starts without Dart preparation deliberately fail with
 “Mihomo 설정 사이드카가 없습니다. 앱에서 다시 연결해 주세요.” They do not
 read a last-successful config. Adding headless Flutter preparation for these
-entry points is future work; their existing Xray behavior is unchanged.
+entry points is future work.
 
 ## Engine boundary
 
-`ProximaVpnService` captures `NativeVpnSettings.engine` per connection. Both
-engines use the existing Builder unchanged: `172.19.0.1/30`, DNS `172.19.0.2`,
-MTU setting, optional `fdfe:dcba:9876::1/126`, and the existing API-33 route
-exclusions. The branch is immediately after TUN establishment, before any Xray
-configuration, ports, SOCKS probes or log setup. Xray's four core adapters are
-unchanged. Switching the saved engine does not hot-swap the running session.
+`ProximaVpnService` starts Mihomo directly after establishing the shared Builder:
+`172.19.0.1/30`, DNS `172.19.0.2`, MTU setting, optional
+`fdfe:dcba:9876::1/126`, and the existing API-33 route exclusions are unchanged.
+The obsolete SharedPreferences `engine` key may remain on upgraded devices;
+it is neither read, written nor returned by the settings contract.
 
-Mihomo is explicit opt-in, never an Xray fallback. Bind rejection, null binding,
+Bind rejection, null binding,
 handshake errors, ten-second attachment timeout, native load/start/admission
 errors all reach the existing `error` snapshot with a Mihomo-specific message.
 An unexpectedly lost running worker publishes `disconnected` after retirement;
@@ -67,7 +68,7 @@ worker remains bound-only, and always-on remains false.
 
 ## Immutable storage and Dart assembly
 
-- In Mihomo mode, subscriptions retain their original YAML bytes (including
+- Subscriptions retain their original YAML bytes (including
   comments, unsupported items and provider definitions). Admission is a separate
   metadata record: valid proxy count and skipped type/reason rows. Import/refresh
   feedback and profile tiles show counts and up to three distinct reasons.
@@ -95,14 +96,14 @@ worker remains bound-only, and always-on remains false.
   it contains no protocol parser, node selector or YAML builder.
 - `tun` contains required enable plus MTU/stack only. IPv4/IPv6 addresses and
   routes belong exclusively to Android Builder. The stack is fixed `mips`, not
-  the Xray-only system/gvisor/mixed preference. MTU and top-level IPv6 must match
+  the obsolete system/gvisor/mixed preference. MTU and top-level IPv6 must match
   Builder values, otherwise start fails. DNS is omitted: the unchanged engine
   injects its defaults and `172.19.0.2:53` interception (see `DNS.md`).
 
 Final Dart admission rechecks executable nodes/groups/provider references/rules;
 native Go admission and constructors still decide upstream value validity.
 Public-IP probing, connection closing and provider inventory/refresh remain
-unsupported by the current JNI surface; no Xray substitute is invoked.
+unsupported by the current JNI surface; no substitute engine is invoked.
 
 ## Runtime bridge
 
@@ -114,7 +115,7 @@ lease gate and socket-FD protection checks. Binder worker protocol v3 adds:
   success only after `start` returns. `ProximaVpnService` alone then publishes
   `VpnRuntime.connected` and starts one-second traffic updates.
 - `trafficStats`: two longs. Speeds are differences of native payload totals;
-  reconnect offsets and EventChannel snapshots follow the Xray polling pattern.
+  reconnect offsets and EventChannel snapshots retain the existing polling contract.
 - `delayTest`: named native proxy/group HTTPS test; normal timeout validation and
   errors come from native management. No SOCKS port or external controller.
 - `connectionsSnapshot`: up to 8 MiB, transferred using an unlinked, read-only
@@ -123,10 +124,10 @@ lease gate and socket-FD protection checks. Binder worker protocol v3 adds:
   or invented destination IP/port/process fields. Native only exports active
   rows and those limited metadata fields.
 
-`VpnRuntime` retains the *running* session/engine independently of saved settings.
-`MainActivity` branches core actions against that captured engine. Management is
-off-main. All instantiated static nodes are advertised while connected; selected
-node changes restart through fresh Dart assembly, not a native selector API.
+`VpnRuntime` retains the *running* session independently of saved settings.
+`MainActivity` captures that session for core actions. Management is off-main.
+All instantiated static nodes are advertised while connected; selected node
+changes use the native selector first, with fresh Dart assembly/restart as fallback.
 Provider-backed dynamic nodes/group selection are not exposed by this JNI API.
 No native engine is instantiated/loaded in the main process for Mihomo.
 `coreInfo` names the pinned bundled version and only reports loaded when a
@@ -175,15 +176,18 @@ original descriptor rather than falsely declaring it safe to close/reuse.
 
 ## Host gates and device limitations
 
-Phase 3.3 host run (2026-11-13): Flutter tests **304 passed, 4 capture-only
-tests skipped**; Kotlin discovery **4/4 passed** (26 boundary + 10 runtime
-cases, settings suite and source-wiring assertions); JDK 21 `:app:assembleDebug`
-**successful**, 215 actionable tasks; root `bash build.sh test` **7/7 native
-module gates successful**. No `native/` source changes are part of this phase.
+Phase 6 removal host run (2026-11-13): Kotlin discovery **4/4 passed**
+(26 boundary + 9 runtime cases, settings suite and source-wiring assertions);
+Flutter analysis **0 issues**, tests **304 passed / 4 capture-only skipped**;
+JDK 21 `:app:assembleDebug` **successful**; root `bash build.sh test`
+**7/7 native module gates successful**. Native implementation is unchanged;
+only documentation under `native/` is updated.
+APK inspection confirms no `libgojni.so` and one `libproxima_mihomo_engine.so`
+for each of `arm64-v8a`, `armeabi-v7a`, and `x86_64`.
 
 See [`../native/mihomo-engine/VERIFICATION.md`](../native/mihomo-engine/VERIFICATION.md)
 for gate commands/results and the required device checklist. Host tests execute
-the production pure Kotlin dispatch, sidecar, consistency checker, lease, handshake and retirement
+the production pure Kotlin sidecar, consistency checker, lease, handshake and retirement
 fence. Wiring assertions inspect the Android source; they do **not** emulate
 Binder, real PFD duplication, actual process death, or Android TUN traffic.
 Successful native host gates and APK assembly cannot replace those checks.
