@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,6 +32,9 @@ func assertManagementRetired(t *testing.T, s *Session) {
 	if _, err := s.ConnectionsSnapshot(); !errors.Is(err, ErrNotRunning) {
 		t.Fatal("inactive snapshot", err)
 	}
+	if err := s.Select("group", "node"); !errors.Is(err, ErrNotRunning) {
+		t.Fatal("inactive select", err)
+	}
 }
 
 func TestManagementBeforeStart(t *testing.T) {
@@ -39,7 +43,7 @@ func TestManagementBeforeStart(t *testing.T) {
 }
 
 func TestManagementProcess(t *testing.T) {
-	for _, scenario := range []string{"success", "timeout", "refused", "stop", "certificate", "redirect"} {
+	for _, scenario := range []string{"success", "timeout", "refused", "stop", "certificate", "redirect", "select"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
@@ -79,7 +83,25 @@ func TestManagementChild(t *testing.T) {
 		}
 	}
 	p := &dnsProtector{t: t, reject: scenario == "refused"}
-	config := minimal + "proxies: [{name: node, type: direct}]\nproxy-groups: [{name: group, type: select, proxies: [node]}]\n"
+	config := minimal + "proxies: [{name: node, type: direct}, {name: blocked, type: reject}]\nproxy-groups: [{name: group, type: select, proxies: [node, blocked]}]\n"
+	var proxyHits [2]atomic.Int32
+	if scenario == "select" {
+		var endpoints [2]string
+		for i := range endpoints {
+			i := i
+			dummy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				proxyHits[i].Add(1)
+				http.Error(w, "dummy proxy", http.StatusBadGateway)
+			}))
+			defer dummy.Close()
+			host, port, err := net.SplitHostPort(dummy.Listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			endpoints[i] = fmt.Sprintf("{name: dummy%d, type: http, server: %s, port: %s}", i, host, port)
+		}
+		config = minimal + fmt.Sprintf("proxies: [{name: node, type: direct}, {name: blocked, type: reject}, %s, %s]\nproxy-groups: [{name: group, type: select, proxies: [node, blocked, dummy0, dummy1]}]\n", endpoints[0], endpoints[1])
+	}
 	s, err := Start([]byte(config), fd, p)
 	if err != nil {
 		t.Fatal(err)
@@ -88,6 +110,75 @@ func TestManagementChild(t *testing.T) {
 	up, down, err := s.TrafficStats()
 	if err != nil || up != 0 || down != 0 {
 		t.Fatal("nonzero initial session totals", up, down, err)
+	}
+	if scenario == "select" {
+		for _, input := range [][2]string{{"missing", "node"}, {"group", "missing"}, {"node", "node"}} {
+			if err := s.Select(input[0], input[1]); err == nil {
+				t.Fatalf("accepted invalid select %v", input)
+			}
+		}
+		for i := 0; i < 2; i++ {
+			if err := s.Select("group", fmt.Sprintf("dummy%d", i)); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = s.DelayTest("group", server.URL, 3000) // dummy returns 502 to CONNECT
+			if proxyHits[i].Load() != 1 || proxyHits[1-i].Load() != int32(i) {
+				t.Fatalf("URLTest did not use selected dummy %d: %d/%d", i, proxyHits[0].Load(), proxyHits[1].Load())
+			}
+		}
+		if err := s.Select("group", "node"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.DelayTest("group", server.URL, 3000); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Select("group", "blocked"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.DelayTest("group", server.URL, 3000); err == nil {
+			t.Fatal("reject was not selected")
+		}
+		if requests.Load() != 1 {
+			t.Fatal("selected route unexpectedly reached target", requests.Load())
+		}
+		var wg sync.WaitGroup
+		for i := 0; i < 12; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				for j := 0; j < 20; j++ {
+					if err := s.Select("group", []string{"node", "blocked"}[i%2]); err != nil {
+						t.Error(err)
+					}
+					_, _ = s.DelayTest("group", server.URL, 3000)
+				}
+			}(i)
+		}
+		wg.Wait()
+		if _, _, err := s.TrafficStats(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.ConnectionsSnapshot(); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := 0; j < 100; j++ {
+					if err := s.Select("group", "node"); err != nil && !errors.Is(err, ErrNotRunning) {
+						t.Error(err)
+						return
+					}
+				}
+			}()
+		}
+		if err := s.Stop(); err != nil {
+			t.Fatal(err)
+		}
+		wg.Wait()
+		assertManagementRetired(t, s)
+		return
 	}
 	if scenario == "success" {
 		// The global singleton is not the adapter's aggregation source.

@@ -1059,14 +1059,30 @@ class AppController extends ChangeNotifier {
             currentProxyGroup?.proxies.contains(proxy) != true) {
           throw StateError('선택할 수 없는 노드입니다.');
         }
+        var changed = false;
+        try {
+          ensureCoreSuccess(
+            await bridge.invokeCore(
+              'changeProxy',
+              jsonEncode({'group-name': group, 'proxy-name': proxy}),
+            ),
+          );
+          changed = true;
+        } catch (_) {
+          // The existing reassembly and restart remains the second method.
+        }
         await bridge.saveProxySelection(
           profileId: profile.id,
           group: group,
           proxy: proxy,
         );
-        _setProxySelection(group, proxy);
-        notifyListeners();
-        await _startProfile(profile.id);
+        if (changed) {
+          _setProxySelection(group, proxy);
+          _clearProxyMessage();
+          notifyListeners();
+        } else {
+          await _startProfile(profile.id);
+        }
         return;
       }
       final previousGroups = proxyGroups;

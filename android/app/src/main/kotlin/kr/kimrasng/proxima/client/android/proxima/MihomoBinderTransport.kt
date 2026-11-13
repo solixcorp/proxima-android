@@ -39,6 +39,7 @@ internal object MihomoBinderTransport {
     const val TRAFFIC = IBinder.FIRST_CALL_TRANSACTION + 3
     const val DELAY = IBinder.FIRST_CALL_TRANSACTION + 4
     const val CONNECTIONS = IBinder.FIRST_CALL_TRANSACTION + 5
+    const val SELECT = IBinder.FIRST_CALL_TRANSACTION + 6
 
     fun <T> call(
         remote: IBinder,

@@ -314,6 +314,12 @@ object MihomoWorkerBoundary {
             decode = { it.readInt() },
         )
 
+        fun select(group: String, proxy: String) = query(
+            MihomoBinderTransport.SELECT,
+            encode = { it.writeString(group); it.writeString(proxy) },
+            decode = {},
+        )
+
         fun connectionsSnapshot(): ByteArray = query(MihomoBinderTransport.CONNECTIONS) { reply ->
             val size = reply.readInt()
             val sha256 = checkNotNull(reply.readString())

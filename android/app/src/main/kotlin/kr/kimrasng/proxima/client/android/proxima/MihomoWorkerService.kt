@@ -63,7 +63,7 @@ class MihomoWorkerService : Service() {
         }
 
         override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-            if (code !in MihomoBinderTransport.HELLO..MihomoBinderTransport.CONNECTIONS) {
+            if (code !in MihomoBinderTransport.HELLO..MihomoBinderTransport.SELECT) {
                 return super.onTransact(code, data, reply, flags)
             }
             data.enforceInterface(MihomoBinderTransport.WORKER)
@@ -122,6 +122,13 @@ class MihomoWorkerService : Service() {
                             reply.writeInt(snapshot.size); reply.writeString(snapshot.sha256)
                             fd.writeToParcel(reply, 0)
                         }
+                    }
+                    MihomoBinderTransport.SELECT -> {
+                        val group = checkNotNull(data.readString())
+                        val proxy = checkNotNull(data.readString())
+                        require(data.dataAvail() == 0)
+                        lease.engine.select(group, proxy)
+                        reply.writeNoException()
                     }
                 }
                 return true

@@ -127,3 +127,26 @@ Java_kr_kimrasng_proxima_mihomo_NativeEngine_connectionsSnapshotNative(JNIEnv *e
     free(data);
     return result;
 }
+
+JNIEXPORT void JNICALL
+Java_kr_kimrasng_proxima_mihomo_NativeEngine_selectNative(JNIEnv *env, jclass cls, jlong handle,
+                                                          jbyteArray group, jbyteArray proxy) {
+    (void)cls;
+    if (group == NULL || proxy == NULL) {
+        throw_error(env, "java/lang/IllegalArgumentException", "selector names are required"); return;
+    }
+    jsize gs = (*env)->GetArrayLength(env, group), ps = (*env)->GetArrayLength(env, proxy);
+    if (gs > 8192 || ps > 8192) {
+        throw_error(env, "java/lang/IllegalArgumentException", "selector name exceeds 8192 UTF-8 bytes"); return;
+    }
+    char *g = malloc((size_t)gs + 1), *p = malloc((size_t)ps + 1);
+    if (g == NULL || p == NULL) {
+        free(g); free(p); throw_error(env, "java/lang/OutOfMemoryError", "copy selector input"); return;
+    }
+    (*env)->GetByteArrayRegion(env, group, 0, gs, (jbyte *)g);
+    (*env)->GetByteArrayRegion(env, proxy, 0, ps, (jbyte *)p);
+    g[gs] = 0; p[ps] = 0;
+    if ((*env)->ExceptionCheck(env)) { free(g); free(p); return; }
+    char *error = ProximaEngineSelect((unsigned long long)handle, g, p);
+    free(g); free(p); report_error(env, error);
+}

@@ -21,6 +21,7 @@ func (*Session) ProviderErrors() map[string]error
 func (*Session) TrafficStats() (upBytes, downBytes int64, err error)
 func (*Session) DelayTest(name, url string, timeoutMs int) (delayMs int, err error)
 func (*Session) ConnectionsSnapshot() ([]byte, error)
+func (*Session) Select(groupName, proxyName string) error
 func Version() string
 ```
 
@@ -120,12 +121,13 @@ from using a new lease in this process after Stop.
 - `management.go`: admitted queries, native delay tests and bounded tracker buffers.
 - `admit.go`, `protocol_admission.go`, `provider_admission.go`, `dns.go`: fail-closed
   capability admission and executable DNS defaults.
-- `cmd/overlay`: sixteen complete-source SHA-256 pins and unique patch anchors for
+- `cmd/overlay`: seventeen complete-source SHA-256 pins and unique patch anchors for
   parser rollback, error-returning executor/listener, raw sing_tun.New and joined
   packet/provider/health-check/resolver worker instrumentation, scoped DNS sockets
    and DoH redirect denial. Phase 1.4 also suppresses REALITY's unauthenticated
    background HTTP fallback, drains group failure/health tasks and closes
-   partially parsed top-level/provider proxies.
+    partially parsed top-level/provider proxies. Selector reads and writes are
+    synchronized for live selection and concurrent dialing.
   Legacy void APIs remain unchanged and unused.
 - `cmd/compose`: conflict-free provider/network/engine overlay composition plus
   separately pinned sing-tun packet-loop composition.

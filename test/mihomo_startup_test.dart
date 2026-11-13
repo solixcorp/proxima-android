@@ -320,7 +320,7 @@ void main() {
     );
   });
 
-  test('connected node and mode changes regenerate Dart config rather than Kotlin restart', () async {
+  test('connected node switches live and mode change regenerates Dart config', () async {
     await controller.loadProxyGroups();
     controller.snapshot = const VpnSnapshot(
       state: VpnConnectionState.connected,
@@ -328,13 +328,28 @@ void main() {
     );
     await controller.selectProxy('GLOBAL', 'second');
     expect(selections['GLOBAL'], 'second');
-    expect(calls.any((c) => c.method == 'finishMihomoConfiguration'), isTrue);
+    expect(calls.any((c) => c.method == 'coreAction'), isTrue);
+    expect(calls.any((c) => c.method == 'finishMihomoConfiguration'), isFalse);
+    expect(controller.currentProxyGroup?.selected, 'second');
     calls.clear();
     await controller.setMode(OutboundMode.direct);
     expect((jsonDecode(utf8.decode(uploaded)) as Map)['rules'], [
       'MATCH,DIRECT',
     ]);
     expect(calls.any((c) => c.method == 'coreAction'), isFalse);
+  });
+
+  test('failed live node switch reassembles and restarts', () async {
+    await controller.loadProxyGroups();
+    controller.snapshot = const VpnSnapshot(
+      state: VpnConnectionState.connected,
+      profileId: _id,
+    );
+    failMethod = 'coreAction';
+    await controller.selectProxy('GLOBAL', 'second');
+    expect(selections['GLOBAL'], 'second');
+    expect(calls.any((c) => c.method == 'finishMihomoConfiguration'), isTrue);
+    expect(calls.any((c) => c.method == 'startVpn'), isTrue);
   });
 
   test('Xray start does not assemble or send a Mihomo sidecar', () async {

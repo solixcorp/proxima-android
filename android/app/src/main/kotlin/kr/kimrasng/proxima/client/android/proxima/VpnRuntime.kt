@@ -65,6 +65,14 @@ object VpnRuntime {
 
     fun mihomoSession(): MihomoVpnSession? = mihomo
 
+    fun mihomoSelected(session: MihomoVpnSession, node: String) {
+        mainHandler.post {
+            if (mihomo === session && current.state == "connected") {
+                publish(current.copy(activeNode = node))
+            }
+        }
+    }
+
     fun initialize(context: Context) {
         appContext = context.applicationContext
     }

@@ -302,7 +302,10 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 error("Mihomo 설정 변경은 앱의 Dart 조립 후 다시 연결해야 합니다.")
             }
             "changeProxy" -> {
-                error("Mihomo 노드 변경은 앱의 Dart 조립 후 다시 연결해야 합니다.")
+                val request = JSONObject(data)
+                require(request.optString("group-name") == "GLOBAL") { "지원하지 않는 선택 그룹입니다." }
+                session.select(request.getString("proxy-name"))
+                JSONObject()
             }
             "getMemory" -> Debug.getPss().toLong() * 1024L
             "queryExternalProviders" -> JSONArray() // JNI has no provider inventory surface yet.

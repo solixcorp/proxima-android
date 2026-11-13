@@ -6,6 +6,7 @@
 func (*Session) TrafficStats() (upBytes, downBytes int64, err error)
 func (*Session) DelayTest(name, url string, timeoutMs int) (delayMs int, err error)
 func (*Session) ConnectionsSnapshot() ([]byte, error)
+func (*Session) Select(groupName, proxyName string) error
 ```
 
 ```java
@@ -13,6 +14,7 @@ func (*Session) ConnectionsSnapshot() ([]byte, error)
 long[] trafficStats();             // [upload, download], payload bytes
 int delayTest(String name, String url, int timeoutMs);
 byte[] connectionsSnapshot();      // owned UTF-8 JSON array
+void select(String groupName, String proxyName);
 ```
 
 These methods require a successfully started, still-running session. Nil/zero,
@@ -115,9 +117,22 @@ on a Java allocation/copy exception. No Go pointer crosses JNI or outlives a
 call, no per-row Java objects/local references, no `NewStringUTF` size/encoding
 hazard, and returned arrays remain valid after Stop.
 
+## Selector updates
+
+`Select` requires an existing top-level selector group and a member of that
+group (including provider members). Other group types and ordinary proxies are
+rejected. Names are bounded at 8192 UTF-8 bytes. The adapter calls the same
+`outboundgroup.Selector.Set` used by upstream `hub/route/proxies.go`'s
+`updateProxy`, without exposing an HTTP controller or persisting upstream cache.
+The pinned selector uses an unsynchronized string for reads and writes; a
+complete-source checksum-gated overlay protects those accesses with an RWMutex.
+Concurrent requests have last-writer-wins semantics; existing connections are
+not closed and future dials use the selected member. Traffic and snapshot state
+are not reset. Java uses the same normal UTF-8 and retirement contract as probes.
+
 ## Admission, Stop and scope
 
-All three calls acquire the same management admission mutex as retirement and
+All four calls acquire the same management admission mutex as retirement and
 increment an owned WaitGroup under it. Stop closes admission and cancels the
 management context immediately; unexpected input exit does the same. Admitted
 getters can finish while Stop starts; later calls fail. An already admitted
@@ -128,8 +143,8 @@ do not hold the synchronized lifecycle monitor over a network request; a volatil
 handle plus native lookup retains the old Go session safely while Stop removes
 the handle. Retired pointers cannot target a new lease.
 
-No Reload, external-controller, HTTP management listener, app/service integration
-or Android connected-state publication is added. The earlier audited protocol
+No Reload, external-controller or HTTP management listener is added. Android
+publishes the selected node only after the worker confirms the change. The earlier audited protocol
 subset, callback non-reentrancy and single-process/one-core fence remain in force.
 Cancellation/join owns the API calls, not a proof of synchronous exit of every
 transport library actor. Terminate/reap the worker remains the final fence;

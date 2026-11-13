@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/adapter"
+	"github.com/metacubex/mihomo/adapter/outboundgroup"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/tunnel/statistic"
 	"proxima.local/mihomo/providerpolicy"
@@ -31,6 +32,30 @@ type management struct {
 	stats      *statistic.Manager
 	proxies    map[string]C.Proxy
 	snapshotMu sync.Mutex
+}
+
+// Select changes an existing selector's member without replacing the session.
+func (s *Session) Select(groupName, proxyName string) error {
+	m, err := s.beginManagement()
+	if err != nil {
+		return err
+	}
+	defer m.calls.Done()
+	if len(groupName) > 8192 || len(proxyName) > 8192 {
+		return errors.New("selector name exceeds 8192 bytes")
+	}
+	p, ok := m.proxies[groupName]
+	if !ok {
+		return fmt.Errorf("unknown selector group %q", groupName)
+	}
+	selector, ok := p.Adapter().(*outboundgroup.Selector)
+	if !ok {
+		return fmt.Errorf("proxy/group %q is not a selector", groupName)
+	}
+	if err := selector.Set(proxyName); err != nil {
+		return fmt.Errorf("selector %q: %w: %q", groupName, err, proxyName)
+	}
+	return nil
 }
 
 func newManagement(stats *statistic.Manager) *management {

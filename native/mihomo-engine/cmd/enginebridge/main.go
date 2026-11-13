@@ -60,6 +60,11 @@ func ProximaEngineDelayTest(id C.ulonglong, name, url *C.char, timeout C.int, de
 	return nativeError(err)
 }
 
+//export ProximaEngineSelect
+func ProximaEngineSelect(id C.ulonglong, group, proxy *C.char) *C.char {
+	return nativeError(lookup(id).Select(C.GoString(group), C.GoString(proxy)))
+}
+
 //export ProximaEngineConnectionsSnapshot
 func ProximaEngineConnectionsSnapshot(id C.ulonglong, data *unsafe.Pointer, size *C.int) *C.char {
 	result, err := lookup(id).ConnectionsSnapshot()

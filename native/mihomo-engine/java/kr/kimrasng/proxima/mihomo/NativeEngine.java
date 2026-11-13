@@ -40,6 +40,15 @@ public final class NativeEngine implements AutoCloseable {
     /** Owned UTF-8 JSON array (max 8 MiB/10000 rows); no native buffer lifetime. */
     public byte[] connectionsSnapshot() { return connectionsSnapshotNative(handle); }
 
+    /** Change a selector member in the running session. */
+    public void select(String group, String proxy) {
+        if (group == null || proxy == null || group.indexOf('\0') >= 0 || proxy.indexOf('\0') >= 0 ||
+                group.length() > 8192 || proxy.length() > 8192) {
+            throw new IllegalArgumentException("selector names are required, without NUL, at most 8192 bytes");
+        }
+        selectNative(handle, group.getBytes(StandardCharsets.UTF_8), proxy.getBytes(StandardCharsets.UTF_8));
+    }
+
     /** Borrow fd during the call; it must be nonblocking and carry raw IP. */
     public synchronized void start(byte[] config, int borrowedTunFd, Protector protector) {
         if (handle != 0) throw new IllegalStateException("stop the existing engine first");
@@ -61,4 +70,5 @@ public final class NativeEngine implements AutoCloseable {
     private static native long[] trafficStatsNative(long handle);
     private static native int delayTestNative(long handle, byte[] name, byte[] url, int timeoutMs);
     private static native byte[] connectionsSnapshotNative(long handle);
+    private static native void selectNative(long handle, byte[] group, byte[] proxy);
 }

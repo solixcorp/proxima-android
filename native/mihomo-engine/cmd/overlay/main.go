@@ -28,6 +28,7 @@ var pins = map[string]string{
 	"dns/dot.go":                         "0c018bc055d511c0e87dfdc36c64cc4a1dcd88b6f07251a37864820749a62049",
 	"component/tls/reality.go":           "6f3b5771104b79fb9c244192ac7ecc4d11a4603de0444899e703d88359f018d8",
 	"adapter/outboundgroup/groupbase.go": "4f073f75e1deaff8468458adecaaf674e720200f5c056967e5ee7f9dee25fc38",
+	"adapter/outboundgroup/selector.go":  "db50ca838305e1fef4cad4b1d2a070b7043af6a61ef1192bf5516cb9553b6019",
 }
 
 func patch(path string, source []byte) ([]byte, error) {
@@ -42,6 +43,14 @@ func patch(path string, source []byte) ([]byte, error) {
 		text = strings.Replace(text, old, next, 1)
 	}
 	switch path {
+	case "adapter/outboundgroup/selector.go":
+		replace(`"errors"`, `"errors"
+"sync"`)
+		replace("selected   string", "selected   string\n selectedMu sync.RWMutex")
+		replace("s.selected = name\n\t\t\treturn nil", "s.ForceSet(name)\n\t\t\treturn nil")
+		replace("s.selected = name\n}", "s.selectedMu.Lock(); s.selected = name; s.selectedMu.Unlock()\n}")
+		replace("proxies := s.GetProxies(touch)\n\tfor", "proxies := s.GetProxies(touch)\n s.selectedMu.RLock(); selected := s.selected; s.selectedMu.RUnlock()\n\tfor")
+		replace("proxy.Name() == s.selected", "proxy.Name() == selected")
 	case "adapter/outboundgroup/groupbase.go":
 		replace(`"sync"`, `"sync"
 syncatomic "sync/atomic"`)

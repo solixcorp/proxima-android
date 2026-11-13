@@ -66,6 +66,13 @@ class MihomoVpnSession(private val vpn: VpnService, private val onDeath: () -> U
     fun trafficStats(): LongArray = active().trafficStats()
     fun delayTest(name: String, url: String, timeout: Int): Int = active().delayTest(name, url, timeout)
 
+    @Synchronized
+    fun select(proxy: String) {
+        active().select("PROXY", proxy)
+        node = proxy
+        VpnRuntime.mihomoSelected(this, proxy)
+    }
+
     fun connections(): JSONObject {
         val source = JSONArray(String(active().connectionsSnapshot(), Charsets.UTF_8))
         val rows = JSONArray()

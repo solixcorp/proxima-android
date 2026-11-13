@@ -28,6 +28,7 @@ public final class NativeManagementTest {
         rejected(() -> engine.trafficStats());
         rejected(() -> engine.connectionsSnapshot());
         rejected(() -> engine.delayTest("DIRECT", "https://127.0.0.1", 100));
+        rejected(() -> engine.select("group", "노드🚀"));
     }
 
     private static InetAddress hostAddress() throws Exception {
@@ -47,13 +48,18 @@ public final class NativeManagementTest {
         AtomicInteger protects = new AtomicInteger();
         byte[] config = ("find-process-mode: off\nlog-level: silent\nprofile: {store-selected: false}\n" +
             "tun: {enable: true, stack: mips, mtu: 1500, auto-route: false, auto-detect-interface: false, dns-hijack: [], inet6-address: []}\n" +
-            "rules: ['MATCH,DIRECT']\nproxies: [{name: '노드🚀', type: direct}]\n").getBytes(StandardCharsets.UTF_8);
+            "rules: ['MATCH,DIRECT']\nproxies: [{name: '노드🚀', type: direct}]\n" +
+            "proxy-groups: [{name: group, type: select, proxies: ['노드🚀', DIRECT]}]\n").getBytes(StandardCharsets.UTF_8);
         try {
             engine.start(config, pair[0], fd -> {
                 if (!unboundSocket(fd)) throw new AssertionError("protect ran after bind/connect");
                 protects.incrementAndGet();
                 return allow.get();
             });
+            engine.select("group", "노드🚀");
+            rejected(() -> engine.select("missing", "노드🚀"));
+            rejected(() -> engine.select("group", "missing"));
+            rejected(() -> engine.select("DIRECT", "노드🚀"));
             long[] initial = engine.trafficStats();
             if (initial.length != 2 || initial[0] != 0 || initial[1] != 0) throw new AssertionError("initial totals");
             if (!new String(engine.connectionsSnapshot(), StandardCharsets.UTF_8).equals("[]")) throw new AssertionError("empty snapshot");
