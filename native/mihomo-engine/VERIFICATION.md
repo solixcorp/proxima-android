@@ -1,5 +1,25 @@
 # Phase 2b Android integration verification on November 13, 2026
 
+## Phase 4 host parity coverage
+
+`TestDartAdmissionKeyParity` parses the actual Dart `proxyOptions` and
+`nestedOptions` declarations and compares their complete key sets with Go's
+`protocolKeys` and `transportKeys`. A missing, duplicated, or unparseable
+declaration fails closed. This runs in the native `build.sh test` gate; a Dart
+or Go allowlist change must update the other side. Separately, both Flutter and
+Go execute `test/fixtures/mihomo_admission_parity.json` against their actual
+admission functions. The 15 shared behavior examples cover important branches,
+not every possible value, and neither test replaces constructor validation.
+
+`TestSubscriptionStartProcess` sends one YAML document with all 17 admitted
+types (18 nodes including both Mieru transports), a select group, and MATCH
+rule through real engine Start in a fresh subprocess. Two further subprocesses
+verify an admission rejection and an admitted but invalid SS cipher rejected by
+the constructor. These are construction checks, not peer connections or a
+claim that Dart link parsing and assembly were executed by the Go smoke test.
+Packet and getter benchmark method and results: [BENCHMARKS.md](BENCHMARKS.md).
+Device plan and unexecuted gates: [DEVICE_TEST_PLAN.md](../../DEVICE_TEST_PLAN.md).
+
 Implementation/limitations: [Android runtime integration](../../android/MIHOMO_RUNTIME.md).
 No native Go/JNI/Java semantic changes, branch switch or commit in this phase.
 

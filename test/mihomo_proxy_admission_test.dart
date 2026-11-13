@@ -1,8 +1,24 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proxima/core/clash_subscription.dart';
 import 'package:proxima/core/mihomo_proxy_admission.dart';
 
 void main() {
+  test('shared native admission behavior cases', () {
+    final cases = jsonDecode(
+      File('test/fixtures/mihomo_admission_parity.json').readAsStringSync(),
+    ) as List<dynamic>;
+    for (final row in cases.cast<Map<String, dynamic>>()) {
+      final proxy = row['proxy'] as Map<String, dynamic>;
+      expect(
+        MihomoProxyAdmission.proxyError(proxy) == null,
+        row['allowed'],
+        reason: '$proxy',
+      );
+    }
+  });
   test('all audited types pass admission with minimal options', () {
     expect(MihomoProxyAdmission.proxyOptions.length, 17);
     for (final type in MihomoProxyAdmission.proxyOptions.keys) {

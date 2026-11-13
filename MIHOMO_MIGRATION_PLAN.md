@@ -60,3 +60,5 @@ Kotlin discovery 4/4(경계 26·실행 10 + 설정·소스 연결 검증), JDK 2
 ## 검증 게이트
 
 각 Phase 완료마다 `flutter analyze`, `flutter test`와 각 `native/*/build.sh test`가 모두 통과해야 한다. 호스트 테스트만으로 Android VPN 동작을 보증하지 않는다. 최종 Xray 제거 전에 실제 기기에서 연결·DNS·UDP·네트워크 전환·종료 및 복구를 검증해야 한다.
+
+기기·에뮬레이터 실행 절차와 시나리오별 판정 기준은 [DEVICE_TEST_PLAN.md](DEVICE_TEST_PLAN.md)를 따른다. 기기 검증은 아직 실행되지 않았다.
