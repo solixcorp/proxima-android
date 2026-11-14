@@ -135,3 +135,64 @@ deadline setters also retain the pinned no-op behavior. Neither HIGH fix
 certifies production integration or grants raw/transparent socket privileges.
 The context and deadline limitations in this historical paragraph are
 superseded by the later contract corrections below.
+
+## Linux refusal assertion correction — November 14, 2026
+
+The Linux-only `TestProximaRawUDPRefusedBeforeBindConnect` failure from CI run
+43576209931 was reproduced before the correction in Docker `golang:1.27.1`
+(Linux arm64). `bash build.sh test` failed with
+`original owner not closed: use of closed file`.
+
+This was a test error, not a descriptor-ownership or scheduling defect. The
+checksum-gated `listener/tproxy/udp_linux.go` edit in `cmd/overlay/patches.go`
+creates an `os.File` owner before invoking protection and defers its `Close`.
+On refusal, that Close completes before `dialUDP` returns; no bind, connect or
+`net.FileConn` duplication is reached. In Go 1.27.1, the later observation is:
+
+```text
+os.(*rawConn).Control                 src/os/rawconn.go
+  -> internal/poll.(*FD).RawControl  src/internal/poll/fd_posix.go
+  -> (*FD).incref / errClosing       src/internal/poll/fd_mutex.go, fd.go
+  -> poll.ErrFileClosing            *errors.errorString("use of closed file")
+```
+
+There is no wrapper or `Unwrap` successor. `os.(*File).wrapErr` normally
+translates that sentinel into `os.ErrClosed`, but `rawConn.Control` does not
+call it. A standalone real-socket probe confirmed the same result on both
+Linux arm64 and Darwin arm64: `errors.Is(err, os.ErrClosed)` is false for
+`Control`, while `File.Stat` returns a `*fs.PathError` wrapping `os.ErrClosed`.
+Darwin had hidden the faulty assumption by excluding the Linux-tagged test.
+
+The test now compares against the error produced by the identical RawConn
+operation on an explicitly closed reference `os.File`. It still requires that
+Control never invoke its callback, and still checks exactly one protection
+call, pre-bind/pre-connect timing, refusal-error identity, and no returned UDP
+connection. It accepts neither arbitrary errors nor matching error strings.
+No production overlay, engine/admission logic, build tags or skips changed.
+
+Linux arm64 and Linux amd64 Docker verification passed (the latter using
+`docker run --platform linux/amd64` to match the CI runner's architecture):
+
+```sh
+bash build.sh test
+GOFLAGS="-mod=readonly -modfile=$PWD/build/network.mod -overlay=$PWD/build/overlay/overlay.json" \
+  go test -race -shuffle=on -count=100 -timeout=60s -v \
+  github.com/metacubex/mihomo/listener/tproxy \
+  -run '^TestProximaRawUDPRefusedBeforeBindConnect$'
+```
+
+The container mounted the checkout at `/work`, a separate named volume at this
+module's `build`, and named volumes for `GOMODCACHE=/go/pkg/mod` and
+`GOCACHE=/root/.cache/go-build`; it used the container CA bundle. Host build
+staging was not shared. Two isolated generated-overlay mutations also failed
+the corrected test at `descriptor still owned`: removing `defer fdFile.Close()`
+entirely, and replacing it with `defer syscall.Close(fd)` (kernel close without
+closing the original Go owner). Thus the correction still detects both leaked
+ownership and an invalid raw-descriptor-only close. These mutations were not
+applied to tracked sources.
+
+The repository-root `bash build.sh test` also completed with exit code 0 on
+Darwin arm64 / Go 1.27.1, covering all seven native modules and their existing
+JNI/JVM, vet and race gates. This host run does not execute the Linux-tagged
+test; the Docker executions above provide its runtime evidence. These checks
+do not certify approved privileged TProxy forwarding or Android-device behavior.

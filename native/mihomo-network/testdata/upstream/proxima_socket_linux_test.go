@@ -45,7 +45,32 @@ func TestProximaRawUDPRefusedBeforeBindConnect(t *testing.T) {
 	if !errors.Is(err, refused) || calls != 1 {
 		t.Fatalf("calls=%d err=%v", calls, err)
 	}
-	if err := raw.Control(func(uintptr) { t.Fatal("descriptor still owned") }); !errors.Is(err, os.ErrClosed) {
-		t.Fatalf("original owner not closed: %v", err)
+	// os.File's RawConn returns the poller's closing error directly, unlike
+	// File methods that translate it to os.ErrClosed. Compare the same operation
+	// on a known-closed File, not an error string or an arbitrary non-nil error.
+	closedErr := closedFileRawControlError(t)
+	if err := raw.Control(func(uintptr) { t.Fatal("descriptor still owned") }); !errors.Is(err, closedErr) {
+		t.Fatalf("original owner not closed: got %T(%v), want %T(%v)", err, err, closedErr, closedErr)
 	}
+}
+
+func closedFileRawControlError(t *testing.T) error {
+	t.Helper()
+	f, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	raw, err := f.SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	err = raw.Control(func(uintptr) { t.Fatal("closed reference file still owned") })
+	if err == nil {
+		t.Fatal("closed reference file Control succeeded")
+	}
+	return err
 }
