@@ -12,11 +12,15 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     env:
-      GOMODCACHE: ${{ runner.temp }}/go/pkg/mod
-      GOCACHE: ${{ runner.temp }}/go-build
       SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
     steps:
       - uses: actions/checkout@v4
+      # Job env cannot use the runner context; set Go caches on the runner here
+      # so setup-go's caching key matches these paths.
+      - name: Configure Go caches
+        run: |
+          echo "GOMODCACHE=$RUNNER_TEMP/go/pkg/mod" >> "$GITHUB_ENV"
+          echo "GOCACHE=$RUNNER_TEMP/go-build" >> "$GITHUB_ENV"
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
