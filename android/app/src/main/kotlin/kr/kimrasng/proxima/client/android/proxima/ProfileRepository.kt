@@ -207,23 +207,7 @@ class ProfileRepository(context: Context) {
     private fun sourceFromStoredContent(file: File): String? {
         if (!file.isFile) return null
         val content = runCatching { file.readText(Charsets.UTF_8) }.getOrNull() ?: return null
-        val encoded = Regex(
-            "^#\\s*proxima-subscription-url:\\s*([A-Za-z0-9_-]+)\\s*$",
-            RegexOption.MULTILINE,
-        ).find(content)?.groupValues?.getOrNull(1)
-        if (!encoded.isNullOrBlank()) {
-            val decoded = runCatching {
-                val padded = encoded.padEnd((encoded.length + 3) / 4 * 4, '=')
-                String(Base64.getUrlDecoder().decode(padded), Charsets.UTF_8)
-            }.getOrNull()
-            if (decoded?.startsWith("https://") == true) return decoded
-        }
-        // Mihomo profiles created by older releases may still include an HTTP
-        // provider URL. Only accept an explicit HTTPS value on a `url:` line.
-        return Regex(
-            "^\\s*url:\\s*['\\\"]?(https://[^\\s'\\\"]+)",
-            RegexOption.MULTILINE,
-        ).find(content)?.groupValues?.getOrNull(1)
+        return legacySubscriptionUrl(content)
     }
 
     private fun writeAtomically(destination: File, content: String) {
@@ -236,6 +220,18 @@ class ProfileRepository(context: Context) {
     }
 
     companion object {
+        internal fun legacySubscriptionUrl(content: String): String? {
+            val encoded = Regex(
+                "^#\\s*proxima-subscription-url:\\s*([A-Za-z0-9_-]+)\\s*$",
+                RegexOption.MULTILINE,
+            ).find(content)?.groupValues?.getOrNull(1) ?: return null
+            val decoded = runCatching {
+                val padded = encoded.padEnd((encoded.length + 3) / 4 * 4, '=')
+                String(Base64.getUrlDecoder().decode(padded), Charsets.UTF_8)
+            }.getOrNull()
+            return decoded?.takeIf { it.startsWith("https://") }
+        }
+
         private const val PREFERENCES = "proxima_profiles"
         private const val KEY_METADATA = "metadata"
         private const val KEY_ACTIVE_ID = "active_id"

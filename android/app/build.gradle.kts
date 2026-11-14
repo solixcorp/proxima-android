@@ -35,9 +35,23 @@ android {
         manifestPlaceholders["appAuthRedirectScheme"] = "kr.kimrasng.proxima"
     }
 
+    val releaseCredentials = listOf("KEYSTORE_PASSWORD", "KEY_ALIAS", "KEY_PASSWORD")
+        .associateWith { System.getenv(it).orEmpty() }
+    val hasReleaseCredentials = releaseCredentials.values.all { it.isNotEmpty() }
+    require(hasReleaseCredentials || releaseCredentials.values.all { it.isEmpty() }) {
+        "Set KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD together for release signing"
+    }
+    val releaseSigning = if (hasReleaseCredentials) signingConfigs.create("release") {
+        storeFile = file(System.getenv("KEYSTORE_PATH") ?: "upload-keystore.jks")
+        storePassword = releaseCredentials.getValue("KEYSTORE_PASSWORD")
+        keyAlias = releaseCredentials.getValue("KEY_ALIAS")
+        keyPassword = releaseCredentials.getValue("KEY_PASSWORD")
+    } else null
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            // Without credentials, local release builds are unsigned, never debug-signed.
+            signingConfig = releaseSigning
         }
     }
 

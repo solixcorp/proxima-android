@@ -6,12 +6,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../core/native_vpn_bridge.dart';
+import '../core/public_ip_probe.dart';
 import '../core/proxima_user_agent.dart';
 import '../core/clash_subscription.dart';
 import '../core/mihomo_config_assembly.dart';
 import '../core/mihomo_proxy_admission.dart';
 import '../core/vless_reality_profile.dart';
 import '../models/vpn_models.dart';
+import 'bounded_http_body.dart';
 
 class SubscriptionFetchResult {
   const SubscriptionFetchResult({required this.content, this.info});
@@ -44,13 +46,27 @@ class AppController extends ChangeNotifier {
   bool loadingConnections = false;
   bool loadingProviders = false;
   bool loadingPublicIp = false;
+  int _publicIpGeneration = 0;
   bool loadingNetwork = false;
   bool preparingConnection = false;
   int _connectionAttempt = 0;
+  bool _disposed = false;
+  bool _startDispatched = false;
+  bool _startingProfile = false;
+  bool _configurationMutation = false;
   int _proxyLoadGeneration = 0;
   bool _proxyReloadPending = false;
   String? proxyError;
   String? message;
+
+  bool get configurationChangeInProgress => _configurationMutation;
+  bool get canStartExternalConnection =>
+      !_disposed &&
+      !_configurationMutation &&
+      !_startingProfile &&
+      !preparingConnection &&
+      !snapshot.isBusy &&
+      !snapshot.isConnected;
 
   VpnProfile? get activeProfile {
     final runtimeProfileId = switch (snapshot.state) {
@@ -125,6 +141,14 @@ class AppController extends ChangeNotifier {
   void _handleSnapshot(VpnSnapshot next) {
     final previousProfileId = activeProfile?.id;
     final becameConnected = !snapshot.isConnected && next.isConnected;
+    if (!next.isConnected ||
+        !snapshot.isConnected ||
+        next.profileId != snapshot.profileId ||
+        next.startedAt != snapshot.startedAt) {
+      _publicIpGeneration++;
+      loadingPublicIp = false;
+      publicIp = null;
+    }
     snapshot = next;
     if (activeProfile?.id != previousProfileId) _invalidateProxyData();
     if (becameConnected) {
@@ -148,7 +172,12 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> toggleVpn() async {
-    if (snapshot.isBusy || preparingConnection) return;
+    if (snapshot.isBusy ||
+        preparingConnection ||
+        _startingProfile ||
+        _configurationMutation) {
+      return;
+    }
     final attempt = ++_connectionAttempt;
     message = null;
     preparingConnection = !snapshot.isConnected;
@@ -165,9 +194,15 @@ class AppController extends ChangeNotifier {
         await refreshProfile(profile, connectionAttempt: attempt);
       }
       if (attempt != _connectionAttempt) return;
+      if (_configurationMutation) {
+        throw StateError('프로필 변경이 진행 중입니다. 다시 연결해 주세요.');
+      }
       final granted = await bridge.requestVpnPermission();
       if (attempt != _connectionAttempt) return;
       if (!granted) throw StateError('VPN 권한이 필요합니다.');
+      if (_configurationMutation) {
+        throw StateError('프로필 변경이 진행 중입니다. 다시 연결해 주세요.');
+      }
       if (activeProfile?.id != profile.id) {
         throw StateError('프로필이 변경되었습니다. 다시 연결해 주세요.');
       }
@@ -186,6 +221,9 @@ class AppController extends ChangeNotifier {
     if (!preparingConnection) return;
     _connectionAttempt++;
     preparingConnection = false;
+    if (_startDispatched) {
+      unawaited(bridge.stopVpn().catchError((Object _) {}));
+    }
     notifyListeners();
   }
 
@@ -208,6 +246,8 @@ class AppController extends ChangeNotifier {
       bridge.validateProfile(content);
 
   Future<void> _startProfile(String id, {int? connectionAttempt}) async {
+    if (_startingProfile) throw StateError('VPN 연결 요청이 이미 진행 중입니다.');
+    _startingProfile = true;
     var prepared = false;
     var started = false;
     try {
@@ -233,8 +273,10 @@ class AppController extends ChangeNotifier {
       );
       if (error != null) throw FormatException('Mihomo 최종 재검증 실패: $error');
       bool cancelled() =>
-          connectionAttempt != null &&
-          (connectionAttempt != _connectionAttempt || activeProfile?.id != id);
+          _disposed ||
+          (connectionAttempt != null &&
+              (connectionAttempt != _connectionAttempt ||
+                  activeProfile?.id != id));
       if (cancelled()) return;
       if (!identical(settings, capturedSettings)) {
         throw StateError('설정이 변경되었습니다. 다시 연결해 주세요.');
@@ -250,21 +292,27 @@ class AppController extends ChangeNotifier {
       if (!identical(settings, capturedSettings)) {
         throw StateError('설정이 변경되었습니다. 다시 연결해 주세요.');
       }
+      _startDispatched = true;
       await bridge.startVpn(id);
       started = true;
     } catch (error) {
       if (connectionAttempt == null ||
           connectionAttempt == _connectionAttempt) {
-        snapshot = VpnSnapshot(
-          state: VpnConnectionState.error,
-          profileId: id,
-          error: 'Mihomo 시작 거부: ${_readableError(error)}',
-        );
-        message = snapshot.error;
+        final detail = 'Mihomo 시작 거부: ${_readableError(error)}';
+        if (!snapshot.isConnected) {
+          snapshot = VpnSnapshot(
+            state: VpnConnectionState.error,
+            profileId: id,
+            error: detail,
+          );
+        }
+        message = detail;
         notifyListeners();
       }
       rethrow;
     } finally {
+      _startDispatched = false;
+      _startingProfile = false;
       if (prepared && !started) {
         await bridge.discardPreparedMihomoConfiguration(id);
       }
@@ -338,6 +386,18 @@ class AppController extends ChangeNotifier {
       final host = Uri.tryParse(sourceUrl ?? '')?.host;
       effectiveName = host?.isNotEmpty == true ? host! : 'Mihomo';
     }
+    final previousProfile = id == null
+        ? null
+        : profiles.where((profile) => profile.id == id).firstOrNull;
+    final previousContent =
+        previousProfile != null &&
+            snapshot.isConnected &&
+            snapshot.profileId == id
+        ? await bridge.readProfile(id!)
+        : null;
+    final previousSelections = previousContent == null
+        ? null
+        : Map<String, String>.from(await bridge.loadProxySelections(id!));
     final saved = await bridge.saveProfile(
       id: id,
       name: effectiveName,
@@ -346,22 +406,44 @@ class AppController extends ChangeNotifier {
       subscriptionInfo: subscriptionInfo,
       admissionSummary: summary,
     );
-    final selections = await bridge.loadProxySelections(saved.id);
-    final nodes = MihomoConfigAssembly.preview(
-      stored,
-      profileName: effectiveName,
-    ).proxies.map((p) => p['name'] as String).toList();
-    await _invalidateMissingSelections(saved.id, nodes, selections);
-    final selectionNotice = message;
-    await reloadProfiles();
-    if (!snapshot.isConnected && settings.mode != OutboundMode.direct) {
-      await loadProxyGroups();
-    }
-    message =
-        '${summary.description}${selectionNotice?.startsWith('선택한 노드가') == true ? '\n$selectionNotice' : ''}';
-    notifyListeners();
-    if (snapshot.isConnected && snapshot.profileId == saved.id) {
-      await _startProfile(saved.id);
+    try {
+      final selections = await bridge.loadProxySelections(saved.id);
+      final nodes = MihomoConfigAssembly.preview(
+        stored,
+        profileName: effectiveName,
+      ).proxies.map((p) => p['name'] as String).toList();
+      await _invalidateMissingSelections(saved.id, nodes, selections);
+      final selectionNotice = message;
+      await reloadProfiles();
+      if (!snapshot.isConnected && settings.mode != OutboundMode.direct) {
+        await loadProxyGroups();
+      }
+      message =
+          '${summary.description}${selectionNotice?.startsWith('선택한 노드가') == true ? '\n$selectionNotice' : ''}';
+      notifyListeners();
+      if (snapshot.isConnected && snapshot.profileId == saved.id) {
+        await _startProfile(saved.id);
+      }
+    } catch (_) {
+      if (previousProfile != null && previousContent != null) {
+        await bridge.saveProfile(
+          id: previousProfile.id,
+          name: previousProfile.name,
+          sourceUrl: previousProfile.sourceUrl,
+          content: previousContent,
+          subscriptionInfo: previousProfile.subscriptionInfo,
+          admissionSummary: previousProfile.admissionSummary,
+        );
+        for (final entry in previousSelections!.entries) {
+          await bridge.saveProxySelection(
+            profileId: previousProfile.id,
+            group: entry.key,
+            proxy: entry.value,
+          );
+        }
+        await reloadProfiles();
+      }
+      rethrow;
     }
   }
 
@@ -372,35 +454,52 @@ class AppController extends ChangeNotifier {
     required String content,
     SubscriptionInfo? subscriptionInfo,
     int? connectionAttempt,
-  }) async {
-    if (snapshot.isBusy) {
-      throw StateError('연결 상태가 바뀐 뒤 프로필을 저장해 주세요.');
-    }
-    return _saveMihomoProfile(
-      id: id,
-      name: name,
-      sourceUrl: sourceUrl,
-      content: content,
-      subscriptionInfo: subscriptionInfo,
-      connectionAttempt: connectionAttempt,
-    );
-  }
+  }) => _configurationChange(
+    () async {
+      if (snapshot.isBusy || _startingProfile) {
+        throw StateError('연결 상태가 바뀐 뒤 프로필을 저장해 주세요.');
+      }
+      return _saveMihomoProfile(
+        id: id,
+        name: name,
+        sourceUrl: sourceUrl,
+        content: content,
+        subscriptionInfo: subscriptionInfo,
+        connectionAttempt: connectionAttempt,
+      );
+    },
+    allowPreparation:
+        connectionAttempt != null && connectionAttempt == _connectionAttempt,
+  );
 
-  Future<void> selectProfile(String id) async {
-    if (snapshot.isBusy) {
+  Future<void> selectProfile(String id) => _configurationChange(() async {
+    if (snapshot.isBusy || _startingProfile) {
       throw StateError('연결 상태가 바뀐 뒤 프로필을 변경해 주세요.');
+    }
+    if (snapshot.isConnected && snapshot.profileId != id) {
+      final previousId = activeProfile?.id;
+      try {
+        if (!profiles.any((profile) => profile.id == id)) {
+          await reloadProfiles();
+        }
+        await _startProfile(id);
+      } catch (_) {
+        if (previousId != null) await bridge.selectProfile(previousId);
+        await reloadProfiles();
+        rethrow;
+      }
+      await reloadProfiles();
+      return;
     }
     await bridge.selectProfile(id);
     await reloadProfiles();
-    if (snapshot.isConnected && snapshot.profileId != id) {
-      await _startProfile(id);
-    } else if (!snapshot.isConnected && settings.mode != OutboundMode.direct) {
+    if (!snapshot.isConnected && settings.mode != OutboundMode.direct) {
       await loadProxyGroups();
     }
-  }
+  }, allowPreparation: true);
 
-  Future<void> deleteProfile(String id) async {
-    if (snapshot.isBusy) {
+  Future<void> deleteProfile(String id) => _configurationChange(() async {
+    if (snapshot.isBusy || _startingProfile) {
       throw StateError('연결 상태가 바뀐 뒤 프로필을 삭제해 주세요.');
     }
     await bridge.deleteProfile(id);
@@ -408,7 +507,7 @@ class AppController extends ChangeNotifier {
     if (!snapshot.isConnected && settings.mode != OutboundMode.direct) {
       await loadProxyGroups();
     }
-  }
+  });
 
   Future<ImportedProfile?> pickProfileFile() => bridge.pickProfileFile();
 
@@ -437,15 +536,16 @@ class AppController extends ChangeNotifier {
     required String host,
   }) async {
     if (!kDebugMode) {
-      await response.drain<void>();
+      cancelHttpBody(response);
       return;
     }
     try {
-      final bytes = <int>[];
-      await for (final chunk in response.timeout(const Duration(seconds: 3))) {
-        if (bytes.length + chunk.length > 4096) break;
-        bytes.addAll(chunk);
-      }
+      final bytes = await readBoundedHttpBody(
+        response,
+        maxBytes: 4096,
+        idleTimeout: const Duration(seconds: 3),
+        totalTimeout: const Duration(seconds: 3),
+      );
       final body = jsonDecode(utf8.decode(bytes));
       final reason = body is Map ? body['error'] : null;
       // Never print arbitrary response text: it may contain subscription tokens.
@@ -499,7 +599,7 @@ class AppController extends ChangeNotifier {
         }
         if (response.isRedirect) {
           final location = response.headers.value(HttpHeaders.locationHeader);
-          await response.drain<void>();
+          cancelHttpBody(response);
           if (location == null || redirects >= 5) {
             throw const HttpException('규칙셋 주소의 리디렉션이 너무 많습니다.');
           }
@@ -521,14 +621,10 @@ class AppController extends ChangeNotifier {
           );
           throw HttpException('규칙셋 서버 응답 $status');
         }
-        final bytes = <int>[];
-        await for (final chunk in response) {
-          bytes.addAll(chunk);
-          if (bytes.length > 8 * 1024 * 1024) {
-            throw const FormatException('규칙셋은 8MB보다 작아야 합니다.');
-          }
-        }
-        return bytes;
+        return await readBoundedHttpBody(
+          response,
+          sizeError: '규칙셋은 8MB보다 작아야 합니다.',
+        );
       }
     } catch (error, stack) {
       if (kDebugMode) {
@@ -736,7 +832,7 @@ class AppController extends ChangeNotifier {
       }
       if (!response.isRedirect) break;
       final location = response.headers.value(HttpHeaders.locationHeader);
-      await response.drain<void>();
+      cancelHttpBody(response);
       if (location == null || redirects >= 5) {
         throw const HttpException('구독 주소의 리디렉션이 너무 많습니다.');
       }
@@ -761,13 +857,10 @@ class AppController extends ChangeNotifier {
       throw HttpException('서버 응답 $statusCode');
     }
     final info = _subscriptionInfo(response.headers);
-    final chunks = <int>[];
-    await for (final chunk in response) {
-      chunks.addAll(chunk);
-      if (chunks.length > 8 * 1024 * 1024) {
-        throw const FormatException('프로필은 8MB보다 작아야 합니다.');
-      }
-    }
+    final chunks = await readBoundedHttpBody(
+      response,
+      sizeError: '프로필은 8MB보다 작아야 합니다.',
+    );
     return SubscriptionFetchResult(content: utf8.decode(chunks), info: info);
   }
 
@@ -797,19 +890,42 @@ class AppController extends ChangeNotifier {
     );
   }
 
-  Future<void> updateSettings(VpnSettings next) async {
-    settings = next;
-    notifyListeners();
-    await bridge.saveSettings(next);
+  Future<void> _configurationChange(
+    Future<void> Function() action, {
+    bool allowPreparation = false,
+  }) async {
+    if (_disposed ||
+        _configurationMutation ||
+        _startingProfile ||
+        (preparingConnection && !allowPreparation)) {
+      throw StateError('다른 연결 또는 설정 작업이 진행 중입니다.');
+    }
+    _configurationMutation = true;
+    try {
+      await action();
+    } finally {
+      _configurationMutation = false;
+      notifyListeners();
+    }
   }
 
-  Future<void> setMode(OutboundMode mode) async {
-    if (snapshot.isBusy) {
+  Future<void> updateSettings(VpnSettings next) =>
+      _configurationChange(() => _updateSettings(next));
+
+  Future<void> _updateSettings(VpnSettings next) async {
+    if (_startingProfile) throw StateError('연결 상태가 바뀐 뒤 설정을 변경해 주세요.');
+    await bridge.saveSettings(next);
+    settings = next;
+    notifyListeners();
+  }
+
+  Future<void> setMode(OutboundMode mode) => _configurationChange(() async {
+    if (snapshot.isBusy || _startingProfile) {
       throw StateError('연결 상태가 바뀐 뒤 모드를 변경해 주세요.');
     }
     if (mode == settings.mode) return;
     final previous = settings;
-    await updateSettings(settings.copyWith(mode: mode));
+    await _updateSettings(settings.copyWith(mode: mode));
     if (!snapshot.isConnected) {
       await loadProxyGroups();
       return;
@@ -825,7 +941,7 @@ class AppController extends ChangeNotifier {
       notifyListeners();
       rethrow;
     }
-  }
+  });
 
   Future<Map<String, VlessRealityProfile>> readNodeDetails() async {
     final profile = activeProfile;
@@ -907,64 +1023,98 @@ class AppController extends ChangeNotifier {
         .toList(growable: false);
   }
 
-  Future<void> selectProxy(String group, String proxy) async {
-    if (settings.mode != OutboundMode.global || group != 'GLOBAL') {
-      throw StateError('노드는 전역 모드에서만 직접 선택할 수 있습니다.');
-    }
-    if (snapshot.isBusy) {
-      throw StateError('연결 상태가 바뀐 뒤 노드를 변경해 주세요.');
-    }
-    if (snapshot.isConnected) {
-      final profile = activeProfile;
-      if (profile == null ||
-          currentProxyGroup?.proxies.contains(proxy) != true) {
-        throw StateError('선택할 수 없는 노드입니다.');
+  Future<void> selectProxy(String group, String proxy) => _configurationChange(
+    () async {
+      if (settings.mode != OutboundMode.global || group != 'GLOBAL') {
+        throw StateError('노드는 전역 모드에서만 직접 선택할 수 있습니다.');
       }
-      var changed = false;
-      try {
-        ensureCoreSuccess(
-          await bridge.invokeCore(
-            'changeProxy',
-            jsonEncode({'group-name': group, 'proxy-name': proxy}),
-          ),
-        );
-        changed = true;
-      } catch (_) {
-        // The existing reassembly and restart remains the second method.
+      if (snapshot.isBusy || _startingProfile) {
+        throw StateError('연결 상태가 바뀐 뒤 노드를 변경해 주세요.');
+      }
+      if (snapshot.isConnected) {
+        final profile = activeProfile;
+        if (profile == null ||
+            currentProxyGroup?.proxies.contains(proxy) != true) {
+          throw StateError('선택할 수 없는 노드입니다.');
+        }
+        final oldSelection = currentProxyGroup?.selected;
+        final savedSelections = await bridge.loadProxySelections(profile.id);
+        var changed = false;
+        try {
+          ensureCoreSuccess(
+            await bridge.invokeCore(
+              'changeProxy',
+              jsonEncode({'group-name': group, 'proxy-name': proxy}),
+            ),
+          );
+          changed = true;
+        } catch (_) {
+          // The existing reassembly and restart remains the second method.
+        }
+        try {
+          await bridge.saveProxySelection(
+            profileId: profile.id,
+            group: group,
+            proxy: proxy,
+          );
+        } catch (_) {
+          if (changed && oldSelection != null) {
+            try {
+              ensureCoreSuccess(
+                await bridge.invokeCore(
+                  'changeProxy',
+                  jsonEncode({'group-name': group, 'proxy-name': oldSelection}),
+                ),
+              );
+            } catch (_) {
+              await loadProxyGroups();
+            }
+          }
+          rethrow;
+        }
+        if (changed) {
+          _setProxySelection(group, proxy);
+          _clearProxyMessage();
+          notifyListeners();
+        } else {
+          try {
+            await _startProfile(profile.id);
+          } catch (_) {
+            final oldSaved = savedSelections[group];
+            if (oldSaved == null) {
+              await bridge.clearProxySelection(profile.id, group);
+            } else {
+              await bridge.saveProxySelection(
+                profileId: profile.id,
+                group: group,
+                proxy: oldSaved,
+              );
+            }
+            rethrow;
+          }
+        }
+        return;
+      }
+      final profile = activeProfile;
+      final expectedGroup = currentProxyGroupName;
+      if (expectedGroup == null || group != expectedGroup) {
+        throw StateError('현재 작동 모드에서 선택할 수 없는 정책 그룹입니다.');
+      }
+      if (profile == null) throw StateError('먼저 프로필을 추가해 주세요.');
+      final current = currentProxyGroup;
+      if (current == null || !current.proxies.contains(proxy)) {
+        throw StateError('선택할 수 없는 노드입니다.');
       }
       await bridge.saveProxySelection(
         profileId: profile.id,
         group: group,
         proxy: proxy,
       );
-      if (changed) {
-        _setProxySelection(group, proxy);
-        _clearProxyMessage();
-        notifyListeners();
-      } else {
-        await _startProfile(profile.id);
-      }
-      return;
-    }
-    final profile = activeProfile;
-    final expectedGroup = currentProxyGroupName;
-    if (expectedGroup == null || group != expectedGroup) {
-      throw StateError('현재 작동 모드에서 선택할 수 없는 정책 그룹입니다.');
-    }
-    if (profile == null) throw StateError('먼저 프로필을 추가해 주세요.');
-    final current = currentProxyGroup;
-    if (current == null || !current.proxies.contains(proxy)) {
-      throw StateError('선택할 수 없는 노드입니다.');
-    }
-    await bridge.saveProxySelection(
-      profileId: profile.id,
-      group: group,
-      proxy: proxy,
-    );
-    _setProxySelection(group, proxy);
-    _clearProxyMessage();
-    notifyListeners();
-  }
+      _setProxySelection(group, proxy);
+      _clearProxyMessage();
+      notifyListeners();
+    },
+  );
 
   void _setProxySelection(String group, String proxy) {
     proxyGroups = proxyGroups
@@ -1169,17 +1319,29 @@ class AppController extends ChangeNotifier {
 
   Future<void> probePublicIp() async {
     if (!snapshot.isConnected || loadingPublicIp) return;
+    final generation = ++_publicIpGeneration;
+    final profileId = snapshot.profileId;
+    final startedAt = snapshot.startedAt;
+    bool isCurrent() =>
+        !_disposed &&
+        generation == _publicIpGeneration &&
+        snapshot.isConnected &&
+        snapshot.profileId == profileId &&
+        snapshot.startedAt == startedAt;
     loadingPublicIp = true;
     notifyListeners();
     try {
-      publicIp = parsePublicIp(
-        await bridge.invokeCore('probeCurrentProxyIp', settings.mode.wireName),
-      );
+      final result = await probeCurrentPublicIp();
+      if (isCurrent()) publicIp = result;
     } catch (error) {
-      message = '외부 IP를 확인하지 못했습니다: ${_readableError(error)}';
+      if (isCurrent()) {
+        message = '외부 IP를 확인하지 못했습니다: ${_readableError(error)}';
+      }
     } finally {
-      loadingPublicIp = false;
-      notifyListeners();
+      if (isCurrent()) {
+        loadingPublicIp = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -1218,7 +1380,13 @@ class AppController extends ChangeNotifier {
   }
 
   @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
+
+  @override
   void dispose() {
+    _disposed = true;
     _connectionAttempt++;
     _snapshotSubscription?.cancel();
     super.dispose();

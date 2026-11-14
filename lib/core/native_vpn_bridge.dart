@@ -55,9 +55,27 @@ abstract interface class VpnBridge {
   Future<Map<Object?, Object?>> coreInfo();
 }
 
-class MethodChannelVpnBridge implements VpnBridge {
+/// Optional capability: bridges without Android external actions need not
+/// implement it. Events are notifications; the method consumes the request.
+abstract interface class ExternalConnectBridge {
+  Stream<void> get externalConnectRequests;
+  Future<bool> consumeExternalConnect();
+}
+
+class MethodChannelVpnBridge implements VpnBridge, ExternalConnectBridge {
   static const _methods = MethodChannel('proxima/vpn');
   static const _events = EventChannel('proxima/vpn/events');
+  static const _externalActions = EventChannel('proxima/vpn/external_actions');
+
+  @override
+  Stream<void> get externalConnectRequests => _externalActions
+      .receiveBroadcastStream()
+      .where((event) => event == 'connect')
+      .map((_) {});
+
+  @override
+  Future<bool> consumeExternalConnect() async =>
+      await _methods.invokeMethod<bool>('consumeExternalConnect') ?? false;
 
   @override
   Stream<VpnSnapshot> get snapshots => _events.receiveBroadcastStream().map(

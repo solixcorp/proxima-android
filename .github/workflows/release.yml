@@ -165,6 +165,25 @@ jobs:
               raise SystemExit('APK size limit exceeded')
           PY
 
+      - name: Verify APK alignment and release signer
+        env:
+          APK: build/app/outputs/flutter-apk/${{ github.event.repository.name }}-v${{ steps.release_version.outputs.BUILD_NAME }}.apk
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$BUILD_TOOLS/zipalign" -c -P 16 4 "$APK"
+          EXPECTED=$(keytool -exportcert -keystore android/app/upload-keystore.jks \
+            -storepass:env KEYSTORE_PASSWORD -alias "$KEY_ALIAS" | sha256sum | cut -d' ' -f1)
+          ACTUAL=$("$BUILD_TOOLS/apksigner" verify --print-certs "$APK" |
+            sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr '[:upper:]' '[:lower:]')
+          if [[ -z "$ACTUAL" || "$EXPECTED" != "$ACTUAL" ]]; then
+            echo 'APK signer does not match the configured release keystore' >&2
+            exit 1
+          fi
+          echo 'APK alignment and release signer verified'
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:

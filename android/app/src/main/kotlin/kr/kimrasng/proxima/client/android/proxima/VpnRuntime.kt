@@ -17,6 +17,7 @@ data class NativeVpnSnapshot(
     val activeNode: String? = null,
     val activeMode: String? = null,
     val error: String? = null,
+    val requestId: String? = null,
 ) {
     fun asMap(): Map<String, Any?> = mapOf(
         "state" to state,
@@ -30,6 +31,7 @@ data class NativeVpnSnapshot(
         "activeNode" to activeNode,
         "activeMode" to activeMode,
         "error" to error,
+        "requestId" to requestId,
     )
 }
 
@@ -53,8 +55,10 @@ object VpnRuntime {
 
     fun mihomoSelected(session: MihomoVpnSession, node: String) {
         mainHandler.post {
-            if (mihomo === session && current.state == "connected") {
-                publish(current.copy(activeNode = node))
+            synchronized(this) {
+                if (mihomo === session && current.state == "connected") {
+                    publish(current.copy(activeNode = node))
+                }
             }
         }
     }
@@ -65,6 +69,11 @@ object VpnRuntime {
 
     fun snapshot(): Map<String, Any?> = current.asMap()
 
+    @Synchronized
+    fun withCurrentEvent(event: Map<String, Any?>, action: () -> Unit) {
+        if (currentVpnEvent(event, current.asMap())) action()
+    }
+
     fun addListener(listener: (Map<String, Any?>) -> Unit) {
         listeners.add(listener)
         mainHandler.post { listener(current.asMap()) }
@@ -74,11 +83,11 @@ object VpnRuntime {
         listeners.remove(listener)
     }
 
-    fun connecting(profile: StoredProfile) = publish(
-        NativeVpnSnapshot(state = "connecting", profileId = profile.id, profileName = profile.name),
+    @Synchronized fun connecting(profile: StoredProfile, requestId: String? = null) = publish(
+        NativeVpnSnapshot(state = "connecting", profileId = profile.id, profileName = profile.name, requestId = requestId),
     )
 
-    fun reconnecting(profile: StoredProfile) = publish(
+    @Synchronized fun reconnecting(profile: StoredProfile, requestId: String? = null) = publish(
         current.copy(
             state = "connecting",
             profileId = profile.id,
@@ -86,14 +95,16 @@ object VpnRuntime {
             uploadSpeed = 0,
             downloadSpeed = 0,
             error = null,
+            requestId = requestId,
         ),
     )
 
-    fun connected(
+    @Synchronized fun connected(
         profile: StoredProfile,
         activeNode: String?,
         activeMode: String,
         preserveSession: Boolean = false,
+        requestId: String? = null,
     ) = publish(
         if (preserveSession && current.startedAt > 0) {
             current.copy(
@@ -105,6 +116,7 @@ object VpnRuntime {
                 activeNode = activeNode,
                 activeMode = activeMode,
                 error = null,
+                requestId = requestId,
             )
         } else {
             NativeVpnSnapshot(
@@ -114,26 +126,28 @@ object VpnRuntime {
                 startedAt = System.currentTimeMillis(),
                 activeNode = activeNode,
                 activeMode = activeMode,
+                requestId = requestId,
             )
         },
     )
 
-    fun disconnecting() = publish(current.copy(state = "disconnecting", error = null))
+    @Synchronized fun disconnecting(requestId: String?) = publish(current.copy(state = "disconnecting", error = null, requestId = requestId))
 
-    fun disconnected() {
-        publish(NativeVpnSnapshot())
+    @Synchronized fun disconnected(requestId: String? = null) {
+        publish(NativeVpnSnapshot(requestId = requestId))
     }
 
-    fun failed(profile: StoredProfile?, message: String) {
+    @Synchronized fun failed(profile: StoredProfile?, message: String, requestId: String? = null) {
         publish(NativeVpnSnapshot(
             state = "error",
             profileId = profile?.id,
             profileName = profile?.name,
             error = message,
+            requestId = requestId,
         ))
     }
 
-    fun traffic(up: Long, down: Long, totalUp: Long, totalDown: Long) {
+    @Synchronized fun traffic(up: Long, down: Long, totalUp: Long, totalDown: Long) {
         if (current.state != "connected") return
         publish(
             current.copy(
@@ -145,7 +159,7 @@ object VpnRuntime {
         )
     }
 
-    private fun publish(snapshot: NativeVpnSnapshot) {
+    @Synchronized private fun publish(snapshot: NativeVpnSnapshot) {
         current = snapshot
         val value = snapshot.asMap()
         mainHandler.post {

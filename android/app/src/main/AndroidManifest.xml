@@ -34,6 +34,7 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <activity android:name=".ExternalConnectActivity" android:exported="false" />
         <service
             android:name=".ProximaVpnService"
             android:exported="false"

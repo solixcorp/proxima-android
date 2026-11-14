@@ -46,10 +46,32 @@ Cancellation/start rejection discards a prepared capability;
 Activity destruction also discards its pending uploads. Process-crash orphans
 have no capability in the new Activity and are never used by a later start.
 
-Tile/widget/service starts without Dart preparation deliberately fail with
-“Mihomo 설정 사이드카가 없습니다. 앱에서 다시 연결해 주세요.” They do not
-read a last-successful config. Adding headless Flutter preparation for these
-entry points is future work.
+Tile/widget connection requests open a non-exported launcher Activity, then
+hand a one-use capability to Flutter. After controller initialization, Flutter
+consumes the request and performs normal subscription refresh, permission and
+fresh Dart preparation. Requests received during configuration writes wait for
+completion; duplicate requests during preparation/connection are ignored.
+Disconnect remains a direct service action. Direct service starts without a
+prepared sidecar still fail; no last-successful configuration is reused.
+
+`startVpn` completes only after the service reports `connected` for that
+sidecar's request ID, or fails on error, cancellation, Activity destruction or
+a 60-second deadline. Service generation guards and current-event checks reject
+obsolete status callbacks. Failed configuration changes restore saved settings,
+profile content or selection. A failed engine restart leaves an explicit error
+or disconnected state and requires an explicit reconnect; it does not silently
+restart the previous engine.
+
+Subscription and rule-set bodies have an 8 MiB size limit, a 10-second idle
+timeout and a 30-second body deadline. Redirect bodies are cancelled instead of
+drained. Local YAML provider/health-check URLs are never inferred as subscription
+sources; only explicit subscription metadata or legacy source markers are used.
+
+Public IP diagnostics use the app's current network path to issue an
+unauthenticated HTTPS GET to `https://get.geojs.io/v1/ip.json`. The JSON `ip`
+must be a valid IPv4/IPv6 address. The request has a 10-second overall deadline
+and a 16 KiB body limit; results from an obsolete VPN session are discarded.
+This endpoint provides an IP address, without location or organization data.
 
 ## Engine boundary
 

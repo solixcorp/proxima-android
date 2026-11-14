@@ -60,24 +60,8 @@ class ProximaWidgetProvider : AppWidgetProvider() {
             return
         }
 
-        val profile = ProfileRepository(context).active()
-        if (profile == null || VpnService.prepare(context) != null) {
-            val launchIntent = Intent(context, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            }
-            context.startActivity(launchIntent)
-            return
-        }
-
-        val startIntent = Intent(context, ProximaVpnService::class.java).apply {
-            action = ProximaVpnService.ACTION_START
-            putExtra(ProximaVpnService.EXTRA_PROFILE_ID, profile.id)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(startIntent)
-        } else {
-            context.startService(startIntent)
-        }
+        // Disconnected buttons use an activity PendingIntent directly; a
+        // broadcast cannot reliably start an activity on modern Android.
     }
 
     companion object {
@@ -234,9 +218,14 @@ class ProximaWidgetProvider : AppWidgetProvider() {
                 Intent(context, ProximaWidgetProvider::class.java).apply { action = ACTION_TOGGLE_VPN },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
+            val pendingConnect = PendingIntent.getActivity(
+                context, 2,
+                Intent(context, ExternalConnectActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
             views.setOnClickPendingIntent(R.id.widget_container, pendingLaunch)
-            // Launch setup directly; modern Android restricts background activity starts.
-            views.setOnClickPendingIntent(R.id.widget_button, if (needsSetup) pendingLaunch else pendingToggle)
+            views.setOnClickPendingIntent(R.id.widget_button,
+                if (state in setOf("connected", "connecting", "disconnecting")) pendingToggle else pendingConnect)
 
             if (layout != R.layout.widget_proxima_compact) {
                 val startedAt = (snapshot["startedAt"] as? Number)?.toLong() ?: 0L

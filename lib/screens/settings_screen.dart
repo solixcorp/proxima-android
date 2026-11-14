@@ -105,7 +105,7 @@ class SettingsScreen extends StatelessWidget {
               const Divider(height: 1, indent: 56),
               ListTile(
                 leading: const Icon(Icons.public_rounded),
-                title: const Text('VPN 외부 IP'),
+                title: const Text('현재 경로 외부 IP'),
                 subtitle: Text(_publicIpLabel(controller.publicIp)),
                 trailing: SizedBox(
                   width: 64,
@@ -243,7 +243,7 @@ class SettingsScreen extends StatelessWidget {
   }
 
   String _publicIpLabel(PublicIpInfo? info) {
-    if (info == null) return 'Mihomo JNI 공인 IP 검사는 아직 지원하지 않습니다.';
+    if (info == null) return 'VPN 연결 후 확인을 누르면 GeoJS로 현재 경로의 IP를 조회합니다.';
     if (info.rejected) return '현재 노드 또는 조회 정책에서 차단됨';
     final detail = [
       info.ip,

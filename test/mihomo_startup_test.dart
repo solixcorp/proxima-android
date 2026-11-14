@@ -48,6 +48,7 @@ void main() {
   const channel = MethodChannel('proxima/vpn');
   late _Controller controller;
   late Map<String, Object?> row;
+  Map<String, Object?>? secondRow;
   late String content;
   late Map<String, String> selections;
   late List<MethodCall> calls;
@@ -55,9 +56,11 @@ void main() {
   String? failMethod;
   Completer<void>? finishEntered;
   Completer<void>? finishGate;
+  Completer<void>? startGate;
 
   setUp(() {
     row = {'id': _id, 'name': 'Subscription', 'isActive': true, 'updatedAt': 1};
+    secondRow = null;
     content = _source;
     selections = {};
     calls = [];
@@ -65,6 +68,7 @@ void main() {
     failMethod = null;
     finishEntered = null;
     finishGate = null;
+    startGate = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           calls.add(call);
@@ -79,7 +83,7 @@ void main() {
             case 'readProfile':
               return content;
             case 'listProfiles':
-              return [row];
+              return [row, if (secondRow != null) secondRow!];
             case 'loadProxySelections':
               return selections;
             case 'clearProxySelection':
@@ -124,8 +128,11 @@ void main() {
               await finishGate?.future;
               return null;
             case 'startVpn':
+              await startGate?.future;
+              return null;
             case 'discardMihomoConfiguration':
             case 'discardPreparedMihomoConfiguration':
+            case 'stopVpn':
             case 'saveSettings':
             case 'selectProfile':
               return null;
@@ -345,6 +352,201 @@ void main() {
     expect(calls.any((c) => c.method == 'finishMihomoConfiguration'), isTrue);
     expect(calls.any((c) => c.method == 'startVpn'), isTrue);
   });
+
+  test(
+    'settings save failure leaves the displayed settings unchanged',
+    () async {
+      final original = controller.settings;
+      failMethod = 'saveSettings';
+      await expectLater(
+        controller.updateSettings(original.copyWith(mtu: 1300)),
+        throwsA(isA<PlatformException>()),
+      );
+      expect(controller.settings, same(original));
+    },
+  );
+
+  test('live selection save failure restores the running node', () async {
+    await controller.loadProxyGroups();
+    controller.snapshot = const VpnSnapshot(
+      state: VpnConnectionState.connected,
+      profileId: _id,
+    );
+    failMethod = 'saveProxySelection';
+    await expectLater(
+      controller.selectProxy('GLOBAL', 'second'),
+      throwsA(isA<PlatformException>()),
+    );
+    final changes = calls
+        .where((c) => c.method == 'coreAction')
+        .map((c) => jsonDecode((c.arguments as Map)['data'] as String))
+        .toList();
+    expect(changes.map((c) => c['proxy-name']), ['second', 'first']);
+    expect(controller.currentProxyGroup?.selected, 'first');
+  });
+
+  test(
+    'connected profile save failure restores original content and snapshot',
+    () async {
+      controller.snapshot = const VpnSnapshot(
+        state: VpnConnectionState.connected,
+        profileId: _id,
+      );
+      failMethod = 'appendMihomoConfiguration';
+      await expectLater(
+        controller.saveProfile(
+          id: _id,
+          name: 'changed',
+          content: _source.replaceAll('one.example', 'new.example'),
+        ),
+        throwsA(isA<PlatformException>()),
+      );
+      expect(content, _source);
+      expect(controller.profiles.single.name, 'Subscription');
+      expect(controller.snapshot.state, VpnConnectionState.connected);
+    },
+  );
+
+  test(
+    'asynchronous worker failure rolls back mode and persisted settings',
+    () async {
+      controller.snapshot = const VpnSnapshot(
+        state: VpnConnectionState.connected,
+        profileId: _id,
+      );
+      startGate = Completer<void>();
+      final operation = controller.setMode(OutboundMode.direct);
+      while (!calls.any((c) => c.method == 'startVpn')) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(controller.settings.mode, OutboundMode.direct);
+      final failure = expectLater(operation, throwsA(isA<PlatformException>()));
+      startGate!.completeError(PlatformException(code: 'vpn_start_failed'));
+      await failure;
+      expect(controller.settings.mode, OutboundMode.global);
+      expect(
+        (calls.where((c) => c.method == 'saveSettings').last.arguments
+            as Map)['mode'],
+        'global',
+      );
+    },
+  );
+
+  test(
+    'configuration changes cannot race a pending restart and rollback',
+    () async {
+      controller.snapshot = const VpnSnapshot(
+        state: VpnConnectionState.connected,
+        profileId: _id,
+      );
+      startGate = Completer<void>();
+      final operation = controller.setMode(OutboundMode.direct);
+      while (!calls.any((c) => c.method == 'startVpn')) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      await expectLater(
+        controller.updateSettings(controller.settings.copyWith(mtu: 1300)),
+        throwsStateError,
+      );
+      final failure = expectLater(operation, throwsA(isA<PlatformException>()));
+      startGate!.completeError(PlatformException(code: 'vpn_start_failed'));
+      await failure;
+      expect(controller.settings.mode, OutboundMode.global);
+      expect(controller.settings.mtu, isNot(1300));
+    },
+  );
+
+  test('asynchronous worker failure restores saved profile content', () async {
+    controller.snapshot = const VpnSnapshot(
+      state: VpnConnectionState.connected,
+      profileId: _id,
+    );
+    startGate = Completer<void>();
+    final operation = controller.saveProfile(
+      id: _id,
+      name: 'changed',
+      content: _source.replaceAll('one.example', 'new.example'),
+    );
+    while (!calls.any((c) => c.method == 'startVpn')) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(content, contains('new.example'));
+    final failure = expectLater(operation, throwsA(isA<PlatformException>()));
+    startGate!.completeError(PlatformException(code: 'vpn_start_failed'));
+    await failure;
+    expect(content, _source);
+    expect(controller.profiles.single.name, 'Subscription');
+  });
+
+  test('failed asynchronous fallback restores saved node selection', () async {
+    await controller.loadProxyGroups();
+    controller.snapshot = const VpnSnapshot(
+      state: VpnConnectionState.connected,
+      profileId: _id,
+    );
+    failMethod = 'coreAction';
+    startGate = Completer<void>();
+    final operation = controller.selectProxy('GLOBAL', 'second');
+    while (!calls.any((c) => c.method == 'startVpn')) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(selections['GLOBAL'], 'second');
+    final failure = expectLater(operation, throwsA(isA<PlatformException>()));
+    startGate!.completeError(PlatformException(code: 'vpn_start_failed'));
+    await failure;
+    expect(selections, isEmpty);
+  });
+
+  test(
+    'failed asynchronous profile switch keeps the previous active profile',
+    () async {
+      secondRow = {
+        'id': 'second',
+        'name': 'Second',
+        'isActive': false,
+        'updatedAt': 1,
+      };
+      controller.profiles = [
+        VpnProfile.fromMap(row),
+        VpnProfile.fromMap(secondRow!),
+      ];
+      controller.snapshot = const VpnSnapshot(
+        state: VpnConnectionState.connected,
+        profileId: _id,
+      );
+      startGate = Completer<void>();
+      final operation = controller.selectProfile('second');
+      while (!calls.any((c) => c.method == 'startVpn')) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      final failure = expectLater(operation, throwsA(isA<PlatformException>()));
+      startGate!.completeError(PlatformException(code: 'vpn_start_failed'));
+      await failure;
+      final selections = calls
+          .where((c) => c.method == 'selectProfile')
+          .toList();
+      expect(selections, hasLength(1));
+      expect((selections.single.arguments as Map)['id'], _id);
+      expect(controller.profiles.first.isActive, isTrue);
+    },
+  );
+
+  test(
+    'cancelling a dispatched start stops it and ignores its late failure',
+    () async {
+      startGate = Completer<void>();
+      final operation = controller.toggleVpn();
+      while (!calls.any((c) => c.method == 'startVpn')) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      controller.cancelConnectionPreparation();
+      startGate!.completeError(PlatformException(code: 'vpn_start_cancelled'));
+      await operation;
+      expect(calls.where((c) => c.method == 'stopVpn'), hasLength(1));
+      expect(controller.snapshot.state, VpnConnectionState.disconnected);
+      expect(controller.preparingConnection, isFalse);
+    },
+  );
 
   test('cancellation during sidecar transfer discards prepared config without starting', () async {
     finishEntered = Completer<void>();

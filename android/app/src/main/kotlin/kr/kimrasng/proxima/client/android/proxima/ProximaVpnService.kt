@@ -21,18 +21,18 @@ import java.net.Inet4Address
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 import android.net.VpnService as AndroidVpnService
 
 class ProximaVpnService : AndroidVpnService() {
     private val worker = Executors.newSingleThreadExecutor()
     private val trafficScheduler = Executors.newSingleThreadScheduledExecutor()
-    private val generation = AtomicInteger(0)
+    private val generation = VpnGenerationGate()
     private var trafficTask: ScheduledFuture<*>? = null
     private var stopping = false
     private val tunnelLock = Any()
     @Volatile private var mihomoSession: MihomoVpnSession? = null
     @Volatile private var destroyed = false
+    @Volatile private var currentRequestId: String? = null
 
     // `ParcelFileDescriptor.detachFd()` transfers ownership to us. Keep that
     // ownership explicitly so cleanup tears down the Android VPN interface.
@@ -41,6 +41,7 @@ class ProximaVpnService : AndroidVpnService() {
 
     override fun onCreate() {
         super.onCreate()
+        VpnRuntime.initialize(this)
         createNotificationChannel()
     }
 
@@ -56,20 +57,22 @@ class ProximaVpnService : AndroidVpnService() {
     }
 
     private fun beginConnection(profileId: String, mihomoConfigToken: String?) {
+        currentRequestId = mihomoConfigToken
+        val token = generation.incrementAndGet()
+        stopping = false
         val repository = ProfileRepository(this)
         val profile = repository.profile(profileId) ?: run {
-            fail(null, "선택한 프로필을 찾을 수 없습니다.")
+            fail(null, "선택한 프로필을 찾을 수 없습니다.", token, mihomoConfigToken)
             return
         }
         val current = VpnRuntime.snapshot()
-        val preserveSession = current["profileId"] == profile.id &&
-            current["state"] in setOf("connected", "connecting") &&
+        val preserveSession = current["state"] in setOf("connected", "connecting") &&
             (current["startedAt"] as? Long ?: 0L) > 0L
-        val token = generation.incrementAndGet()
-        stopping = false
         trafficTask?.cancel(false)
         trafficTask = null
-        if (preserveSession) VpnRuntime.reconnecting(profile) else VpnRuntime.connecting(profile)
+        generation.ifCurrent(token) {
+            if (preserveSession) VpnRuntime.reconnecting(profile, mihomoConfigToken) else VpnRuntime.connecting(profile, mihomoConfigToken)
+        }
         startForeground(NOTIFICATION_ID, notification("연결 중"))
         worker.execute {
             runCatching {
@@ -78,7 +81,7 @@ class ProximaVpnService : AndroidVpnService() {
                 establishTunnel(profile, repository.readContent(profileId), token, preserveSession, mihomoConfigToken)
             }.onFailure {
                 if (token == generation.get() && !stopping) {
-                    fail(profile, readableError(it), token)
+                    fail(profile, readableError(it), token, mihomoConfigToken)
                 }
             }
         }
@@ -142,12 +145,12 @@ class ProximaVpnService : AndroidVpnService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
             setUnderlyingNetworks(underlying.network?.let { arrayOf(it) })
         }
-        establishMihomo(profile, mihomoConfig, settings, fd, token, preserveSession)
+        establishMihomo(profile, mihomoConfig, settings, fd, token, preserveSession, mihomoConfigToken)
     }
 
     private fun establishMihomo(
         profile: StoredProfile, config: MihomoRuntimeConfig, settings: NativeVpnSettings,
-        fd: Int, token: Int, preserveSession: Boolean,
+        fd: Int, token: Int, preserveSession: Boolean, requestId: String?,
     ) {
         val session = MihomoVpnSession(this) {
             // No auto-rebind/retry: only a new ACTION_START may create a worker.
@@ -160,8 +163,10 @@ class ProximaVpnService : AndroidVpnService() {
                     trafficTask = null
                     stopCurrentEngine()
                     if (retiredToken != generation.get() || stopping || destroyed) return@execute
-                    VpnRuntime.disconnected()
-                    updateNotification("Mihomo 프로세스 종료 — 다시 연결해 주세요")
+                    generation.ifCurrent(retiredToken) {
+                        VpnRuntime.disconnected(requestId)
+                        updateNotification("Mihomo 프로세스 종료 — 다시 연결해 주세요")
+                    }
                 }
             }
         }
@@ -179,8 +184,13 @@ class ProximaVpnService : AndroidVpnService() {
             stopCurrentEngine()
             return
         }
-        VpnRuntime.setMihomoSession(session)
-        VpnRuntime.connected(profile, config.selected.takeUnless { settings.mode == "direct" }, settings.mode, preserveSession)
+        if (!generation.ifCurrent(token) {
+            VpnRuntime.setMihomoSession(session)
+            VpnRuntime.connected(profile, config.selected.takeUnless { settings.mode == "direct" }, settings.mode, preserveSession, requestId)
+        }) {
+            stopCurrentEngine()
+            return
+        }
         updateNotification("보호됨")
         startMihomoTrafficUpdates(token, preserveSession, session)
     }
@@ -197,8 +207,10 @@ class ProximaVpnService : AndroidVpnService() {
             if (token != generation.get() || stopping || destroyed) return@scheduleAtFixedRate
             val nextUp = counters?.get(0) ?: up
             val nextDown = counters?.get(1) ?: down
-            VpnRuntime.traffic((nextUp - up).coerceAtLeast(0), (nextDown - down).coerceAtLeast(0),
-                offsetUp + nextUp, offsetDown + nextDown)
+            generation.ifCurrent(token) {
+                VpnRuntime.traffic((nextUp - up).coerceAtLeast(0), (nextDown - down).coerceAtLeast(0),
+                    offsetUp + nextUp, offsetDown + nextDown)
+            }
             up = nextUp
             down = nextDown
             updateNotificationWithCurrentSnapshot()
@@ -240,8 +252,9 @@ class ProximaVpnService : AndroidVpnService() {
     private fun disconnectAndStop() {
         if (stopping) return
         stopping = true
+        val requestId = currentRequestId
         val token = generation.incrementAndGet()
-        VpnRuntime.disconnecting()
+        generation.ifCurrent(token) { VpnRuntime.disconnecting(requestId) }
         updateNotification("연결 해제 중")
         trafficTask?.cancel(false)
         trafficTask = null
@@ -253,14 +266,16 @@ class ProximaVpnService : AndroidVpnService() {
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
             else @Suppress("DEPRECATION") stopForeground(true)
-            VpnRuntime.disconnected()
-            stopSelf()
+            generation.ifCurrent(token) {
+                VpnRuntime.disconnected(requestId)
+                stopSelf()
+            }
         }
     }
 
-    private fun fail(profile: StoredProfile?, message: String, token: Int? = null) {
+    private fun fail(profile: StoredProfile?, message: String, token: Int? = null, requestId: String? = null) {
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-            worker.execute { fail(profile, message, token) }
+            worker.execute { fail(profile, message, token, requestId) }
             return
         }
         if (token != null && !generation.compareAndSet(token, token + 1)) return
@@ -269,16 +284,18 @@ class ProximaVpnService : AndroidVpnService() {
         trafficTask = null
         stopCurrentEngine()
         if (failedToken != generation.get() || destroyed) return
-        VpnRuntime.failed(profile, message)
-        updateNotification("연결 오류")
-        stopping = false
+        generation.ifCurrent(failedToken) {
+            VpnRuntime.failed(profile, message, requestId)
+            updateNotification("연결 오류")
+            stopping = false
+        }
     }
 
     override fun onRevoke() { disconnectAndStop(); super.onRevoke() }
     override fun onLowMemory() { super.onLowMemory() }
     override fun onDestroy() {
         synchronized(tunnelLock) { destroyed = true }
-        generation.incrementAndGet()
+        val token = generation.incrementAndGet()
         trafficTask?.cancel(false)
         trafficTask = null
         trafficScheduler.shutdownNow()
@@ -287,7 +304,9 @@ class ProximaVpnService : AndroidVpnService() {
         mihomoSession?.requestRetirementOnMain()
         worker.execute { stopCurrentEngine() }
         worker.shutdown()
-        if (VpnRuntime.snapshot()["state"] != "error") VpnRuntime.disconnected()
+        generation.ifCurrent(token) {
+            if (VpnRuntime.snapshot()["state"] != "error") VpnRuntime.disconnected(currentRequestId)
+        }
         super.onDestroy()
     }
     override fun onBind(intent: Intent): IBinder? = super.onBind(intent)

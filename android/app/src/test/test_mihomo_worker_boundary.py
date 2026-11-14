@@ -19,6 +19,14 @@ import unittest
 
 
 class MihomoWorkerBoundaryHostTest(unittest.TestCase):
+    def test_vpn_runtime_generation_and_stale_events(self):
+        source = Path(__file__).resolve().parents[1]
+        package = Path("kotlin/kr/kimrasng/proxima/client/android/proxima")
+        self.run_host([
+            source / "main" / package / "VpnRuntimeTransitions.kt",
+            source / "test" / package / "VpnRuntimeTransitionsHostTest.kt",
+        ], "VpnRuntimeTransitionsHostTest", r"PASS VPN runtime generation and stale-event guards")
+
     def test_lifecycle_authentication_configuration_and_descriptor_ownership(self):
         source = Path(__file__).resolve().parents[1]
         package = Path("kotlin/kr/kimrasng/proxima/client/android/proxima")
@@ -44,6 +52,16 @@ class MihomoWorkerBoundaryHostTest(unittest.TestCase):
         ]
         self.run_host(files, "VpnSettingsHostTest", r"PASS VpnSettings persistence and defaults")
 
+    def test_external_connect_and_legacy_subscription(self):
+        source = Path(__file__).resolve().parents[1]
+        package = Path("kotlin/kr/kimrasng/proxima/client/android/proxima")
+        files = [source / "main" / package / name for name in (
+            "ExternalConnectActivity.kt", "ProfileRepository.kt",
+        )]
+        files.append(source / "test" / package / "ExternalConnectHostTest.kt")
+        files.extend(sorted((source / "test/fixtures/external").glob("*.kt")))
+        self.run_host(files, "ExternalConnectHostTest", r"PASS external connect and legacy subscription marker")
+
     def test_sidecar_consistency_death_and_join_order(self):
         source = Path(__file__).resolve().parents[1]
         package = Path("kotlin/kr/kimrasng/proxima/client/android/proxima")
@@ -61,13 +79,18 @@ class MihomoWorkerBoundaryHostTest(unittest.TestCase):
         worker = (package / "MihomoWorkerService.kt").read_text()
         boundary = (package / "MihomoWorkerBoundary.kt").read_text()
         activity = (package / "MainActivity.kt").read_text()
+        self.assertIn("VpnRuntime.withCurrentEvent(value)", activity)
+        self.assertNotIn("VpnRuntime.connecting(", activity)
+        self.assertNotIn("VpnRuntime.reconnecting(", activity)
+        self.assertIn("VpnRuntime.disconnecting(requestId)", service)
+        self.assertIn("generation.ifCurrent(token)", service)
         self.assertNotIn("NativeEngine", service)
         self.assertNotIn("NativeEngine", activity)
         self.assertIn("lease.engine.start(bytes, tunCopy.fd", worker)
         self.assertIn("Process.killProcess(Process.myPid())", worker)
         self.assertIn("binding.awaitRetired()", (package / "MihomoVpnSession.kt").read_text())
         self.assertIn("closeMihomoTunnel(stopAndJoin", service)
-        self.assertIn("establishMihomo(profile, mihomoConfig, settings, fd, token, preserveSession)", service)
+        self.assertIn("establishMihomo(profile, mihomoConfig, settings, fd, token, preserveSession, mihomoConfigToken)", service)
         self.assertNotIn("settings.engine", service + activity)
         self.assertIn("worker.linkToDeath(recipient, 0)", boundary)
         self.assertIn("retired.observedDeath()", boundary)

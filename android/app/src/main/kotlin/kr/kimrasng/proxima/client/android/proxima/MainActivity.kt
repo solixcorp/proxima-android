@@ -12,6 +12,9 @@ import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.Debug
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -30,13 +33,72 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private lateinit var mihomoSidecars: MihomoConfigSidecar
     private val mihomoUploads = mutableMapOf<String, String>() // profile -> one-use capability
     private var eventSink: EventChannel.EventSink? = null
+    private var externalActionSink: EventChannel.EventSink? = null
+    private val pendingExternalConnect = PendingExternalConnect()
     private var permissionResult: MethodChannel.Result? = null
     private var importResult: MethodChannel.Result? = null
     private var exportResult: MethodChannel.Result? = null
     private var exportContent: String? = null
     // Run independent node probes concurrently instead of serializing timeouts.
     private val coreWorker = Executors.newFixedThreadPool(8)
-    private val runtimeListener: (Map<String, Any?>) -> Unit = { value -> eventSink?.success(value) }
+    private data class PendingStart(val id: String, val profileId: String, val result: MethodChannel.Result, val timeout: Runnable)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var pendingStart: PendingStart? = null
+    private val runtimeListener: (Map<String, Any?>) -> Unit = { value ->
+        VpnRuntime.withCurrentEvent(value) {
+            eventSink?.success(value)
+            val pending = pendingStart
+            if (pending != null && value["requestId"] == pending.id) {
+                when (value["state"]) {
+                    "connected" -> {
+                        try {
+                            profiles.select(pending.profileId)
+                            finishStart()
+                        } catch (error: Throwable) {
+                            runCatching { startService(Intent(this, ProximaVpnService::class.java).setAction(ProximaVpnService.ACTION_STOP)) }
+                            finishStart("profile_select_failed", error.message ?: "프로필 선택 실패")
+                        }
+                    }
+                    "error" -> finishStart("vpn_start_failed", value["error"] as? String ?: "VPN 시작 실패")
+                    "disconnected", "disconnecting" -> finishStart("vpn_start_cancelled", "VPN 연결이 중단되었습니다.")
+                }
+            }
+        }
+    }
+
+    private fun finishStart(code: String? = null, message: String? = null) {
+        val pending = pendingStart ?: return
+        pendingStart = null
+        mainHandler.removeCallbacks(pending.timeout)
+        if (code != null) runCatching { mihomoSidecars.discard(pending.id) }
+        if (code == null) pending.result.success(null) else pending.result.error(code, message, null)
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (savedInstanceState?.getBoolean(STATE_PENDING_CONNECT) == true) pendingExternalConnect.request()
+        acceptExternalConnect(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        acceptExternalConnect(intent)
+    }
+
+    private fun acceptExternalConnect(intent: Intent?) {
+        val token = intent?.getStringExtra(ExternalConnectActivity.EXTRA_CONNECT_TOKEN)
+        intent?.removeExtra(ExternalConnectActivity.EXTRA_CONNECT_TOKEN)
+        if (ExternalConnectCapability.consume(token)) {
+            pendingExternalConnect.request()
+            externalActionSink?.success("connect")
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(STATE_PENDING_CONNECT, pendingExternalConnect.isPending())
+        super.onSaveInstanceState(outState)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -44,14 +106,25 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         profiles = ProfileRepository(this)
         settings = VpnSettingsRepository(this)
         mihomoSidecars = MihomoConfigSidecar(File(filesDir, "mihomo-configs"))
+        VpnRuntime.addListener(runtimeListener)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, METHOD_CHANNEL).setMethodCallHandler(this)
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENT_CHANNEL).setStreamHandler(this)
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, EXTERNAL_ACTION_CHANNEL).setStreamHandler(
+            object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                    externalActionSink = events
+                    if (pendingExternalConnect.isPending()) events.success("connect")
+                }
+                override fun onCancel(arguments: Any?) { externalActionSink = null }
+            },
+        )
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         try {
             when (call.method) {
                 "getState" -> result.success(VpnRuntime.snapshot())
+                "consumeExternalConnect" -> result.success(pendingExternalConnect.consume())
                 "listProfiles" -> result.success(profiles.list())
                 "readProfile" -> result.success(profiles.readContent(requiredString(call, "id")))
                 "saveProfile" -> {
@@ -145,6 +218,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 "requestVpnPermission" -> requestVpnPermission(result)
                 "startVpn" -> startVpn(requiredString(call, "profileId"), result)
                 "stopVpn" -> {
+                    finishStart("vpn_start_cancelled", "VPN 연결이 중단되었습니다.")
                     startService(Intent(this, ProximaVpnService::class.java).setAction(ProximaVpnService.ACTION_STOP))
                     result.success(null)
                 }
@@ -209,25 +283,32 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     }
 
     private fun startVpn(profileId: String, result: MethodChannel.Result) {
+        if (pendingStart != null) {
+            runCatching { startService(Intent(this, ProximaVpnService::class.java).setAction(ProximaVpnService.ACTION_STOP)) }
+        }
+        finishStart("vpn_start_superseded", "새 연결 요청으로 이전 요청이 취소되었습니다.")
         require(VpnService.prepare(this) == null) { "VPN permission is required" }
-        val profile = profiles.profile(profileId) ?: error("Profile not found")
+        require(profiles.profile(profileId) != null) { "Profile not found" }
         val configToken = checkNotNull(mihomoUploads.remove(profileId)) { "Mihomo 설정 사이드카가 없습니다. 앱에서 다시 연결해 주세요." }
             .also(mihomoSidecars::requireReady)
-        profiles.select(profileId)
-        val state = VpnRuntime.snapshot()
-        val preserveSession = state["state"] in setOf("connected", "connecting") &&
-            (state["startedAt"] as? Long ?: 0L) > 0L
-        if (preserveSession) VpnRuntime.reconnecting(profile) else VpnRuntime.connecting(profile)
+        val timeout = Runnable {
+            if (pendingStart?.id == configToken) {
+                runCatching { startService(Intent(this, ProximaVpnService::class.java).setAction(ProximaVpnService.ACTION_STOP)) }
+                finishStart("vpn_start_timeout", "VPN 연결 시간이 초과되었습니다.")
+            }
+        }
+        pendingStart = PendingStart(configToken, profileId, result, timeout)
+        mainHandler.postDelayed(timeout, START_TIMEOUT_MS)
         val intent = Intent(this, ProximaVpnService::class.java)
             .setAction(ProximaVpnService.ACTION_START)
             .putExtra(ProximaVpnService.EXTRA_PROFILE_ID, profileId)
             .putExtra(ProximaVpnService.EXTRA_MIHOMO_CONFIG, configToken)
-        runCatching {
+        try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
-        }.onFailure {
-            VpnRuntime.failed(profile, it.message ?: "VPN을 시작하지 못했습니다.")
-        }.getOrThrow()
-        result.success(null)
+        } catch (error: Throwable) {
+            mihomoSidecars.discard(configToken)
+            finishStart("vpn_start_failed", error.message ?: "VPN을 시작하지 못했습니다.")
+        }
     }
 
     private fun invokeCore(method: String, data: String, result: MethodChannel.Result) {
@@ -434,17 +515,21 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
         eventSink = events
-        VpnRuntime.addListener(runtimeListener)
+        events.success(VpnRuntime.snapshot())
     }
 
     override fun onCancel(arguments: Any?) {
-        VpnRuntime.removeListener(runtimeListener)
         eventSink = null
     }
 
     override fun onDestroy() {
+        if (pendingStart != null) {
+            runCatching { startService(Intent(this, ProximaVpnService::class.java).setAction(ProximaVpnService.ACTION_STOP)) }
+            finishStart("activity_destroyed", "Activity was destroyed")
+        }
         VpnRuntime.removeListener(runtimeListener)
         eventSink = null
+        externalActionSink = null
         permissionResult?.error("activity_destroyed", "Activity was destroyed", null)
         permissionResult = null
         importResult?.error("activity_destroyed", "Activity was destroyed", null)
@@ -465,9 +550,12 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     companion object {
         private const val METHOD_CHANNEL = "proxima/vpn"
         private const val EVENT_CHANNEL = "proxima/vpn/events"
+        private const val EXTERNAL_ACTION_CHANNEL = "proxima/vpn/external_actions"
+        private const val STATE_PENDING_CONNECT = "pendingExternalConnect"
         private const val VPN_PERMISSION_REQUEST = 4107
         private const val IMPORT_PROFILE_REQUEST = 4108
         private const val EXPORT_PROFILE_REQUEST = 4109
         private const val MAX_PROFILE_BYTES = 8 * 1024 * 1024
+        private const val START_TIMEOUT_MS = 60_000L
     }
 }
