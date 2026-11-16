@@ -1,0 +1,10 @@
+mihomo_version=v1.19.33
+mihomo_commit=3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8
+mihomo_sum=h1:hwqYMItk3Jaeq8Sw2PBAtyHQh157ccUtWS7rXrBOMCU=
+sing_tun_version=v0.4.28
+sing_tun_commit=a128d0c3c8001e041725fa67ff3b521502298f17
+sing_tun_sum=h1:IWcH13jEbsxzM5SZrRat3IeJG31WiF9fOj3r18yGHw4=
+sing_tun_stack_mipstack_sha256=0bc87ae1a2cf43abbb71353d10ea356a433c65cbd807b065863a54aa6c146267
+mipstack_version=v0.0.0-20261019124225-9a80a07eaeb9
+mipstack_sum=h1:/uFijgwBH3L7m/Ztfd+XpQjMmYgN74FjNTxperKhtdQ=
+go=go1.27.1

@@ -13,7 +13,27 @@ data class StoredProfile(
     val sourceUrl: String?,
     val updatedAt: Long,
     val subscriptionInfo: StoredSubscriptionInfo? = null,
+    val admissionSummary: StoredAdmissionSummary? = null,
 )
+
+data class StoredAdmissionSummary(val validProxyCount: Int, val skipped: List<Map<String, String>>) {
+    fun asMap(): Map<String, Any> = mapOf("validProxyCount" to validProxyCount, "skipped" to skipped)
+    companion object {
+        fun fromMap(value: Map<*, *>): StoredAdmissionSummary = StoredAdmissionSummary(
+            (value["validProxyCount"] as? Number)?.toInt()?.coerceAtLeast(0) ?: 0,
+            (value["skipped"] as? List<*>)?.filterIsInstance<Map<*, *>>()?.map {
+                mapOf("type" to it["type"].toString().take(80), "reason" to it["reason"].toString().take(300))
+            } ?: emptyList(),
+        )
+        fun fromJson(value: JSONObject): StoredAdmissionSummary {
+            val rows = value.optJSONArray("skipped") ?: JSONArray()
+            return StoredAdmissionSummary(value.optInt("validProxyCount").coerceAtLeast(0),
+                (0 until rows.length()).mapNotNull { i -> rows.optJSONObject(i)?.let {
+                    mapOf("type" to it.optString("type"), "reason" to it.optString("reason"))
+                } })
+        }
+    }
+}
 
 data class StoredSubscriptionInfo(
     val upload: Long = 0,
@@ -65,6 +85,7 @@ class ProfileRepository(context: Context) {
                 "updatedAt" to profile.updatedAt,
                 "isActive" to (profile.id == active),
                 "subscriptionInfo" to profile.subscriptionInfo?.asMap(),
+                "admissionSummary" to profile.admissionSummary?.asMap(),
             )
         }
     }
@@ -88,6 +109,7 @@ class ProfileRepository(context: Context) {
         sourceUrl: String?,
         content: String,
         subscriptionInfo: StoredSubscriptionInfo? = null,
+        admissionSummary: StoredAdmissionSummary? = null,
     ): Map<String, Any?> {
         require(name.isNotBlank()) { "Profile name is required" }
         require(content.isNotBlank()) { "Profile content is required" }
@@ -102,6 +124,7 @@ class ProfileRepository(context: Context) {
             sourceUrl = sourceUrl?.trim()?.takeIf { it.isNotEmpty() },
             updatedAt = System.currentTimeMillis(),
             subscriptionInfo = subscriptionInfo ?: existing.takeIf { it >= 0 }?.let { profiles[it].subscriptionInfo },
+            admissionSummary = admissionSummary,
         )
         writeAtomically(profileFile(profileId), content)
         if (existing >= 0) profiles[existing] = next else profiles.add(0, next)
@@ -151,6 +174,7 @@ class ProfileRepository(context: Context) {
                             ?: sourceFromStoredContent(profileFile(id)),
                         updatedAt = item.optLong("updatedAt"),
                         subscriptionInfo = item.optJSONObject("subscriptionInfo")?.let(StoredSubscriptionInfo::fromJson),
+                        admissionSummary = item.optJSONObject("admissionSummary")?.let(StoredAdmissionSummary::fromJson),
                     ),
                 )
             }
@@ -168,6 +192,7 @@ class ProfileRepository(context: Context) {
                     .put("updatedAt", profile.updatedAt)
                     .apply {
                         profile.subscriptionInfo?.let { put("subscriptionInfo", JSONObject(it.asMap())) }
+                        profile.admissionSummary?.let { put("admissionSummary", JSONObject(it.asMap())) }
                     },
             )
         }
@@ -182,23 +207,7 @@ class ProfileRepository(context: Context) {
     private fun sourceFromStoredContent(file: File): String? {
         if (!file.isFile) return null
         val content = runCatching { file.readText(Charsets.UTF_8) }.getOrNull() ?: return null
-        val encoded = Regex(
-            "^#\\s*proxima-subscription-url:\\s*([A-Za-z0-9_-]+)\\s*$",
-            RegexOption.MULTILINE,
-        ).find(content)?.groupValues?.getOrNull(1)
-        if (!encoded.isNullOrBlank()) {
-            val decoded = runCatching {
-                val padded = encoded.padEnd((encoded.length + 3) / 4 * 4, '=')
-                String(Base64.getUrlDecoder().decode(padded), Charsets.UTF_8)
-            }.getOrNull()
-            if (decoded?.startsWith("https://") == true) return decoded
-        }
-        // Mihomo profiles created by older releases may still include an HTTP
-        // provider URL. Only accept an explicit HTTPS value on a `url:` line.
-        return Regex(
-            "^\\s*url:\\s*['\\\"]?(https://[^\\s'\\\"]+)",
-            RegexOption.MULTILINE,
-        ).find(content)?.groupValues?.getOrNull(1)
+        return legacySubscriptionUrl(content)
     }
 
     private fun writeAtomically(destination: File, content: String) {
@@ -211,19 +220,23 @@ class ProfileRepository(context: Context) {
     }
 
     companion object {
+        internal fun legacySubscriptionUrl(content: String): String? {
+            val encoded = Regex(
+                "^#\\s*proxima-subscription-url:\\s*([A-Za-z0-9_-]+)\\s*$",
+                RegexOption.MULTILINE,
+            ).find(content)?.groupValues?.getOrNull(1) ?: return null
+            val decoded = runCatching {
+                val padded = encoded.padEnd((encoded.length + 3) / 4 * 4, '=')
+                String(Base64.getUrlDecoder().decode(padded), Charsets.UTF_8)
+            }.getOrNull()
+            return decoded?.takeIf { it.startsWith("https://") }
+        }
+
         private const val PREFERENCES = "proxima_profiles"
         private const val KEY_METADATA = "metadata"
         private const val KEY_ACTIVE_ID = "active_id"
         private const val MAX_PROFILE_BYTES = 8 * 1024 * 1024
         private val ID_PATTERN = Regex("^[a-fA-F0-9-]{36}$")
 
-    }
-}
-
-object VlessRealityConfig {
-    private const val METADATA_PREFIX = "# proxima-vless-reality-link:"
-
-    fun isGeneratedProfile(content: String): Boolean = content.lineSequence().any { line ->
-        line.trimStart().startsWith(METADATA_PREFIX)
     }
 }

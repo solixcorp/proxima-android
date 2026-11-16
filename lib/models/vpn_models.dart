@@ -93,6 +93,7 @@ class VpnProfile {
     required this.isActive,
     this.sourceUrl,
     this.subscriptionInfo,
+    this.admissionSummary,
   });
 
   factory VpnProfile.fromMap(Map<Object?, Object?> map) {
@@ -105,6 +106,9 @@ class VpnProfile {
               (map['subscriptionInfo'] as Map).cast<Object?, Object?>(),
             )
           : null,
+      admissionSummary: map['admissionSummary'] is Map
+          ? ProfileAdmissionSummary.fromMap(map['admissionSummary'] as Map)
+          : null,
       updatedAt: DateTime.fromMillisecondsSinceEpoch(
         _integer(map['updatedAt']),
       ),
@@ -116,6 +120,7 @@ class VpnProfile {
   final String name;
   final String? sourceUrl;
   final SubscriptionInfo? subscriptionInfo;
+  final ProfileAdmissionSummary? admissionSummary;
   final DateTime updatedAt;
   final bool isActive;
 
@@ -132,6 +137,39 @@ class VpnProfile {
     final uri = Uri.tryParse(source);
     return uri?.host.isNotEmpty == true ? uri!.host : '구독 프로필';
   }
+}
+
+/// Import diagnostics live in profile metadata, never in the source document.
+class ProfileAdmissionSummary {
+  const ProfileAdmissionSummary({
+    required this.validProxyCount,
+    this.skipped = const [],
+  });
+
+  factory ProfileAdmissionSummary.fromMap(Map map) => ProfileAdmissionSummary(
+    validProxyCount: _integer(map['validProxyCount']),
+    skipped: (map['skipped'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (row) => <String, String>{
+            'type': row['type']?.toString() ?? '',
+            'reason': row['reason']?.toString() ?? '',
+          },
+        )
+        .toList(growable: false),
+  );
+
+  final int validProxyCount;
+  final List<Map<String, String>> skipped;
+  String get label => '사용 가능 $validProxyCount개 · 건너뜀 ${skipped.length}개';
+  String get description => [
+    label,
+    ...skipped.map((row) => '${row['type']}: ${row['reason']}').toSet().take(3),
+  ].join('\n');
+  Map<String, Object> toMap() => {
+    'validProxyCount': validProxyCount,
+    'skipped': skipped,
+  };
 }
 
 class SubscriptionInfo {
@@ -286,18 +324,15 @@ class RoutingRule {
   factory RoutingRule.fromMap(Map<String, Object?> map) {
     final raw = map['raw']?.toString();
     final parts = raw?.split(',');
-    final compoundRule = parts != null &&
+    final compoundRule =
+        parts != null &&
         const {'AND', 'OR', 'NOT'}.contains(parts.first.toUpperCase());
-    final simpleRule = parts != null &&
-        parts.length >= 3 &&
-        !compoundRule;
-    final destinations = [
-      ...?map['domain'] as List?,
-      ...?map['ip'] as List?,
-    ];
+    final simpleRule = parts != null && parts.length >= 3 && !compoundRule;
+    final destinations = [...?map['domain'] as List?, ...?map['ip'] as List?];
     final policy = simpleRule
         ? parts[2].trim()
-        : map['policy']?.toString() ?? (compoundRule ? parts.last.trim() : null);
+        : map['policy']?.toString() ??
+              (compoundRule ? parts.last.trim() : null);
     final target = switch (map['target'] ?? policy) {
       'direct' || 'DIRECT' => '직접 연결',
       'block' || 'REJECT' || 'REJECT-DROP' => '차단',

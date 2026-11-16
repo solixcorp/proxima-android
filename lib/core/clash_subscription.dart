@@ -3,13 +3,35 @@ import 'dart:convert';
 import 'package:yaml/yaml.dart';
 
 import 'mihomo_rule_set.dart';
+import 'mihomo_proxy_admission.dart';
 
-/// The Xray-oriented representation of a Clash.Meta subscription.
+class ClashSkippedItem {
+  const ClashSkippedItem(this.type, this.name, this.reason);
+  final String type;
+  final String name;
+  final String reason;
+}
+
+/// An in-memory preview only. It does not modify or persist the source YAML.
+class ClashAdmissionResult {
+  const ClashAdmissionResult(
+    this.proxies,
+    this.groups,
+    this.rules,
+    this.skipped,
+  );
+  final List<Map<String, Object?>> proxies;
+  final List<Map<String, Object?>> groups;
+  final List<String> rules;
+  final List<ClashSkippedItem> skipped;
+}
+
+/// The legacy comment-based representation of a Clash.Meta subscription.
 ///
-/// Clash selectors do not have a direct Xray equivalent. For rule mode we
+/// Legacy storage has no direct selector equivalent. For rule mode we
 /// preserve the concrete nodes behind each policy group, so a regional group
 /// does not collapse into the global fastest-node pool when translated to
-/// Xray. A `select` group follows its provider-default (first) choice while
+/// legacy metadata. A `select` group follows its provider-default (first) choice while
 /// url-test/fallback/load-balance groups retain all of their candidates.
 class ClashSubscriptionConversion {
   const ClashSubscriptionConversion({
@@ -24,6 +46,125 @@ class ClashSubscriptionConversion {
 class ClashSubscriptionParser {
   const ClashSubscriptionParser._();
 
+  /// Builds a non-persistent admission preview. Unknown references in groups
+  /// are removed; empty groups fall back to DIRECT. Cycles are removed too.
+  /// RULE-SET rules retain their provider references and are not expanded.
+  static ClashAdmissionResult? admit(String source) {
+    Object? document;
+    try {
+      document = loadYaml(source);
+    } on YamlException {
+      return null;
+    }
+    final root = _stringMap(document);
+    final rows = _list(root?['proxies']);
+    if (root == null || rows == null) return null;
+    final skipped = <ClashSkippedItem>[];
+    final proxies = <Map<String, Object?>>[];
+    final groups = <Map<String, Object?>>[];
+    // PROXY belongs to the app selector, but is a valid group/rule target.
+    final names = {...MihomoProxyAdmission.reservedNames, 'PROXY'};
+    void skip(String type, String name, String reason) =>
+        skipped.add(ClashSkippedItem(type, name, reason));
+    for (final row in rows) {
+      final proxy = _stringMap(row);
+      final name = proxy?['name'];
+      final type = proxy?['type'];
+      String? error;
+      if (proxy == null ||
+          name is! String ||
+          name.trim().isEmpty ||
+          type is! String ||
+          type.isEmpty) {
+        error = '이름 또는 유형이 없습니다.';
+      } else if (names.contains(name)) {
+        error = '예약되었거나 중복된 이름입니다.';
+      } else if (type != 'direct' &&
+          type != 'reject' &&
+          (proxy['server'] is! String ||
+              (proxy['server'] as String).trim().isEmpty ||
+              proxy['port'] is! int ||
+              (proxy['port'] as int) < 1 ||
+              (proxy['port'] as int) > 65535)) {
+        error = '서버 또는 포트가 올바르지 않습니다.';
+      } else {
+        error = MihomoProxyAdmission.proxyError(proxy);
+      }
+      if (error != null) {
+        skip(type?.toString() ?? '', name?.toString() ?? '', error);
+      } else {
+        names.add(name as String);
+        proxies.add(proxy!);
+      }
+    }
+    for (final row in _list(root['proxy-groups']) ?? const []) {
+      final group = _stringMap(row);
+      final name = group?['name'];
+      final type = group?['type'];
+      final error = group == null || name is! String || name.trim().isEmpty
+          ? '그룹 이름이 없습니다.'
+          : names.contains(name)
+          ? '예약되었거나 중복된 이름입니다.'
+          : MihomoProxyAdmission.groupError(group);
+      if (error != null) {
+        skip(type?.toString() ?? '', name?.toString() ?? '', error);
+      } else {
+        names.add(name as String);
+        groups.add(group!);
+      }
+    }
+    final groupMap = {
+      for (final group in groups) group['name'] as String: group,
+    };
+    final visited = <String>{};
+    void clean(String name, Set<String> ancestors) {
+      if (!visited.add(name)) return;
+      final group = groupMap[name]!;
+      final choices = <String>[];
+      for (final choice in _list(group['proxies']) ?? const []) {
+        if (choice is! String ||
+            !names.contains(choice) ||
+            ancestors.contains(choice) ||
+            choice == name) {
+          skip('group-reference', name, '유효하지 않거나 순환하는 참조: $choice');
+          continue;
+        }
+        if (groupMap.containsKey(choice)) clean(choice, {...ancestors, name});
+        choices.add(choice);
+      }
+      if (choices.isEmpty) choices.add('DIRECT');
+      group['proxies'] = choices;
+    }
+
+    for (final name in groupMap.keys) {
+      clean(name, {});
+    }
+    final providers = _stringMap(root['rule-providers']) ?? const {};
+    final rules = <String>[];
+    for (final item in _list(root['rules']) ?? const []) {
+      final raw = item.toString();
+      final fields = _splitCsv(raw);
+      final kind = fields.first.toUpperCase();
+      final targetIndex = kind == 'MATCH' ? 1 : 2;
+      String? error;
+      if (!MihomoProxyAdmission.ruleTypes.contains(kind)) {
+        error = '지원하지 않는 규칙 유형입니다.';
+      } else if (fields.length <= targetIndex ||
+          fields[targetIndex].isEmpty ||
+          !names.contains(fields[targetIndex])) {
+        error = '규칙 대상이 없거나 유효하지 않습니다.';
+      } else if (kind == 'RULE-SET' && !providers.containsKey(fields[1])) {
+        error = '규칙셋 정의가 없습니다.';
+      }
+      if (error == null) {
+        rules.add(raw);
+      } else {
+        skip(kind, raw, error);
+      }
+    }
+    return ClashAdmissionResult(proxies, groups, rules, skipped);
+  }
+
   /// Optional Clash-style rules placed after a plain VLESS link list.
   /// A share link only describes a server, so destination rules must be
   /// supplied separately when the subscription is not Clash YAML.
@@ -35,10 +176,8 @@ class ClashSubscriptionParser {
     final lines = source.split(RegExp(r'\r?\n')).map((line) => line.trim());
     final ruleLines = lines
         .where(
-          (line) => RegExp(
-            r'^[A-Z][A-Z0-9-]*,',
-            caseSensitive: false,
-          ).hasMatch(line),
+          (line) =>
+              RegExp(r'^[A-Z][A-Z0-9-]*,', caseSensitive: false).hasMatch(line),
         )
         .toList(growable: false);
     if (ruleLines.isEmpty) return null;
@@ -256,7 +395,8 @@ class ClashSubscriptionParser {
       final fields = _splitCsv(source);
       if (fields.length >= 3 && fields.first.toUpperCase() == 'RULE-SET') {
         final provider = _stringMap(providers[fields[1]]);
-        final payload = ruleSetPayloads[fields[1]] ??
+        final payload =
+            ruleSetPayloads[fields[1]] ??
             (provider?['type'] == 'inline'
                 ? _ruleSetEntries(provider?['payload'], fields[1])
                 : null);
@@ -282,11 +422,7 @@ class ClashSubscriptionParser {
         });
         continue;
       }
-      final parsed = _parseRule(
-        source,
-        resolveTarget,
-        resolveCandidates,
-      );
+      final parsed = _parseRule(source, resolveTarget, resolveCandidates);
       if (parsed != null) rules.add(parsed);
       displayRules.add(_displayRule(source, parsed));
     }
@@ -323,22 +459,33 @@ class ClashSubscriptionParser {
     };
     switch (behavior) {
       case 'domain':
-        final domains = payload.map((entry) {
-          final value = entry.trim().toLowerCase();
-          if (value.startsWith('+.')) return 'domain:${value.substring(2)}';
-          if (value.startsWith('.') || value.contains('*')) {
-            final pattern = RegExp.escape(value).replaceAll(r'\*', r'[^.]+');
-            return 'regexp:^${value.startsWith('.') ? '.+' : ''}$pattern\$';
-          }
-          return 'full:$value';
-        }).toList(growable: false);
+        final domains = payload
+            .map((entry) {
+              final value = entry.trim().toLowerCase();
+              if (value.startsWith('+.')) return 'domain:${value.substring(2)}';
+              if (value.startsWith('.') || value.contains('*')) {
+                final pattern = RegExp.escape(value)
+                    .replaceAll(r'\*', r'[^.]+');
+                return 'regexp:^${value.startsWith('.') ? '.+' : ''}$pattern\$';
+              }
+              return 'full:$value';
+            })
+            .toList(growable: false);
         return (
-          rules: domains.isEmpty ? [] : [{'domain': domains, ...fields}],
+          rules: domains.isEmpty
+              ? []
+              : [
+                  {'domain': domains, ...fields},
+                ],
           supported: true,
         );
       case 'ipcidr':
         return (
-          rules: payload.isEmpty ? [] : [{'ip': payload, ...fields}],
+          rules: payload.isEmpty
+              ? []
+              : [
+                  {'ip': payload, ...fields},
+                ],
           supported: true,
         );
       case 'classical':
@@ -346,11 +493,15 @@ class ClashSubscriptionParser {
         var supported = true;
         for (final entry in payload) {
           final values = _splitCsv(entry);
-          final withPolicy = values.length >= 2 &&
-                  values.first.toUpperCase() != 'AND'
+          final withPolicy =
+              values.length >= 2 && values.first.toUpperCase() != 'AND'
               ? [values[0], values[1], policy, ...values.skip(2)].join(',')
               : '$entry,$policy';
-          final parsed = _parseRule(withPolicy, resolveTarget, resolveCandidates);
+          final parsed = _parseRule(
+            withPolicy,
+            resolveTarget,
+            resolveCandidates,
+          );
           if (parsed == null) {
             supported = false;
           } else {
@@ -445,19 +596,21 @@ class ClashSubscriptionParser {
     'supported': parsed != null && supportsRule(parsed),
   };
 
-  // XrayConfig normalizes only these private-network geo conditions locally.
+  // Legacy routing metadata normalizes these private-network geo conditions.
   // Apply the same check when reading profiles saved by older app versions.
   static bool supportsRule(Map<String, Object?> rule) =>
-        rule['supported'] != false &&
-        !(rule['domain'] as List? ?? const []).any(
-          (value) => value.toString().startsWith('geosite:') &&
-              value != 'geosite:private',
-        ) &&
-        !(rule['ip'] as List? ?? const []).any(
-          (value) => value.toString().startsWith('geoip:') &&
-              value != 'geoip:private' &&
-              value != 'geoip:lan',
-        );
+      rule['supported'] != false &&
+      !(rule['domain'] as List? ?? const []).any(
+        (value) =>
+            value.toString().startsWith('geosite:') &&
+            value != 'geosite:private',
+      ) &&
+      !(rule['ip'] as List? ?? const []).any(
+        (value) =>
+            value.toString().startsWith('geoip:') &&
+            value != 'geoip:private' &&
+            value != 'geoip:lan',
+      );
 
   static Map<String, Object?>? _parseRule(
     String source,

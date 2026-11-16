@@ -53,6 +53,11 @@ class VpnSettingsRepository(context: Context) {
         preferences.edit().putString(selectedProxiesKey(profileId), selected.toString()).apply()
     }
 
+    fun clearSelectedProxy(profileId: String, group: String) {
+        val selected = JSONObject(selectedProxies(profileId)).apply { remove(group) }
+        preferences.edit().putString(selectedProxiesKey(profileId), selected.toString()).apply()
+    }
+
     private fun selectedProxiesKey(profileId: String) = "selected_proxies_$profileId"
 
     companion object {

@@ -76,7 +76,7 @@ class HomeScreen extends StatelessWidget {
     };
     return AppPage(
       title: 'Proxima',
-      subtitle: 'VLESS Android VPN 클라이언트',
+      subtitle: 'Mihomo Android VPN 클라이언트',
       onRefresh: () async {
         await controller.reloadProfiles();
         if (controller.settings.mode != OutboundMode.direct) {
@@ -375,8 +375,8 @@ class HomeScreen extends StatelessWidget {
               const Divider(height: 1, indent: 56),
               AppValueTile(
                 leading: const Icon(Icons.swap_horiz_rounded),
-                title: 'Xray 코어',
-                subtitle: '최근 Xray 연결과 사용 중인 메모리 확인',
+                title: 'Mihomo 코어',
+                subtitle: '활성 연결과 사용 중인 메모리 확인',
                 value: snapshot.isConnected ? '실행 중' : '정지됨',
                 onTap: snapshot.isConnected ? openConnections : null,
               ),

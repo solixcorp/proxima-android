@@ -5,6 +5,7 @@ import '../state/app_controller.dart';
 import '../core/proxima_account.dart';
 import '../models/vpn_models.dart';
 import 'proxima_shell.dart';
+import 'external_connect_handler.dart';
 
 class ProximaApp extends StatelessWidget {
   const ProximaApp({super.key, required this.controller, this.account});
@@ -56,19 +57,22 @@ class ProximaApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: controller,
-      builder: (context, _) => MaterialApp(
-        title: 'Proxima',
-        debugShowCheckedModeBanner: false,
-        themeMode: switch (controller.settings.themeMode) {
-          AppThemeMode.system => ThemeMode.system,
-          AppThemeMode.light => ThemeMode.light,
-          AppThemeMode.dark => ThemeMode.dark,
-        },
-        theme: _theme(Brightness.light),
-        darkTheme: _theme(Brightness.dark),
-        home: ProximaShell(controller: controller, account: account),
+    return ExternalConnectHandler(
+      controller: controller,
+      child: ListenableBuilder(
+        listenable: controller,
+        builder: (context, _) => MaterialApp(
+          title: 'Proxima',
+          debugShowCheckedModeBanner: false,
+          themeMode: switch (controller.settings.themeMode) {
+            AppThemeMode.system => ThemeMode.system,
+            AppThemeMode.light => ThemeMode.light,
+            AppThemeMode.dark => ThemeMode.dark,
+          },
+          theme: _theme(Brightness.light),
+          darkTheme: _theme(Brightness.dark),
+          home: ProximaShell(controller: controller, account: account),
+        ),
       ),
     );
   }

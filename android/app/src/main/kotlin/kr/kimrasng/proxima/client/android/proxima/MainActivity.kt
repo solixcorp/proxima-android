@@ -12,6 +12,9 @@ import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.Debug
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -22,42 +25,110 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.ByteArrayOutputStream
-import java.util.UUID
 import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
     private lateinit var profiles: ProfileRepository
     private lateinit var settings: VpnSettingsRepository
+    private lateinit var mihomoSidecars: MihomoConfigSidecar
+    private val mihomoUploads = mutableMapOf<String, String>() // profile -> one-use capability
     private var eventSink: EventChannel.EventSink? = null
+    private var externalActionSink: EventChannel.EventSink? = null
+    private val pendingExternalConnect = PendingExternalConnect()
     private var permissionResult: MethodChannel.Result? = null
     private var importResult: MethodChannel.Result? = null
     private var exportResult: MethodChannel.Result? = null
     private var exportContent: String? = null
-    // Node probes are independent SOCKS routes. A single worker made the
-    // "measure all" button wait for every timeout one by one.
+    // Run independent node probes concurrently instead of serializing timeouts.
     private val coreWorker = Executors.newFixedThreadPool(8)
-    private val runtimeListener: (Map<String, Any?>) -> Unit = { value -> eventSink?.success(value) }
+    private data class PendingStart(val id: String, val profileId: String, val result: MethodChannel.Result, val timeout: Runnable)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var pendingStart: PendingStart? = null
+    private val runtimeListener: (Map<String, Any?>) -> Unit = { value ->
+        VpnRuntime.withCurrentEvent(value) {
+            eventSink?.success(value)
+            val pending = pendingStart
+            if (pending != null && value["requestId"] == pending.id) {
+                when (value["state"]) {
+                    "connected" -> {
+                        try {
+                            profiles.select(pending.profileId)
+                            finishStart()
+                        } catch (error: Throwable) {
+                            runCatching { startService(Intent(this, ProximaVpnService::class.java).setAction(ProximaVpnService.ACTION_STOP)) }
+                            finishStart("profile_select_failed", error.message ?: "프로필 선택 실패")
+                        }
+                    }
+                    "error" -> finishStart("vpn_start_failed", value["error"] as? String ?: "VPN 시작 실패")
+                    "disconnected", "disconnecting" -> finishStart("vpn_start_cancelled", "VPN 연결이 중단되었습니다.")
+                }
+            }
+        }
+    }
+
+    private fun finishStart(code: String? = null, message: String? = null) {
+        val pending = pendingStart ?: return
+        pendingStart = null
+        mainHandler.removeCallbacks(pending.timeout)
+        if (code != null) runCatching { mihomoSidecars.discard(pending.id) }
+        if (code == null) pending.result.success(null) else pending.result.error(code, message, null)
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (savedInstanceState?.getBoolean(STATE_PENDING_CONNECT) == true) pendingExternalConnect.request()
+        acceptExternalConnect(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        acceptExternalConnect(intent)
+    }
+
+    private fun acceptExternalConnect(intent: Intent?) {
+        val token = intent?.getStringExtra(ExternalConnectActivity.EXTRA_CONNECT_TOKEN)
+        intent?.removeExtra(ExternalConnectActivity.EXTRA_CONNECT_TOKEN)
+        if (ExternalConnectCapability.consume(token)) {
+            pendingExternalConnect.request()
+            externalActionSink?.success("connect")
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(STATE_PENDING_CONNECT, pendingExternalConnect.isPending())
+        super.onSaveInstanceState(outState)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         VpnRuntime.initialize(this)
         profiles = ProfileRepository(this)
         settings = VpnSettingsRepository(this)
+        mihomoSidecars = MihomoConfigSidecar(File(filesDir, "mihomo-configs"))
+        VpnRuntime.addListener(runtimeListener)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, METHOD_CHANNEL).setMethodCallHandler(this)
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENT_CHANNEL).setStreamHandler(this)
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, EXTERNAL_ACTION_CHANNEL).setStreamHandler(
+            object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                    externalActionSink = events
+                    if (pendingExternalConnect.isPending()) events.success("connect")
+                }
+                override fun onCancel(arguments: Any?) { externalActionSink = null }
+            },
+        )
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         try {
             when (call.method) {
                 "getState" -> result.success(VpnRuntime.snapshot())
+                "consumeExternalConnect" -> result.success(pendingExternalConnect.consume())
                 "listProfiles" -> result.success(profiles.list())
                 "readProfile" -> result.success(profiles.readContent(requiredString(call, "id")))
                 "saveProfile" -> {
                     val content = requiredString(call, "content")
-                    require(VlessRealityConfig.isGeneratedProfile(content)) {
-                        "VLESS 링크로 만든 프로필만 저장할 수 있습니다."
-                    }
                     result.success(
                         profiles.save(
                             id = call.argument("id"),
@@ -67,6 +138,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                             subscriptionInfo = call.argument<Map<*, *>>("subscriptionInfo")?.let(
                                 StoredSubscriptionInfo::fromMap,
                             ),
+                            admissionSummary = call.argument<Map<*, *>>("admissionSummary")?.let(StoredAdmissionSummary::fromMap),
                         ),
                     )
                 }
@@ -99,9 +171,54 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     result.success(null)
                 }
                 "validateProfile" -> validateProfile(requiredString(call, "content"), result)
+                "clearProxySelection" -> {
+                    settings.clearSelectedProxy(requiredString(call, "profileId"), requiredString(call, "group"))
+                    result.success(null)
+                }
+                "beginMihomoConfiguration" -> {
+                    val id = requiredString(call, "profileId")
+                    require(profiles.profile(id) != null) { "Profile not found" }
+                    // Any previous upload (including a cancelled preparation)
+                    // loses its capability before a fresh start is prepared.
+                    mihomoUploads.values.forEach(mihomoSidecars::discard)
+                    mihomoUploads.clear()
+                    val value = settings.load()
+                    val source = profiles.readContent(id)
+                    val settingsKey = MihomoConfigSidecar.settingsKey(value.mtu, value.ipv6, value.mode)
+                    require(MihomoConfiguration.digest(source.toByteArray(Charsets.UTF_8)) == requiredString(call, "sourceSha256") &&
+                        settingsKey == requiredString(call, "settingsKey")) { "Mihomo 조립 중 프로필/설정이 변경되었습니다. 다시 연결해 주세요." }
+                    val token = mihomoSidecars.begin(id, source, settingsKey,
+                        call.argument<Int>("size") ?: 0)
+                    mihomoUploads[id] = token
+                    result.success(token)
+                }
+                "appendMihomoConfiguration" -> {
+                    val token = requiredString(call, "token")
+                    require(token in mihomoUploads.values) { "Mihomo 설정 전송이 취소되었습니다." }
+                    mihomoSidecars.append(token, call.argument<Int>("offset") ?: -1,
+                        call.argument<ByteArray>("bytes") ?: byteArrayOf())
+                    result.success(null)
+                }
+                "finishMihomoConfiguration" -> {
+                    val token = requiredString(call, "token")
+                    require(token in mihomoUploads.values) { "Mihomo 설정 전송이 취소되었습니다." }
+                    mihomoSidecars.finish(token)
+                    result.success(null)
+                }
+                "discardMihomoConfiguration" -> {
+                    val token = requiredString(call, "token")
+                    mihomoSidecars.discard(token)
+                    mihomoUploads.entries.removeAll { it.value == token }
+                    result.success(null)
+                }
+                "discardPreparedMihomoConfiguration" -> {
+                    mihomoUploads.remove(requiredString(call, "profileId"))?.let(mihomoSidecars::discard)
+                    result.success(null)
+                }
                 "requestVpnPermission" -> requestVpnPermission(result)
                 "startVpn" -> startVpn(requiredString(call, "profileId"), result)
                 "stopVpn" -> {
+                    finishStart("vpn_start_cancelled", "VPN 연결이 중단되었습니다.")
                     startService(Intent(this, ProximaVpnService::class.java).setAction(ProximaVpnService.ACTION_STOP))
                     result.success(null)
                 }
@@ -125,7 +242,10 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 "getNetworkInfo" -> result.success(networkInfo())
                 "requestQuickSettingsTile" -> requestQuickSettingsTile(result)
                 "requestPinAppWidget" -> requestPinAppWidget(result)
-                "coreInfo" -> result.success(XrayCore.info(this))
+                "coreInfo" -> result.success(mapOf(
+                    "loaded" to (VpnRuntime.mihomoSession() != null),
+                    "coreVersion" to "Mihomo v1.19.33 (bundled)", "bridgeAbi" to "mihomo-worker-v3", "error" to null,
+                ))
                 "coreAction" -> invokeCore(
                     method = requiredString(call, "method"),
                     data = call.argument<String>("data") ?: "",
@@ -141,7 +261,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private fun validateProfile(content: String, result: MethodChannel.Result) {
         require(content.toByteArray(Charsets.UTF_8).size <= MAX_PROFILE_BYTES) { "프로필은 8MB보다 작아야 합니다." }
         runCatching {
-            XrayConfig.validate(content)
+            val value = settings.load()
+            MihomoRuntimeConfig(content.toByteArray(Charsets.UTF_8), value.mtu, value.ipv6)
         }.onSuccess { result.success(null) }
             .onFailure { result.success(it.message ?: "프로필을 검증하지 못했습니다.") }
     }
@@ -162,163 +283,76 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     }
 
     private fun startVpn(profileId: String, result: MethodChannel.Result) {
-        require(VpnService.prepare(this) == null) { "VPN permission is required" }
-        val profile = profiles.profile(profileId) ?: error("Profile not found")
-        require(VlessRealityConfig.isGeneratedProfile(profiles.readContent(profileId))) {
-            "VLESS 링크로 만든 프로필만 연결할 수 있습니다."
+        if (pendingStart != null) {
+            runCatching { startService(Intent(this, ProximaVpnService::class.java).setAction(ProximaVpnService.ACTION_STOP)) }
         }
-        profiles.select(profileId)
-        val state = VpnRuntime.snapshot()
-        val preserveSession = state["state"] in setOf("connected", "connecting") &&
-            (state["startedAt"] as? Long ?: 0L) > 0L
-        if (preserveSession) VpnRuntime.reconnecting(profile) else VpnRuntime.connecting(profile)
+        finishStart("vpn_start_superseded", "새 연결 요청으로 이전 요청이 취소되었습니다.")
+        require(VpnService.prepare(this) == null) { "VPN permission is required" }
+        require(profiles.profile(profileId) != null) { "Profile not found" }
+        val configToken = checkNotNull(mihomoUploads.remove(profileId)) { "Mihomo 설정 사이드카가 없습니다. 앱에서 다시 연결해 주세요." }
+            .also(mihomoSidecars::requireReady)
+        val timeout = Runnable {
+            if (pendingStart?.id == configToken) {
+                runCatching { startService(Intent(this, ProximaVpnService::class.java).setAction(ProximaVpnService.ACTION_STOP)) }
+                finishStart("vpn_start_timeout", "VPN 연결 시간이 초과되었습니다.")
+            }
+        }
+        pendingStart = PendingStart(configToken, profileId, result, timeout)
+        mainHandler.postDelayed(timeout, START_TIMEOUT_MS)
         val intent = Intent(this, ProximaVpnService::class.java)
             .setAction(ProximaVpnService.ACTION_START)
             .putExtra(ProximaVpnService.EXTRA_PROFILE_ID, profileId)
-        runCatching {
+            .putExtra(ProximaVpnService.EXTRA_MIHOMO_CONFIG, configToken)
+        try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
-        }.onFailure {
-            VpnRuntime.failed(profile, it.message ?: "VPN을 시작하지 못했습니다.")
-        }.getOrThrow()
-        result.success(null)
+        } catch (error: Throwable) {
+            mihomoSidecars.discard(configToken)
+            finishStart("vpn_start_failed", error.message ?: "VPN을 시작하지 못했습니다.")
+        }
     }
 
     private fun invokeCore(method: String, data: String, result: MethodChannel.Result) {
         require(VpnRuntime.snapshot()["state"] == "connected") { "VPN is not connected" }
+        // Capture the running capability before queueing. A delayed Mihomo
+        // request must never borrow a replacement session.
+        val mihomo = checkNotNull(VpnRuntime.mihomoSession()) { "Mihomo session is not running" }
         val operation = {
-            val payload: Any = when (method) {
-                "getProxies" -> currentProxyState()
-                "changeProxy" -> {
-                    changeProxy(data)
-                    JSONObject()
-                }
-                "updateConfig" -> {
-                    restartCurrentVpn()
-                    JSONObject()
-                }
-                "getConnections" -> recentConnections()
-                "getMemory" -> Debug.getPss().toLong() * 1024L
-                "queryExternalProviders" -> subscriptionProviders()
-                "testDelay" -> testDelay(data)
-                "closeConnection", "closeAllConnections" -> error("Xray는 개별 연결 종료를 지원하지 않습니다.")
-                "updateExternalProvider" -> error("Xray 구독은 프로필 탭에서 업데이트합니다.")
-                "probeCurrentProxyIp" -> probeCurrentProxyIp()
-                else -> error("지원하지 않는 코어 작업입니다: $method")
-            }
+            val payload: Any = invokeMihomo(mihomo, method, data)
             JSONObject().put("code", 0).put("data", payload).toString()
         }
-        if (method in setOf("testDelay", "probeCurrentProxyIp")) {
-            coreWorker.execute {
-                runCatching(operation)
-                    .onSuccess { payload -> runOnUiThread { result.success(payload) } }
-                    .onFailure { error -> runOnUiThread { result.error("core_action_error", error.message, null) } }
-            }
-        } else {
+        coreWorker.execute {
             runCatching(operation)
-                .onSuccess(result::success)
-                .onFailure { error -> result.error("core_action_error", error.message, null) }
+                .onSuccess { payload -> runOnUiThread { result.success(payload) } }
+                .onFailure { error -> runOnUiThread { result.error("core_action_error", error.message, null) } }
         }
     }
 
-    private fun currentProfile(): StoredProfile {
-        val profileId = VpnRuntime.snapshot()["profileId"] as? String
-            ?: error("연결 중인 프로필을 찾을 수 없습니다.")
-        return profiles.profile(profileId) ?: error("연결 중인 프로필을 찾을 수 없습니다.")
-    }
-
-    private fun currentProxyState(): JSONObject {
-        val profile = currentProfile()
-        return XrayConfig.proxyState(
-            profile = profile,
-            content = profiles.readContent(profile.id),
-            selected = settings.selectedProxies(profile.id),
-            activeNode = VpnRuntime.snapshot()["activeNode"] as? String,
-            activeMode = VpnRuntime.snapshot()["activeMode"] as? String,
-        )
-    }
-
-    private fun recentConnections(): JSONObject {
-        val runtime = VpnRuntime.snapshot()
-        return JSONObject()
-            .put("uploadTotal", runtime["totalUpload"] ?: 0)
-            .put("downloadTotal", runtime["totalDownload"] ?: 0)
-            .put(
-                "connections",
-                XrayConnectionLog.recent(
-                    path = VpnRuntime.accessLogPath(),
-                ),
-            )
-    }
-
-    private fun testDelay(data: String): Int {
-        val request = JSONObject(data)
-        val node = request.optString("proxy-name").trim()
-        require(node.isNotEmpty()) { "검사할 노드를 선택해 주세요." }
-        val port = VpnRuntime.probePort(node) ?: error("이 노드는 현재 Xray 검사 준비가 되지 않았습니다.")
-        return XrayProbe.delay(
-            port = port,
-            target = request.optString("test-url", "https://www.gstatic.com/generate_204"),
-            timeoutMillis = request.optInt("timeout", 3_000),
-        )
-    }
-
-    private fun probeCurrentProxyIp(): JSONObject {
-        val snapshot = VpnRuntime.snapshot()
-        val rulePort = if (snapshot["activeMode"] == "rule") {
-            VpnRuntime.probePort(XrayConfig.RULE_PROBE_KEY)
-        } else null
-        val port = rulePort ?: (snapshot["activeNode"] as? String)
-            ?.let(VpnRuntime::probePort)
-            ?: error("직접 연결 모드에서는 프록시 IP를 확인할 수 없습니다.")
-        return XrayProbe.publicIp(this, port)
-    }
-
-    private fun subscriptionProviders(): JSONArray = JSONArray().apply {
-        profiles.list().forEach { item ->
-            val source = item["sourceUrl"]?.toString()?.takeIf { it.isNotBlank() } ?: return@forEach
-            val id = item["id"]?.toString() ?: return@forEach
-            val count = runCatching { XrayConfig.nodeNames(profiles.profile(id)!!, profiles.readContent(id)).size }.getOrDefault(0)
-            put(
+    private fun invokeMihomo(session: MihomoVpnSession, method: String, data: String): Any {
+        check(VpnRuntime.mihomoSession() === session) { "Mihomo session was replaced" }
+        return when (method) {
+            "getProxies" -> session.proxyState()
+            "getConnections" -> session.connections()
+            "testDelay" -> {
+                val request = JSONObject(data)
+                session.delayTest(request.optString("proxy-name"),
+                    request.optString("test-url", "https://www.gstatic.com/generate_204"),
+                    request.optInt("timeout", 3_000))
+            }
+            "updateConfig" -> {
+                error("Mihomo 설정 변경은 앱의 Dart 조립 후 다시 연결해야 합니다.")
+            }
+            "changeProxy" -> {
+                val request = JSONObject(data)
+                require(request.optString("group-name") == "GLOBAL") { "지원하지 않는 선택 그룹입니다." }
+                session.select(request.getString("proxy-name"))
                 JSONObject()
-                    .put("name", item["name"]?.toString().orEmpty())
-                    .put("type", "subscription")
-                    .put("vehicle-type", "http")
-                    .put("count", count)
-                    .put("path", source),
-            )
+            }
+            "getMemory" -> Debug.getPss().toLong() * 1024L
+            "queryExternalProviders" -> JSONArray() // JNI has no provider inventory surface yet.
+            "probeCurrentProxyIp" -> error("Mihomo 공인 IP 검사는 Phase 3에서 지원합니다.")
+            "closeConnection", "closeAllConnections", "updateExternalProvider" -> error("Mihomo JNI가 지원하지 않는 작업입니다: $method")
+            else -> error("지원하지 않는 Mihomo 작업입니다: $method")
         }
-    }
-
-    private fun changeProxy(data: String) {
-        val profile = currentProfile()
-        val selection = JSONObject(data)
-        val group = selection.optString("group-name")
-        val proxy = selection.optString("proxy-name")
-        require(group == "GLOBAL") { "노드는 전역 모드에서만 직접 선택할 수 있습니다." }
-        require(proxy in XrayConfig.nodeNames(profile, profiles.readContent(profile.id))) {
-            "선택할 수 없는 노드입니다."
-        }
-        settings.saveSelectedProxy(profile.id, group, proxy)
-        restartVpn(profile.id)
-    }
-
-    private fun restartCurrentVpn() {
-        restartVpn(currentProfile().id)
-    }
-
-    private fun restartVpn(profileId: String) {
-        val profile = profiles.profile(profileId) ?: error("연결 중인 프로필을 찾을 수 없습니다.")
-        // Publish the transition before returning over MethodChannel so a
-        // second mode/node change cannot target the outgoing generation.
-        VpnRuntime.reconnecting(profile)
-        val intent = Intent(this, ProximaVpnService::class.java)
-            .setAction(ProximaVpnService.ACTION_START)
-            .putExtra(ProximaVpnService.EXTRA_PROFILE_ID, profileId)
-        runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
-        }.onFailure {
-            VpnRuntime.failed(profile, it.message ?: "VPN을 다시 시작하지 못했습니다.")
-        }.getOrThrow()
     }
 
     private fun pickProfileFile(result: MethodChannel.Result) {
@@ -481,17 +515,21 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
         eventSink = events
-        VpnRuntime.addListener(runtimeListener)
+        events.success(VpnRuntime.snapshot())
     }
 
     override fun onCancel(arguments: Any?) {
-        VpnRuntime.removeListener(runtimeListener)
         eventSink = null
     }
 
     override fun onDestroy() {
+        if (pendingStart != null) {
+            runCatching { startService(Intent(this, ProximaVpnService::class.java).setAction(ProximaVpnService.ACTION_STOP)) }
+            finishStart("activity_destroyed", "Activity was destroyed")
+        }
         VpnRuntime.removeListener(runtimeListener)
         eventSink = null
+        externalActionSink = null
         permissionResult?.error("activity_destroyed", "Activity was destroyed", null)
         permissionResult = null
         importResult?.error("activity_destroyed", "Activity was destroyed", null)
@@ -499,6 +537,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         importResult = null
         exportResult = null
         exportContent = null
+        mihomoUploads.values.forEach(mihomoSidecars::discard)
+        mihomoUploads.clear()
         coreWorker.shutdownNow()
         super.onDestroy()
     }
@@ -510,9 +550,12 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     companion object {
         private const val METHOD_CHANNEL = "proxima/vpn"
         private const val EVENT_CHANNEL = "proxima/vpn/events"
+        private const val EXTERNAL_ACTION_CHANNEL = "proxima/vpn/external_actions"
+        private const val STATE_PENDING_CONNECT = "pendingExternalConnect"
         private const val VPN_PERMISSION_REQUEST = 4107
         private const val IMPORT_PROFILE_REQUEST = 4108
         private const val EXPORT_PROFILE_REQUEST = 4109
         private const val MAX_PROFILE_BYTES = 8 * 1024 * 1024
+        private const val START_TIMEOUT_MS = 60_000L
     }
 }

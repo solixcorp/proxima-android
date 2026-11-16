@@ -1,0 +1,175 @@
+"""Discover and execute the production Kotlin boundary's host contract tests.
+
+Run from the repository root:
+    python3 -m unittest discover -s android/app/src/test -v
+
+Requires JDK 17/21 (JAVA_HOME is honored), and either kotlinc on PATH/KOTLINC
+or the repository's Kotlin 2.2.20 compiler artifacts in GRADLE_USER_HOME.
+Missing tooling fails the test; nothing is downloaded or silently skipped.
+This host entry point is deliberately independent of Android Gradle/CI wiring.
+It does not emulate Binder, load Android stubs, or prove device behavior.
+"""
+
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+
+class MihomoWorkerBoundaryHostTest(unittest.TestCase):
+    def test_vpn_runtime_generation_and_stale_events(self):
+        source = Path(__file__).resolve().parents[1]
+        package = Path("kotlin/kr/kimrasng/proxima/client/android/proxima")
+        self.run_host([
+            source / "main" / package / "VpnRuntimeTransitions.kt",
+            source / "test" / package / "VpnRuntimeTransitionsHostTest.kt",
+        ], "VpnRuntimeTransitionsHostTest", r"PASS VPN runtime generation and stale-event guards")
+
+    def test_lifecycle_authentication_configuration_and_descriptor_ownership(self):
+        source = Path(__file__).resolve().parents[1]
+        package = Path("kotlin/kr/kimrasng/proxima/client/android/proxima")
+        files = [
+            source / "main" / package / name
+            for name in (
+                "MihomoLeaseGate.kt",
+                "MihomoConfiguration.kt",
+                "MihomoWorkerHandshake.kt",
+            )
+        ]
+        files.append(source / "test" / package / "MihomoBoundaryHostTest.kt")
+        self.run_host(files, "MihomoBoundaryHostTest", r"PASS [1-9][0-9]* deterministic Mihomo boundary host tests")
+
+    def test_settings_persistence_and_defaults(self):
+        source = Path(__file__).resolve().parents[1]
+        package = Path("kotlin/kr/kimrasng/proxima/client/android/proxima")
+        files = [
+            source / "main" / package / "VpnSettingsRepository.kt",
+            source / "test" / package / "VpnSettingsHostTest.kt",
+            source / "test/fixtures/settings/Context.kt",
+            source / "test/fixtures/settings/JSONObject.kt",
+        ]
+        self.run_host(files, "VpnSettingsHostTest", r"PASS VpnSettings persistence and defaults")
+
+    def test_external_connect_and_legacy_subscription(self):
+        source = Path(__file__).resolve().parents[1]
+        package = Path("kotlin/kr/kimrasng/proxima/client/android/proxima")
+        files = [source / "main" / package / name for name in (
+            "ExternalConnectActivity.kt", "ProfileRepository.kt",
+        )]
+        files.append(source / "test" / package / "ExternalConnectHostTest.kt")
+        files.extend(sorted((source / "test/fixtures/external").glob("*.kt")))
+        self.run_host(files, "ExternalConnectHostTest", r"PASS external connect and legacy subscription marker")
+
+    def test_sidecar_consistency_death_and_join_order(self):
+        source = Path(__file__).resolve().parents[1]
+        package = Path("kotlin/kr/kimrasng/proxima/client/android/proxima")
+        files = [source / "main" / package / name for name in (
+            "MihomoProfileAssembler.kt", "MihomoConfiguration.kt", "MihomoLifecycle.kt", "MihomoLeaseGate.kt",
+            "MihomoConfigSidecar.kt",
+        )]
+        files.append(source / "test" / package / "MihomoRuntimeHostTest.kt")
+        self.run_host(files, "MihomoRuntimeHostTest", r"PASS [1-9][0-9]* deterministic Mihomo runtime host tests")
+
+    def test_android_wiring_keeps_isolation_and_direct_mihomo_start(self):
+        source = Path(__file__).resolve().parents[1]
+        package = source / "main/kotlin/kr/kimrasng/proxima/client/android/proxima"
+        service = (package / "ProximaVpnService.kt").read_text()
+        worker = (package / "MihomoWorkerService.kt").read_text()
+        boundary = (package / "MihomoWorkerBoundary.kt").read_text()
+        activity = (package / "MainActivity.kt").read_text()
+        self.assertIn("VpnRuntime.withCurrentEvent(value)", activity)
+        self.assertNotIn("VpnRuntime.connecting(", activity)
+        self.assertNotIn("VpnRuntime.reconnecting(", activity)
+        self.assertIn("VpnRuntime.disconnecting(requestId)", service)
+        self.assertIn("generation.ifCurrent(token)", service)
+        self.assertNotIn("NativeEngine", service)
+        self.assertNotIn("NativeEngine", activity)
+        self.assertIn("lease.engine.start(bytes, tunCopy.fd", worker)
+        self.assertIn("Process.killProcess(Process.myPid())", worker)
+        self.assertIn("binding.awaitRetired()", (package / "MihomoVpnSession.kt").read_text())
+        self.assertIn("closeMihomoTunnel(stopAndJoin", service)
+        self.assertIn("establishMihomo(profile, mihomoConfig, settings, fd, token, preserveSession, mihomoConfigToken)", service)
+        self.assertNotIn("settings.engine", service + activity)
+        self.assertIn("worker.linkToDeath(recipient, 0)", boundary)
+        self.assertIn("retired.observedDeath()", boundary)
+        self.assertNotIn("MihomoProfileAssembler.build", service + activity)
+        self.assertIn("MihomoConfigSidecar", service)
+        self.assertIn("mihomoConfigToken, profile.id, content", service)
+        self.assertIn("mihomoUploads.remove(profileId)", activity)
+        self.assertIn("beginMihomoConfiguration", activity)
+        session = (package / "MihomoVpnSession.kt").read_text()
+        self.assertIn("MihomoConfiguration.copyOf(config.bytes)", session)
+        transport = (package / "MihomoBinderTransport.kt").read_text()
+        self.assertIn("ParcelFileDescriptor.MODE_READ_ONLY", transport)
+        self.assertIn("check(file.delete())", transport)
+        self.assertIn("stat.st_size == size.toLong()", transport)
+        self.assertIn("actual == sha256", transport)
+        self.assertIn("const val SELECT = IBinder.FIRST_CALL_TRANSACTION + 6", transport)
+        self.assertIn("lease.engine.select(group, proxy)", worker)
+        self.assertIn("MihomoBinderTransport.SELECT", boundary)
+        self.assertIn('active().select("PROXY", proxy)', session)
+        self.assertIn("VpnRuntime.mihomoSelected(this, proxy)", session)
+        self.assertIn("MihomoProfileAssembler.verify(tun.opt", (package / "MihomoRuntimeConfig.kt").read_text())
+        manifest = (source / "main/AndroidManifest.xml").read_text()
+        self.assertIn('android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"\n                android:value="false"', manifest)
+
+    def run_host(self, files, test_class, expected):
+        java_home = os.environ.get("JAVA_HOME")
+        java = str(Path(java_home) / "bin/java") if java_home else shutil.which("java")
+        self.assertTrue(java, "JDK 17/21 is required; set JAVA_HOME")
+        compiler = os.environ.get("KOTLINC") or shutil.which("kotlinc")
+        main_class = f"kr.kimrasng.proxima.client.android.proxima.{test_class}"
+
+        def run(command):
+            result = subprocess.run(command, capture_output=True, text=True, timeout=180)
+            self.assertEqual(
+                result.returncode, 0,
+                f"Command failed: {' '.join(map(str, command))}\n{result.stdout}\n{result.stderr}",
+            )
+            return result.stdout
+
+        with tempfile.TemporaryDirectory(prefix="proxima-mihomo-host-") as output:
+            target = str(Path(output) / "boundary.jar")
+            if compiler:
+                run([
+                    compiler, "-Werror", "-jvm-target", "17", "-include-runtime",
+                    *map(str, files), "-d", target,
+                ])
+                runtime = target
+            else:
+                cache = Path(os.environ.get("GRADLE_USER_HOME", Path.home() / ".gradle"))
+                cache = cache / "caches/modules-2/files-2.1"
+                artifacts = (
+                    ("org.jetbrains.kotlin", "kotlin-compiler-embeddable", "2.2.20"),
+                    ("org.jetbrains.kotlin", "kotlin-stdlib", "2.2.20"),
+                    ("org.jetbrains.kotlin", "kotlin-script-runtime", "2.2.20"),
+                    ("org.jetbrains.kotlin", "kotlin-reflect", "1.6.10"),
+                    ("org.jetbrains.kotlin", "kotlin-daemon-embeddable", "2.2.20"),
+                    ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.8.0"),
+                    ("org.jetbrains", "annotations", "13.0"),
+                )
+                jars = []
+                for group, artifact, version in artifacts:
+                    matches = list((cache / group / artifact / version).glob(f"*/{artifact}-{version}.jar"))
+                    self.assertEqual(
+                        len(matches), 1,
+                        f"Missing or ambiguous cached {artifact}:{version}; install kotlinc 2.2.20",
+                    )
+                    jars.append(str(matches[0]))
+                run([
+                    java, "-cp", os.pathsep.join(jars),
+                    "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
+                    "-Werror", "-no-stdlib", "-no-reflect", "-jvm-target", "17",
+                    "-classpath", jars[1], *map(str, files), "-d", target,
+                ])
+                runtime = os.pathsep.join((target, jars[1]))
+            stdout = run([java, "-cp", runtime, main_class])
+            self.assertRegex(stdout, expected)
+            print("\n".join(line for line in stdout.splitlines() if not line.startswith("CONFIG ")))
+            return stdout
+
+
+if __name__ == "__main__":
+    unittest.main()

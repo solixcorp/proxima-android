@@ -66,7 +66,7 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
     }).toList();
     return AppPage(
       title: '연결',
-      subtitle: 'Xray가 최근 관찰한 목적지와 현재 경로를 확인합니다.',
+      subtitle: 'Mihomo의 활성 목적지와 현재 경로를 확인합니다.',
       onRefresh: controller.loadConnections,
       actions: [
         IconButton(
@@ -90,7 +90,7 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
                 children: [
                   Expanded(
                     child: _SummaryCard(
-                      label: '최근 Xray 연결',
+                      label: '활성 Mihomo 연결',
                       value:
                           '${controller.connectionOverview.connections.length}',
                     ),

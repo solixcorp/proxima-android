@@ -1,0 +1,335 @@
+//go:build go1.21
+
+package dialer
+
+import (
+	"context"
+	"net"
+	"os"
+	"sync"
+	"time"
+
+	"github.com/metacubex/tfo-go"
+)
+
+var DisableTFO = false
+
+type tfoConn struct {
+	mu            sync.Mutex
+	conn          net.Conn
+	closed        bool
+	started       bool
+	err           error
+	dialed        chan struct{}
+	cancel        context.CancelFunc
+	ctx           context.Context
+	dialFn        func(ctx context.Context, earlyData []byte) (net.Conn, error)
+	changed       chan struct{}
+	readDeadline  time.Time
+	writeDeadline time.Time
+	dialCtx       context.Context
+	dialCancel    context.CancelCauseFunc
+	writeTimer    *time.Timer
+}
+
+// wait enforces the current I/O deadline even before there is a socket.
+// Deadline changes wake existing waiters so extensions and clearing take effect.
+func (c *tfoConn) wait(read bool) (net.Conn, error) {
+	for {
+		c.mu.Lock()
+		if c.closed {
+			c.mu.Unlock()
+			return nil, net.ErrClosed
+		}
+		if c.conn != nil {
+			conn := c.conn
+			c.mu.Unlock()
+			return conn, nil
+		}
+		if c.err != nil {
+			err := c.err
+			c.mu.Unlock()
+			return nil, err
+		}
+		deadline := c.writeDeadline
+		if read {
+			deadline = c.readDeadline
+		}
+		if !deadline.IsZero() && !time.Now().Before(deadline) {
+			if !read && c.dialCancel != nil {
+				c.dialCancel(os.ErrDeadlineExceeded)
+			}
+			c.mu.Unlock()
+			return nil, os.ErrDeadlineExceeded
+		}
+		var dialDone <-chan struct{}
+		if c.dialCtx != nil {
+			if c.dialCtx.Err() != nil {
+				err := context.Cause(c.dialCtx)
+				c.mu.Unlock()
+				return nil, err
+			}
+			dialDone = c.dialCtx.Done()
+		}
+		changed := c.changed
+		c.mu.Unlock()
+
+		var timer *time.Timer
+		var expired <-chan time.Time
+		if !deadline.IsZero() {
+			timer = time.NewTimer(time.Until(deadline))
+			expired = timer.C
+		}
+		select {
+		case <-c.dialed:
+		case <-c.ctx.Done():
+		case <-dialDone:
+		case <-changed:
+		case <-expired:
+		}
+		if timer != nil {
+			timer.Stop()
+		}
+	}
+}
+
+// connect returns first=true only to the writer whose bytes were sent by
+// dialFn. All other writers wait for that result and write their own bytes.
+func (c *tfoConn) connect(earlyData []byte) (conn net.Conn, first bool, err error) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil, false, net.ErrClosed
+	}
+	if c.started {
+		c.mu.Unlock()
+		conn, err = c.wait(false)
+		return conn, false, err
+	}
+	if !c.writeDeadline.IsZero() && !time.Now().Before(c.writeDeadline) {
+		c.mu.Unlock()
+		return nil, false, os.ErrDeadlineExceeded
+	}
+	c.started = true
+	// The establishment budget starts with the first write, not at return
+	// from DialContext. Close and I/O deadlines own subsequent cancellation.
+	timeoutCtx, timeoutCancel := context.WithTimeout(c.ctx, DefaultTCPTimeout)
+	dialCtx, dialCancel := context.WithCancelCause(timeoutCtx)
+	c.dialCtx, c.dialCancel = dialCtx, dialCancel
+	c.armWriteDeadline()
+	close(c.changed)
+	c.changed = make(chan struct{})
+	// Write may return on a deadline while dialFn is still unwinding. The
+	// worker must not retain the caller's buffer after that return.
+	data := append([]byte(nil), earlyData...)
+	c.mu.Unlock()
+
+	go func() {
+		defer timeoutCancel()
+		defer dialCancel(nil)
+		c.establish(dialCtx, data)
+	}()
+	conn, err = c.wait(false)
+	return conn, true, err
+}
+
+func (c *tfoConn) establish(ctx context.Context, earlyData []byte) {
+	var conn net.Conn
+	err := ctx.Err()
+	if err == nil {
+		conn, err = c.dialFn(ctx, earlyData)
+	}
+	c.mu.Lock()
+	c.dialCancel = nil
+	c.armWriteDeadline()
+	if c.closed {
+		err = net.ErrClosed
+	} else if !c.writeDeadline.IsZero() && !time.Now().Before(c.writeDeadline) {
+		err = os.ErrDeadlineExceeded
+	} else if ctx.Err() != nil {
+		err = context.Cause(ctx)
+	}
+	if err == nil {
+		// Serialize deadline transfer with setters and publication. No setter
+		// can update the pending value and then lose it to an older snapshot.
+		err = conn.SetReadDeadline(c.readDeadline)
+		if err == nil {
+			err = conn.SetWriteDeadline(c.writeDeadline)
+		}
+	}
+	if err != nil {
+		c.err = err
+		c.mu.Unlock()
+		// A dial can finish successfully while Close/cancellation wins.
+		// That late connection was never published and remains ours to close.
+		if conn != nil {
+			_ = conn.Close()
+		}
+		close(c.dialed)
+		return
+	}
+	c.conn = conn
+	close(c.dialed)
+	c.mu.Unlock()
+}
+
+func (c *tfoConn) Dial(earlyData []byte) error {
+	_, _, err := c.connect(earlyData)
+	return err
+}
+
+func (c *tfoConn) Read(b []byte) (int, error) {
+	conn, err := c.wait(true)
+	if err != nil {
+		return 0, err
+	}
+	return conn.Read(b)
+}
+
+func (c *tfoConn) Write(b []byte) (int, error) {
+	conn, first, err := c.connect(b)
+	if err != nil {
+		return 0, err
+	}
+	if first {
+		return len(b), nil
+	}
+	return conn.Write(b)
+}
+
+func (c *tfoConn) Close() error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	c.dialCancel = nil
+	c.armWriteDeadline()
+	conn := c.conn
+	c.mu.Unlock()
+	c.cancel()
+	if conn != nil {
+		return conn.Close()
+	}
+	return nil
+}
+
+func (c *tfoConn) upstream() net.Conn {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn
+}
+
+func (c *tfoConn) LocalAddr() net.Addr {
+	if conn := c.upstream(); conn != nil {
+		return conn.LocalAddr()
+	}
+	return &net.TCPAddr{}
+}
+
+func (c *tfoConn) RemoteAddr() net.Addr {
+	if conn := c.upstream(); conn != nil {
+		return conn.RemoteAddr()
+	}
+	return &net.TCPAddr{}
+}
+
+func (c *tfoConn) SetDeadline(t time.Time) error {
+	return c.setDeadline(t, true, true)
+}
+
+func (c *tfoConn) SetReadDeadline(t time.Time) error {
+	return c.setDeadline(t, true, false)
+}
+
+func (c *tfoConn) SetWriteDeadline(t time.Time) error {
+	return c.setDeadline(t, false, true)
+}
+
+func (c *tfoConn) setDeadline(t time.Time, read, write bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return net.ErrClosed
+	}
+	if read {
+		c.readDeadline = t
+	}
+	if write {
+		c.writeDeadline = t
+		c.armWriteDeadline()
+	}
+	close(c.changed)
+	c.changed = make(chan struct{})
+	if c.conn != nil {
+		switch {
+		case read && write:
+			return c.conn.SetDeadline(t)
+		case read:
+			return c.conn.SetReadDeadline(t)
+		default:
+			return c.conn.SetWriteDeadline(t)
+		}
+	}
+	return nil
+}
+
+// armWriteDeadline is called with mu held. An obsolete timer cannot cancel a
+// dial after its deadline was extended or cleared.
+func (c *tfoConn) armWriteDeadline() {
+	if c.writeTimer != nil {
+		c.writeTimer.Stop()
+		c.writeTimer = nil
+	}
+	if c.dialCancel == nil || c.writeDeadline.IsZero() {
+		return
+	}
+	deadline := c.writeDeadline
+	c.writeTimer = time.AfterFunc(time.Until(deadline), func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.dialCancel != nil && c.writeDeadline.Equal(deadline) && !time.Now().Before(deadline) {
+			c.dialCancel(os.ErrDeadlineExceeded)
+		}
+	})
+}
+
+func (c *tfoConn) Upstream() any {
+	return c.upstream()
+}
+
+func (c *tfoConn) NeedAdditionalReadDeadline() bool {
+	return c.upstream() == nil
+}
+
+func (c *tfoConn) NeedHandshake() bool {
+	return c.upstream() == nil
+}
+
+func (c *tfoConn) ReaderReplaceable() bool {
+	return c.upstream() != nil
+}
+
+func (c *tfoConn) WriterReplaceable() bool {
+	return c.upstream() != nil
+}
+
+func dialTFO(ctx context.Context, netDialer net.Dialer, network, address string) (net.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Keep caller values, but successful return ends the caller's dial
+	// context ownership. The returned connection now owns its lifetime.
+	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	dialer := tfo.Dialer{Dialer: netDialer, DisableTFO: false}
+	return &tfoConn{
+		dialed:  make(chan struct{}),
+		changed: make(chan struct{}),
+		cancel:  cancel,
+		ctx:     ctx,
+		dialFn: func(ctx context.Context, earlyData []byte) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, address, earlyData)
+		},
+	}, nil
+}

@@ -17,6 +17,7 @@ data class NativeVpnSnapshot(
     val activeNode: String? = null,
     val activeMode: String? = null,
     val error: String? = null,
+    val requestId: String? = null,
 ) {
     fun asMap(): Map<String, Any?> = mapOf(
         "state" to state,
@@ -30,6 +31,7 @@ data class NativeVpnSnapshot(
         "activeNode" to activeNode,
         "activeMode" to activeMode,
         "error" to error,
+        "requestId" to requestId,
     )
 }
 
@@ -43,17 +45,34 @@ object VpnRuntime {
     @Volatile
     private var current = NativeVpnSnapshot()
 
-    @Volatile
-    private var probePorts: Map<String, Int> = emptyMap()
+    @Volatile private var mihomo: MihomoVpnSession? = null
 
-    @Volatile
-    private var accessLogPath: String? = null
+    fun setMihomoSession(session: MihomoVpnSession?) {
+        mihomo = session
+    }
+
+    fun mihomoSession(): MihomoVpnSession? = mihomo
+
+    fun mihomoSelected(session: MihomoVpnSession, node: String) {
+        mainHandler.post {
+            synchronized(this) {
+                if (mihomo === session && current.state == "connected") {
+                    publish(current.copy(activeNode = node))
+                }
+            }
+        }
+    }
 
     fun initialize(context: Context) {
         appContext = context.applicationContext
     }
 
     fun snapshot(): Map<String, Any?> = current.asMap()
+
+    @Synchronized
+    fun withCurrentEvent(event: Map<String, Any?>, action: () -> Unit) {
+        if (currentVpnEvent(event, current.asMap())) action()
+    }
 
     fun addListener(listener: (Map<String, Any?>) -> Unit) {
         listeners.add(listener)
@@ -64,11 +83,11 @@ object VpnRuntime {
         listeners.remove(listener)
     }
 
-    fun connecting(profile: StoredProfile) = publish(
-        NativeVpnSnapshot(state = "connecting", profileId = profile.id, profileName = profile.name),
+    @Synchronized fun connecting(profile: StoredProfile, requestId: String? = null) = publish(
+        NativeVpnSnapshot(state = "connecting", profileId = profile.id, profileName = profile.name, requestId = requestId),
     )
 
-    fun reconnecting(profile: StoredProfile) = publish(
+    @Synchronized fun reconnecting(profile: StoredProfile, requestId: String? = null) = publish(
         current.copy(
             state = "connecting",
             profileId = profile.id,
@@ -76,14 +95,16 @@ object VpnRuntime {
             uploadSpeed = 0,
             downloadSpeed = 0,
             error = null,
+            requestId = requestId,
         ),
     )
 
-    fun connected(
+    @Synchronized fun connected(
         profile: StoredProfile,
         activeNode: String?,
         activeMode: String,
         preserveSession: Boolean = false,
+        requestId: String? = null,
     ) = publish(
         if (preserveSession && current.startedAt > 0) {
             current.copy(
@@ -95,6 +116,7 @@ object VpnRuntime {
                 activeNode = activeNode,
                 activeMode = activeMode,
                 error = null,
+                requestId = requestId,
             )
         } else {
             NativeVpnSnapshot(
@@ -104,46 +126,28 @@ object VpnRuntime {
                 startedAt = System.currentTimeMillis(),
                 activeNode = activeNode,
                 activeMode = activeMode,
+                requestId = requestId,
             )
         },
     )
 
-    fun setProbePorts(value: Map<String, Int>) {
-        probePorts = value.toMap()
+    @Synchronized fun disconnecting(requestId: String?) = publish(current.copy(state = "disconnecting", error = null, requestId = requestId))
+
+    @Synchronized fun disconnected(requestId: String? = null) {
+        publish(NativeVpnSnapshot(requestId = requestId))
     }
 
-    fun probePort(node: String): Int? = probePorts[node]
-
-    fun clearProbePorts() {
-        probePorts = emptyMap()
-    }
-
-    fun setAccessLogPath(path: String?) {
-        accessLogPath = path
-    }
-
-    fun accessLogPath(): String? = accessLogPath
-
-    fun disconnecting() = publish(current.copy(state = "disconnecting", error = null))
-
-    fun disconnected() {
-        clearProbePorts()
-        setAccessLogPath(null)
-        publish(NativeVpnSnapshot())
-    }
-
-    fun failed(profile: StoredProfile?, message: String) {
-        clearProbePorts()
-        setAccessLogPath(null)
+    @Synchronized fun failed(profile: StoredProfile?, message: String, requestId: String? = null) {
         publish(NativeVpnSnapshot(
             state = "error",
             profileId = profile?.id,
             profileName = profile?.name,
             error = message,
+            requestId = requestId,
         ))
     }
 
-    fun traffic(up: Long, down: Long, totalUp: Long, totalDown: Long) {
+    @Synchronized fun traffic(up: Long, down: Long, totalUp: Long, totalDown: Long) {
         if (current.state != "connected") return
         publish(
             current.copy(
@@ -155,7 +159,7 @@ object VpnRuntime {
         )
     }
 
-    private fun publish(snapshot: NativeVpnSnapshot) {
+    @Synchronized private fun publish(snapshot: NativeVpnSnapshot) {
         current = snapshot
         val value = snapshot.asMap()
         mainHandler.post {

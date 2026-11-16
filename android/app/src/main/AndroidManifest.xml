@@ -34,6 +34,7 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <activity android:name=".ExternalConnectActivity" android:exported="false" />
         <service
             android:name=".ProximaVpnService"
             android:exported="false"
@@ -47,8 +48,12 @@
                 android:value="false" />
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Routes user-selected traffic through an on-device Xray VPN tunnel" />
+                android:value="Routes user-selected traffic through an on-device Mihomo VPN tunnel" />
         </service>
+        <service
+            android:name=".MihomoWorkerService"
+            android:exported="false"
+            android:process=":mihomo" />
         <service
             android:name=".ProximaTileService"
             android:exported="true"

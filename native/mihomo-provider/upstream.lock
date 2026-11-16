@@ -1,0 +1,5 @@
+repository=https://github.com/MetaCubeX/mihomo.git
+version=v1.19.33
+commit=3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8
+sum=h1:hwqYMItk3Jaeq8Sw2PBAtyHQh157ccUtWS7rXrBOMCU=
+go=go1.27.1
