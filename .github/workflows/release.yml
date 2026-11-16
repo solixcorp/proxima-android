@@ -232,7 +232,7 @@ jobs:
               raise SystemExit('APK size limit exceeded')
           PY
 
-      - name: Verify APK alignment and release signer
+      - name: Verify APK alignment, release signer and JNI bridge
         env:
           APK: build/app/outputs/flutter-apk/${{ github.event.repository.name }}-v${{ steps.release_version.outputs.BUILD_NAME }}.apk
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}

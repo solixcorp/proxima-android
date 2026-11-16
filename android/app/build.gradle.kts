@@ -53,6 +53,10 @@ android {
         release {
             // Without credentials, local release builds are unsigned, never debug-signed.
             signingConfig = releaseSigning
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 

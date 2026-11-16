@@ -64,6 +64,13 @@ JDK 17로 `cd android && ./gradlew :app:assembleDebug` 후 테스트 기기에�
 - 재연결·갱신 PASS: Hysteria2를 선택한 상태로 연결 해제·재연결한 뒤 선택이 유지됐다. 이전 IP 결과가 비어 있음을 확인하고 새로 수행한 앱의 IP 조회가 성공했다. VPN 연결 중 HTTP 구독 수동 갱신도 200 응답으로 성공하고 프로필 재적용 뒤 연결이 유지됐다. 규칙 모드로 전환한 뒤 앱의 IP 조회, 다른 도메인의 시스템 주소 해석 및 Chrome의 일반 HTTPS 페이지 로드도 성공했다.
 - 호스트 회귀 PASS: Flutter 전체 356개 통과·기존 4개 스킵 및 정적 분석 통과, 마지막 HTTP QR 보완 후 해당 회귀 6개도 재통과. Android 호스트 검사와 저장소 루트 `JAVA_HOME=<JDK 17> bash build.sh test`의 7개 네이티브 모듈 Go vet/race·JVM/JNI 검사가 모두 통과했다. 실제 기기의 네트워크 전환·누수·장시간 배터리 검사는 미실행이다.
 
+## 2026-11-16 릴리즈 난독화 회귀 검증
+
+- 서명된 릴리즈 APK의 실제 Android 실행에서 `NativeEngine.handle` JNI 필드 조회 실패를 발견했다. R8이 네이티브 코드에서 이름으로 조회하는 필드와 `Protector.protect(int)` 콜백을 제거한 것이 원인이며 debug·호스트 JNI 검사에서는 재현되지 않았다.
+- 앱 전체 난독화를 끄지 않고 엔진 JNI 클래스·필드·네이티브 메서드와 보호 콜백만 보존하도록 release ProGuard 규칙을 추가했다.
+- 게시 전 최종 APK의 모든 DEX에서 JNI 계약을 검사하는 게이트를 추가했다. 실제 문제가 있던 APK를 거부하고 수정한 최적화 APK를 통과시키는 것을 확인했다. 서명·JNI 검증기 단위 테스트 9개도 통과했다.
+- 수정한 최적화 release APK를 로컬 테스트 키로 서명해 격리 에뮬레이터에 설치했다. Hysteria2와 REALITY 각각에서 VPN 시작, 실제 GeoJS HTTPS 요청과 서버별 출구 IP가 정상이며, 연결 해제·재연결도 성공했다. 배포 키 서명 APK의 최종 검증은 릴리즈 작업에서 별도로 수행한다.
+
 ## 릴리즈 서명
 
 CI는 `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`를 사용하고 APK 서명자가 지정 keystore 인증서와 일치하는지 발행 전에 확인한다. Build Tools 36.0.0을 고정하고, 검증기는 36의 `Signer #1` 형식과 37의 `V2 Signer` 등 서명 방식별 형식을 모두 처리한다. 빈 결과·다른 인증서·복수 서명자·서명 방식 간 인증서 불일치는 거부한다. 로컬에서 실제 APK를 임시 키로 서명하여 두 도구 버전에서 정상 인증서 통과, 다른 키 및 무서명 APK 거부를 검증했다.
