@@ -536,6 +536,40 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  for (final entry in {
+    'Trojan': 'trojan://secret@example.com:443#node',
+    'Clash YAML':
+        'proxies:\n  - {name: node, type: socks5, server: example.com, port: 1080}\n',
+  }.entries) {
+    testWidgets('adds ${entry.key} through the shared profile editor', (
+      tester,
+    ) async {
+      final bridge = _AccountImportBridge()..savedProfiles.clear();
+      final controller = AppController(bridge);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await tester.pumpWidget(
+        MaterialApp(home: ProfilesScreen(controller: controller)),
+      );
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+      expect(find.text('VLESS 링크'), findsNothing);
+      await tester.tap(find.text('공유 링크 · YAML'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, entry.key);
+      await tester.enterText(find.byType(TextField).last, entry.value);
+      await tester.ensureVisible(find.text('검증 후 저장'));
+      await tester.tap(find.text('검증 후 저장'));
+      await tester.pumpAndSettle();
+
+      expect(bridge.profileContent, entry.value);
+      expect(controller.profiles.single.name, entry.key);
+      expect(find.byType(BottomSheet), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
   testWidgets('profile save stays reachable above the keyboard', (
     tester,
   ) async {
@@ -552,7 +586,7 @@ void main() {
     );
     await tester.tap(find.byType(FloatingActionButton));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('URL'));
+    await tester.tap(find.text('구독 URL'));
     await tester.pumpAndSettle();
     await tester.tap(find.byType(TextField).last);
     tester.view.viewInsets = const FakeViewPadding(bottom: 220);
@@ -1694,6 +1728,113 @@ rules:
     expect(result.content, link);
     expect(result.sourceUrl, isNull);
     expect(result.subscriptionInfo, isNull);
+  });
+
+  test('admits supported QR share links without fetching', () async {
+    final vmess = base64UrlEncode(
+      utf8.encode(
+        jsonEncode({
+          'v': '2',
+          'ps': 'node',
+          'add': 'example.com',
+          'port': '443',
+          'id': '12345678-1234-1234-1234-123456789abc',
+          'aid': '0',
+          'net': 'ws',
+          'path': '/ws',
+          'tls': 'tls',
+        }),
+      ),
+    ).replaceAll('=', '');
+    final controller = AppController(_FakeBridge());
+    for (final link in [
+      'http://u:p@example.com:8080',
+      'socks5://u:p@example.com:1080',
+      'trojan://secret@example.com:443?type=grpc&serviceName=svc',
+      'vmess://$vmess',
+      'hysteria2://secret@example.com:443?obfs=salamander&obfs-password=pw',
+    ]) {
+      final result = await controller.resolveQrPayload(
+        link,
+        subscriptionFetcher: (_) => throw StateError('must not fetch'),
+      );
+      expect(result.content, link);
+      expect(result.sourceUrl, isNull);
+    }
+  });
+
+  test('decodes embedded and wrapped QR links without fetching', () async {
+    const link = 'trojan://secret@example.com:443#node';
+    const vless =
+        'vless://12345678-1234-1234-1234-123456789abc@example.com:443?security=tls#node';
+    final wrapped = base64UrlEncode(utf8.encode(link)).replaceAll('=', '');
+    final controller = AppController(_FakeBridge());
+    for (final entry in {
+      wrapped: link,
+      'https://example.com/landing?link=${Uri.encodeQueryComponent(link)}':
+          link,
+      'https://example.com/landing#${Uri.encodeComponent(wrapped)}': link,
+      base64UrlEncode(utf8.encode(vless)).replaceAll('=', ''): vless,
+    }.entries) {
+      final result = await controller.resolveQrPayload(
+        entry.key,
+        subscriptionFetcher: (_) => throw StateError('must not fetch'),
+      );
+      expect(result.content, entry.value);
+      expect(result.sourceUrl, isNull);
+    }
+  });
+
+  test('rejects invalid QR profiles and empty subscriptions', () async {
+    final controller = AppController(_FakeBridge());
+    for (final value in [
+      'vmess://bad!',
+      'hysteria2://pw@example.com:443?insecure=1',
+      'not a profile',
+    ]) {
+      await expectLater(
+        controller.resolveQrPayload(
+          value,
+          subscriptionFetcher: (_) => throw StateError('must not fetch'),
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('프로필'),
+          ),
+        ),
+      );
+    }
+    await expectLater(
+      controller.resolveQrPayload(
+        'https://example.com/sub',
+        subscriptionFetcher: (_) async =>
+            const SubscriptionFetchResult(content: 'invalid'),
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('노드'),
+        ),
+      ),
+    );
+  });
+
+  test('keeps admitted YAML QR content including routing rules', () async {
+    const yaml = '''
+proxies:
+  - {name: node, type: http, server: example.com, port: 8080}
+rules:
+  - MATCH,node
+''';
+    final result = await AppController(_FakeBridge()).resolveQrPayload(
+      yaml,
+      subscriptionFetcher: (_) => throw StateError('must not fetch'),
+    );
+    expect(result.content, yaml.trim());
+    expect(result.sourceUrl, isNull);
   });
 
   test('preserves the URL and headers of a subscription QR payload', () async {

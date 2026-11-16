@@ -106,7 +106,7 @@ class ProfilesScreen extends StatelessWidget {
             children: [
               ListTile(
                 leading: const Icon(Icons.link_rounded),
-                title: const Text('URL'),
+                title: const Text('구독 URL'),
                 subtitle: const Text('HTTPS 구독 주소에서 노드를 가져옵니다.'),
                 onTap: () {
                   Navigator.pop(sheetContext);
@@ -115,8 +115,10 @@ class ProfilesScreen extends StatelessWidget {
               ),
               ListTile(
                 leading: const Icon(Icons.vpn_key_outlined),
-                title: const Text('VLESS 링크'),
-                subtitle: const Text('공유 링크 또는 여러 링크를 붙여넣습니다.'),
+                title: const Text('공유 링크 · YAML'),
+                subtitle: const Text(
+                  'VLESS, VMess, SS, Trojan 등 공유 링크나 Clash YAML을 붙여넣습니다.',
+                ),
                 onTap: () {
                   Navigator.pop(sheetContext);
                   _openEditor(context, entryMode: _ProfileEntryMode.link);
@@ -125,7 +127,7 @@ class ProfilesScreen extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.qr_code_scanner_rounded),
                 title: const Text('QR 코드 스캔'),
-                subtitle: const Text('카메라로 VLESS 링크를 읽습니다.'),
+                subtitle: const Text('공유 링크 또는 HTTPS 구독 주소를 읽습니다.'),
                 onTap: () {
                   Navigator.pop(sheetContext);
                   _scanQr(context);
@@ -134,7 +136,7 @@ class ProfilesScreen extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.file_open_outlined),
                 title: const Text('파일'),
-                subtitle: const Text('저장된 VLESS 링크 파일을 가져옵니다.'),
+                subtitle: const Text('공유 링크나 Clash YAML 파일을 가져옵니다.'),
                 onTap: () {
                   Navigator.pop(sheetContext);
                   _import(context);
@@ -243,7 +245,7 @@ class ProfilesScreen extends StatelessWidget {
                   key: ValueKey('empty-profiles'),
                   icon: Icons.description_outlined,
                   title: '저장된 프로필이 없습니다',
-                  message: 'VLESS 링크를 붙여넣거나 파일에서 가져오세요.',
+                  message: '공유 링크·Clash YAML을 붙여넣거나 구독 URL·QR·파일로 가져오세요.',
                 )
               : Column(
                   key: const ValueKey('profile-list'),
@@ -456,7 +458,7 @@ class _ProfileEditorState extends State<_ProfileEditor> {
         subscriptionInfo = subscription.info ?? const SubscriptionInfo();
       }
       if (content.trim().isEmpty) {
-        throw const FormatException('VLESS 링크 또는 구독 주소가 필요합니다.');
+        throw const FormatException('공유 링크, Clash YAML 또는 HTTPS 구독 주소가 필요합니다.');
       }
       await widget.controller.saveProfile(
         id: widget.profile?.id,
@@ -528,8 +530,11 @@ class _ProfileEditorState extends State<_ProfileEditor> {
                   ),
                   decoration: InputDecoration(
                     labelText: '공유 링크 또는 Clash YAML',
+                    helperText:
+                        'VLESS · VMess · SS/SSR · Trojan · Hysteria/2 · TUIC · WireGuard · SOCKS5 · HTTP',
+                    helperMaxLines: 3,
                     hintText:
-                        'vless://uuid@server:8080?security=none&type=ws&path=%2F\n'
+                        '지원되는 공유 링크 또는 Clash YAML을 입력하세요.\n'
                         '여러 노드는 줄바꿈으로 붙여넣을 수 있습니다.\n'
                         '선택: DOMAIN-SUFFIX,example.com,노드 이름\n'
                         '선택: IP-CIDR,203.0.113.0/24,노드 이름',

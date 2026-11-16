@@ -684,30 +684,52 @@ class AppController extends ChangeNotifier {
     subscriptionFetcher,
   }) async {
     final payload = value.trim();
-    try {
-      return QrProfileResult(
-        content: VlessRealityProfile.normalizeLinkInput(payload),
-      );
-    } on FormatException {
-      // A QR may contain a landing/subscription URL instead of the link itself.
+    String? admittedContent(String input) {
+      final candidate = input.trim();
+      final uri = Uri.tryParse(candidate);
+      // HTTPS URLs are subscription endpoints, not local proxy content.
+      if (uri?.scheme.toLowerCase() == 'https' && uri!.host.isNotEmpty) {
+        return null;
+      }
+      var decoded = candidate;
+      if (!candidate.contains('://')) {
+        try {
+          final compact = candidate.replaceAll(RegExp(r'\s'), '');
+          decoded = utf8.decode(base64Url.decode(base64Url.normalize(compact)));
+        } on FormatException {
+          // It may instead be YAML or invalid input.
+        }
+      }
+      final preview = MihomoConfigAssembly.preview(decoded);
+      if (preview.proxies.isEmpty) return null;
+      if (decoded.trimLeft().toLowerCase().startsWith('vless://')) {
+        try {
+          final normalized = VlessRealityProfile.normalizeLinkInput(candidate);
+          if (MihomoConfigAssembly.preview(normalized).proxies.length ==
+              preview.proxies.length) {
+            return normalized;
+          }
+        } on FormatException {
+          // Other admitted formats remain intact.
+        }
+      }
+      return decoded;
     }
+
+    final direct = admittedContent(payload);
+    if (direct != null) return QrProfileResult(content: direct);
 
     final uri = Uri.tryParse(payload);
     if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
-      throw const FormatException('이 QR 코드에서 VLESS 정보를 찾지 못했습니다.');
+      throw const FormatException('이 QR 코드에서 지원하는 프로필을 찾지 못했습니다.');
     }
 
     // Preserve the existing behavior for landing URLs that embed the actual
-    // VLESS payload in a query parameter or fragment.
+    // profile payload in a query parameter or fragment.
     for (final candidate in [...uri.queryParameters.values, uri.fragment]) {
       if (candidate.isEmpty) continue;
-      try {
-        return QrProfileResult(
-          content: VlessRealityProfile.normalizeLinkInput(candidate),
-        );
-      } on FormatException {
-        // Try the next parameter, then the URL as a subscription endpoint.
-      }
+      final content = admittedContent(candidate);
+      if (content != null) return QrProfileResult(content: content);
     }
 
     final subscription =
@@ -716,7 +738,7 @@ class AppController extends ChangeNotifier {
         .proxies
         .isNotEmpty;
     if (!hasNodes) {
-      throw const FormatException('구독에서 VLESS 노드를 찾지 못했습니다.');
+      throw const FormatException('구독에서 지원하는 노드를 찾지 못했습니다.');
     }
     return QrProfileResult(
       content: subscription.content,

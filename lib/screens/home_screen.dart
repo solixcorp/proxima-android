@@ -76,7 +76,7 @@ class HomeScreen extends StatelessWidget {
     };
     return AppPage(
       title: 'Proxima',
-      subtitle: 'VLESS Android VPN 클라이언트',
+      subtitle: 'Mihomo Android VPN 클라이언트',
       onRefresh: () async {
         await controller.reloadProfiles();
         if (controller.settings.mode != OutboundMode.direct) {
