@@ -24,6 +24,22 @@ class SubscriptionFetchResult {
   final SubscriptionInfo? info;
 }
 
+bool _validSubscriptionUrl(Uri? uri) =>
+    uri != null &&
+    (uri.scheme == 'http' || uri.scheme == 'https') &&
+    uri.host.isNotEmpty &&
+    uri.userInfo.isEmpty;
+
+// An HTTP authority (including a trailing slash) is ambiguous with a proxy
+// share link; retain its existing proxy interpretation. A non-root path or
+// query identifies HTTP subscriptions in QR payloads.
+bool _looksLikeSubscriptionUrl(Uri? uri) =>
+    uri != null &&
+    (uri.scheme == 'https' ||
+        (uri.scheme == 'http' &&
+            uri.userInfo.isEmpty &&
+            ((uri.path.isNotEmpty && uri.path != '/') || uri.hasQuery)));
+
 class AppController extends ChangeNotifier {
   AppController(this.bridge);
 
@@ -652,6 +668,7 @@ class AppController extends ChangeNotifier {
     String source, {
     String? planName,
   }) async {
+    source = source.trim();
     if (snapshot.isBusy) {
       throw StateError('연결 상태가 바뀐 뒤 구독을 가져와 주세요.');
     }
@@ -691,22 +708,25 @@ class AppController extends ChangeNotifier {
     Future<SubscriptionFetchResult> Function(String source)?
     subscriptionFetcher,
   }) async {
-    final payload = value.trim();
-    String? admittedContent(String input) {
+    String decodePayload(String input) {
       final candidate = input.trim();
-      final uri = Uri.tryParse(candidate);
-      // HTTPS URLs are subscription endpoints, not local proxy content.
-      if (uri?.scheme.toLowerCase() == 'https' && uri!.host.isNotEmpty) {
-        return null;
+      if (candidate.contains('://')) return candidate;
+      try {
+        final compact = candidate.replaceAll(RegExp(r'\s'), '');
+        return utf8
+            .decode(base64Url.decode(base64Url.normalize(compact)))
+            .trim();
+      } on FormatException {
+        return candidate;
       }
-      var decoded = candidate;
-      if (!candidate.contains('://')) {
-        try {
-          final compact = candidate.replaceAll(RegExp(r'\s'), '');
-          decoded = utf8.decode(base64Url.decode(base64Url.normalize(compact)));
-        } on FormatException {
-          // It may instead be YAML or invalid input.
-        }
+    }
+
+    final payload = decodePayload(value);
+    String? admittedContent(String input) {
+      final decoded = decodePayload(input);
+      final uri = Uri.tryParse(decoded);
+      if (_looksLikeSubscriptionUrl(uri)) {
+        return null;
       }
       final preview = MihomoConfigAssembly.preview(decoded);
       if (preview.proxies.isEmpty) return null;
@@ -717,13 +737,13 @@ class AppController extends ChangeNotifier {
     if (direct != null) return QrProfileResult(content: direct);
 
     final uri = Uri.tryParse(payload);
-    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
+    if (!_validSubscriptionUrl(uri) || !_looksLikeSubscriptionUrl(uri)) {
       throw const FormatException('이 QR 코드에서 지원하는 프로필을 찾지 못했습니다.');
     }
 
     // Preserve the existing behavior for landing URLs that embed the actual
     // profile payload in a query parameter or fragment.
-    for (final candidate in [...uri.queryParameters.values, uri.fragment]) {
+    for (final candidate in [...uri!.queryParameters.values, uri.fragment]) {
       if (candidate.isEmpty) continue;
       final content = admittedContent(candidate);
       if (content != null) return QrProfileResult(content: content);
@@ -747,29 +767,31 @@ class AppController extends ChangeNotifier {
   Future<SubscriptionFetchResult> fetchSubscriptionDetails(
     String source,
   ) async {
-    final uri = Uri.tryParse(source);
-    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
-      throw const FormatException('HTTPS 구독 주소를 입력해 주세요.');
+    final uri = Uri.tryParse(source.trim());
+    if (!_validSubscriptionUrl(uri)) {
+      throw const FormatException('HTTP 또는 HTTPS 구독 주소를 입력해 주세요.');
     }
+    final subscriptionUri = uri!;
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 15);
     try {
       final userAgent = await proximaUserAgent();
       if (kDebugMode) {
         debugPrint(
-          '[subscription-import] stage=subscription host=${uri.host} '
+          '[subscription-import] stage=subscription host=${subscriptionUri.host} '
           'userAgent=$userAgent',
         );
       }
       return await fetchPreferredSubscription(
-        (_) => _fetchSubscriptionWithUserAgent(client, uri, userAgent),
+        (_) =>
+            _fetchSubscriptionWithUserAgent(client, subscriptionUri, userAgent),
         userAgent: userAgent,
         mihomo: true,
       );
     } catch (error, stack) {
       if (kDebugMode) {
         debugPrint(
-          '[subscription-import] stage=subscription host=${uri.host} '
+          '[subscription-import] stage=subscription host=${subscriptionUri.host} '
           'failure=${error.runtimeType}',
         );
         debugPrintStack(stackTrace: stack);
@@ -856,8 +878,11 @@ class AppController extends ChangeNotifier {
         throw const HttpException('구독 주소의 리디렉션이 너무 많습니다.');
       }
       final redirected = current.resolve(location);
-      if (redirected.scheme != 'https' || redirected.host.isEmpty) {
-        throw const FormatException('HTTPS가 아닌 주소로 이동할 수 없습니다.');
+      if (!_validSubscriptionUrl(redirected)) {
+        throw const FormatException('안전하지 않은 구독 주소로 이동할 수 없습니다.');
+      }
+      if (current.scheme == 'https' && redirected.scheme == 'http') {
+        throw const FormatException('HTTPS 구독을 HTTP 주소로 이동할 수 없습니다.');
       }
       current = redirected;
     }

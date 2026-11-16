@@ -128,7 +128,10 @@ func proximaRealityClientFallback(conn net.Conn, name string, fingerprint utls.C
 		replace("context.WithTimeout(context.Background(), resolver.DefaultDNSTimeout)", "context.WithTimeout(proximaDNSContext(), resolver.DefaultDNSTimeout)")
 		text += resolverSeam
 	case "dns/util.go":
+		replace(`"context"`, `"context"
+proximadiag "proxima.local/mihomo-dns/diagnostic"`)
 		replace("c = rewrapClient(c, s.Params)", "proximaDNSRegister(c)\nc = rewrapClient(c, s.Params)")
+		replace("m, err := client.ExchangeContext(ctx, m)\n\t\t\tif err != nil {", "m, err := client.ExchangeContext(ctx, m)\n\t\t\tif err != nil {\nproximadiag.Failure(\"upstream\", err)")
 	case "dns/client.go", "dns/dot.go":
 		if path == "dns/client.go" {
 			replace("\"time\"", "\"time\"\n\"sync\"")

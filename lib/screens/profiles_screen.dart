@@ -107,7 +107,7 @@ class ProfilesScreen extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.link_rounded),
                 title: const Text('구독 URL'),
-                subtitle: const Text('HTTPS 구독 주소에서 노드를 가져옵니다.'),
+                subtitle: const Text('HTTP 또는 HTTPS 구독 주소에서 노드를 가져옵니다.'),
                 onTap: () {
                   Navigator.pop(sheetContext);
                   _openEditor(context, entryMode: _ProfileEntryMode.url);
@@ -127,7 +127,7 @@ class ProfilesScreen extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.qr_code_scanner_rounded),
                 title: const Text('QR 코드 스캔'),
-                subtitle: const Text('공유 링크 또는 HTTPS 구독 주소를 읽습니다.'),
+                subtitle: const Text('공유 링크 또는 HTTP·HTTPS 구독 주소를 읽습니다.'),
                 onTap: () {
                   Navigator.pop(sheetContext);
                   _scanQr(context);
@@ -226,7 +226,7 @@ class ProfilesScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return AppPage(
       title: '프로필',
-      subtitle: '공유 링크와 Clash YAML·HTTPS 구독을 관리합니다.',
+      subtitle: '공유 링크와 Clash YAML·HTTP/HTTPS 구독을 관리합니다.',
       onRefresh: controller.reloadProfiles,
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showAddOptions(context),
@@ -458,7 +458,7 @@ class _ProfileEditorState extends State<_ProfileEditor> {
         subscriptionInfo = subscription.info ?? const SubscriptionInfo();
       }
       if (content.trim().isEmpty) {
-        throw const FormatException('공유 링크, Clash YAML 또는 HTTPS 구독 주소가 필요합니다.');
+        throw const FormatException('공유 링크, Clash YAML 또는 HTTP·HTTPS 구독 주소가 필요합니다.');
       }
       await widget.controller.saveProfile(
         id: widget.profile?.id,
@@ -510,8 +510,8 @@ class _ProfileEditorState extends State<_ProfileEditor> {
                   autocorrect: false,
                   decoration: InputDecoration(
                     labelText: widget.entryMode == _ProfileEntryMode.url
-                        ? 'HTTPS 구독 주소'
-                        : 'HTTPS 구독 주소 (선택)',
+                        ? 'HTTP 또는 HTTPS 구독 주소'
+                        : 'HTTP 또는 HTTPS 구독 주소 (선택)',
                     prefixIcon: const Icon(Icons.link_rounded),
                   ),
                 ),

@@ -69,7 +69,9 @@ func (s *proximaHTTP) dial(ctx context.Context, network, address string) (net.Co
  ctx, cancel := context.WithCancel(ctx)
  stop := context.AfterFunc(s.ctx, cancel)
  defer func(){ stop(); cancel() }()
- c, err := dialer.DialContext(ctx, network, address)
+ // Provider initialization precedes tunnel readiness and must never resolve
+ // through a rule-routed main resolver that may itself need this provider.
+ c, err := dialer.DialContext(ctx, network, address, dialer.WithResolver(resolver.ProxyServerHostResolver))
  if err != nil { return nil, err }
  s.Lock()
  defer s.Unlock()

@@ -52,6 +52,7 @@ type Session struct {
 	root           bool
 	providerStatus map[string]interface{ ProximaLastError() error }
 	management     *management
+	dnsFollowRules bool
 }
 
 // Start borrows the fd and takes ownership of protector on entry, even when it
@@ -105,6 +106,7 @@ func StartWithOptions(configBytes []byte, borrowedTunFd int, protector session.P
 	if err := admit(snapshot.Bytes(), raw); err != nil {
 		return rollback(err)
 	}
+	s.dnsFollowRules = raw.DNS.RespectRules
 	if len(raw.ProxyProvider)+len(raw.RuleProvider) > 0 && options.ProviderRoot == "" {
 		return rollback(errors.New("trusted application ProviderRoot required"))
 	}

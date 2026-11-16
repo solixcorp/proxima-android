@@ -1,6 +1,6 @@
 # Mihomo 기기 회귀 검증 계획
 
-상태: **미실행**. 호스트 통과는 Android VPN, 피어 상호운용 또는 누수 방지의 증거가 아니다. 실행자는 기기 모델/ABI, Android 버전, APK 커밋 및 빌드, 서버·프로토콜 설정, 시간, 결과와 로그를 기록하고 각 항목을 별도 PASS/FAIL/BLOCKED로 남긴다. 비밀번호·키·구독 URL은 기록하지 않는다.
+상태: **에뮬레이터 일부 실행, 물리 기기 미실행**. 아래 실행 기록의 범위만 검증되었으며 16개 시나리오 전체가 통과한 것은 아니다. 호스트 통과는 Android VPN, 피어 상호운용 또는 누수 방지의 증거가 아니다. 실행자는 기기 모델/ABI, Android 버전, APK 커밋 및 빌드, 서버·프로토콜 설정, 시간, 결과와 로그를 기록하고 각 항목을 별도 PASS/FAIL/BLOCKED로 남긴다. 비밀번호·키·구독 URL은 기록하지 않는다.
 
 ## 준비 및 실행
 
@@ -50,6 +50,19 @@ JDK 17로 `cd android && ./gradlew :app:assembleDebug` 후 테스트 기기에�
 - 실제 루프백 피어로 REALITY 기본 flow·`xtls-rprx-vision`의 TCP 인증·페이로드 왕복과 잘못된 UUID 거부를 확인했다. Hysteria2 일반·Salamander 양쪽에서 TCP 및 애플리케이션 UDP 왕복과 잘못된 비밀번호 거부를 확인했다. TLS 인증서 검증과 보호 소켓 콜백을 유지한 결과다.
 - `native/mihomo-engine`에서 `bash build.sh test`의 Go vet/race, upstream 회귀 및 JVM/JNI 테스트가 통과했다. JNI UDP fixture는 VPN point-to-point 주소 대신 실제 통신 가능한 호스트 IPv4를 선택하도록 수정했으며 timeout이나 검증 조건을 완화하지 않았다.
 - 위 결과는 호스트 검증이다. 실제 Android TUN·외부 운영 서버·물리 기기 네트워크 전환은 여전히 별도 검증 대상이다.
+
+## 2026-11-16 Android 에뮬레이터 실행
+
+- 환경: 별도로 생성한 `Proxima_HTTP_Test` AVD, Android API 37, `arm64-v8a`, 실제 페이지 크기 16384 bytes. 기존 사용자 AVD는 사용하지 않았다. `8801cd8` 기반 작업 트리의 debug APK를 설치했으며, 게시된 `v1.2.1`에는 이 수정이 포함되지 않는다.
+- HTTP 가져오기: 기존 APK에서 HTTPS 주소만 허용하는 오류를 재현했다. 수정본은 사용자가 제공한 IP·사용자 지정 포트의 HTTP 구독에 200 응답을 받고 프로필을 저장했다. 구독 경로와 인증정보는 기록하지 않는다.
+- Hysteria2 가져오기: 명시적 YAML `skip-cert-verify: true`가 있는 노드 3개가 제외되는 현상을 재현했다. 명시적 boolean을 지원한 뒤 REALITY 3개와 Hysteria2 3개 모두 가져왔다. 설정이 생략되면 인증서 검증을 유지한다.
+- TUN 시작: VPN 권한 승인 뒤 생략된 upstream 자동 라우팅·인터페이스 탐지 기본값 때문에 엔진이 시작을 거부하는 현상을 재현하고 수정했다. Android 소유 `tun0`, MTU 1400, IPv4·IPv6 주소 및 합성 DNS `172.19.0.2`로 연결됨을 확인했다.
+- 실제 피어 지연 검사: 6개 노드 모두 성공(약 299–509 ms). 이 결과만으로 앱 트래픽의 정상 동작을 판정하지 않았다.
+- 실제 앱 트래픽: 전역 모드에서 REALITY와 Hysteria2를 각각 선택했다. Chrome의 `https://1.1.1.1/cdn-cgi/trace` 요청이 TLS 1.3·HTTP/2로 성공하고 출구 IP가 프록시 서버 주소와 일치했다. REALITY 검사는 브라우저를 강제 종료한 뒤 새 연결로 수행했다. VPN 연결 중 HTTP 구독 수동 갱신도 200 응답으로 성공했다.
+- DNS 원인: 위 TUN 시작 수정만 적용한 APK에서 GeoJS 도메인 요청은 10초 시간 초과, Android 시스템의 도메인 해석도 실패했다. 진단 APK의 `ProximaDNS` 로그에서 `udp-received`, upstream `connection-refused`·`deadline`, `udp-relay: deadline`을 확인했다. DNS 패킷은 TUN에 도착하지만 기본 DoH의 직접 연결이 실패했다. VPN 해제 시 시스템 도메인 해석 및 Chrome의 GeoJS 조회는 성공했다.
+- DNS 수정 후 PASS: 앱이 생성하는 기본 DoH를 앱의 라우팅 정책으로 보내고 프록시·provider·직접 관리 요청의 초기 주소 조회를 분리했다. REALITY 선택 상태에서 시스템 도메인 해석 및 앱의 GeoJS HTTPS 조회가 성공하고 프록시 출구 IP와 일치했다. Hysteria2로 전환한 뒤 새 Chrome 프로세스의 도메인 기반 GeoJS HTTPS 요청도 같은 출구 IP로 성공했다. ICMP 응답 성공은 검증 항목에 포함하지 않았다.
+- 재연결·갱신 PASS: Hysteria2를 선택한 상태로 연결 해제·재연결한 뒤 선택이 유지됐다. 이전 IP 결과가 비어 있음을 확인하고 새로 수행한 앱의 IP 조회가 성공했다. VPN 연결 중 HTTP 구독 수동 갱신도 200 응답으로 성공하고 프로필 재적용 뒤 연결이 유지됐다. 규칙 모드로 전환한 뒤 앱의 IP 조회, 다른 도메인의 시스템 주소 해석 및 Chrome의 일반 HTTPS 페이지 로드도 성공했다.
+- 호스트 회귀 PASS: Flutter 전체 356개 통과·기존 4개 스킵 및 정적 분석 통과, 마지막 HTTP QR 보완 후 해당 회귀 6개도 재통과. Android 호스트 검사와 저장소 루트 `JAVA_HOME=<JDK 17> bash build.sh test`의 7개 네이티브 모듈 Go vet/race·JVM/JNI 검사가 모두 통과했다. 실제 기기의 네트워크 전환·누수·장시간 배터리 검사는 미실행이다.
 
 ## 릴리즈 서명
 

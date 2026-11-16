@@ -64,6 +64,29 @@ func protocolFixtures(t *testing.T) []map[string]any {
 	return fixtures
 }
 
+func TestHysteria2SkipCertVerifyAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name, option string
+		allowed      bool
+	}{
+		{"default", "", true},
+		{"false", ", skip-cert-verify: false", true},
+		{"true", ", skip-cert-verify: true", true},
+		{"string", ", skip-cert-verify: 'true'", false},
+		{"null", ", skip-cert-verify: null", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mapping map[string]any
+			if err := yaml.Unmarshal([]byte("{type: hysteria2"+tc.option+"}"), &mapping); err != nil {
+				t.Fatal(err)
+			}
+			if err := admitProxy(mapping); (err == nil) != tc.allowed {
+				t.Fatalf("admission: %v", err)
+			}
+		})
+	}
+}
+
 func TestProtocolAdmission(t *testing.T) {
 	fd, _ := pair(t)
 	p := &refusingProtocolProtector{t: t}

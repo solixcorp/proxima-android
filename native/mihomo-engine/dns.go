@@ -18,8 +18,15 @@ func admitDNS(document *yaml.Node, raw *config.RawConfig) error {
 	d := config.RawDNS{Enable: true, EnhancedMode: C.DNSMapping, IPv6Timeout: 100,
 		NameServer:        []string{"https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"},
 		DefaultNameserver: []string{"https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"}}
+	explicitUpstream := false
 	for i := 0; i < len(document.Content); i += 2 {
 		if document.Content[i].Value == "dns" {
+			for j := 0; j < len(document.Content[i+1].Content); j += 2 {
+				key := document.Content[i+1].Content[j].Value
+				if key == "nameserver" || key == "fallback" || key == "respect-rules" {
+					explicitUpstream = true
+				}
+			}
 			if err := document.Content[i+1].Decode(&d); err != nil {
 				return err
 			}
@@ -46,6 +53,14 @@ func admitDNS(document *yaml.Node, raw *config.RawConfig) error {
 				return fmt.Errorf("dns.%s: %w", field, err)
 			}
 		}
+	}
+	if !explicitUpstream {
+		// Only our own default main upstreams follow app rules. Proxy and
+		// provider hostnames use independent protected-direct bootstrap, so
+		// resolving the selected proxy never recursively depends on itself.
+		d.RespectRules = true
+		d.ProxyServerNameserver = append([]string(nil), d.DefaultNameserver...)
+		d.DirectNameServer = append([]string(nil), d.DefaultNameserver...)
 	}
 	raw.DNS = d // No fake-IP pool, geodata fallback or system resolver factories.
 	// Always retain the app's advertised synthetic DNS, even for legacy [] YAML.

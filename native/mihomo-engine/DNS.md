@@ -8,11 +8,19 @@ service using executor `updateDNS` **before** TUN admission. Omitted `dns:`,
 certificate-verified DoH at `https://1.1.1.1/dns-query` and
 `https://8.8.8.8/dns-query`, also used for bootstrap, no system hosts, no
 plaintext/system DNS fallback, no geodata and no fake-IP pool. These endpoints
-match the existing app's public DoH defaults. Raw snapshots/revisions remain
+match the existing app's public DoH defaults. The engine routes its generated
+main DNS defaults through the application's routing policy, so GLOBAL mode uses
+the selected VPN proxy. Proxy-server bootstrap remains a separate protected,
+direct resolver using IP-literal DoH endpoints; it must not recursively depend
+on the proxy whose hostname it is resolving. Provider and management hostname
+resolution also retain their protected direct bootstrap path. An explicit
+`nameserver`, `fallback`, or `respect-rules: false` keeps the profile's admitted
+direct DNS policy. Raw snapshots/revisions remain
 byte-exact; defaults affect only the admitted copy. Explicit empty nameserver/
 bootstrap lists and `enable: false` are errors. Startup does not probe upstream
-reachability: failed queries yield native SERVFAIL, not an insecure fallback or
-a successful connectivity claim.
+reachability: failed queries can yield native SERVFAIL or time out when the
+relay deadline suppresses a response. They never trigger an insecure fallback
+or establish successful connectivity.
 
 Allowed DNS keys: `enable`, `enhanced-mode`, `nameserver`, `default-nameserver`,
 `fallback`, `ipv6`, `ipv6-timeout`, `prefer-h3`, `use-hosts`, `use-system-hosts`
@@ -54,8 +62,10 @@ unchanged. UDP dispatchers are owned/joined by the runtime; TCP is synchronous.
 Matching is stable after Stop and cannot fall through into ordinary routing.
 
 The checksum-gated DNSDialer lifetime wraps actual `DialContext` **and**
-`ListenPacket` (DoQ/DoH3). Admitted settings select only the native protected
-direct dialer. Both go through the permanent session hook before bind/connect;
+`ListenPacket` (DoQ/DoH3). Explicit profile DNS settings and bootstrap use the
+native protected direct dialer. Engine-generated main DNS defaults may select
+the current proxy through the existing native DNS dialer and routing policy.
+Both paths go through the permanent session hook before bind/connect;
 false protector results fail the socket operation. Wrappers preserve UDP's
 `net.PacketConn` capability, required by miekg/dns's wire framing. Stop cancels
 and drains dial admission, closes tracked transport sockets and denies late
@@ -68,10 +78,12 @@ refresh, retry and real singleflight jobs, join UDP/DoT wire helpers, and close
 native DoH/QUIC/DoT pools explicitly. This is still not a synchronous join proof
 for every library-internal HTTP/QUIC actor: process retirement and
 termination/reaping remain mandatory, as in Phase 1.1. See [PROVIDERS.md](PROVIDERS.md).
-No Android
-worker supervisor or application integration is included. DNS remains direct
-(protected but outside the VPN), not arbitrary proxy-routed DNS. Protocol and
-custom-dialer auditing is documented in [DIALERS.md](DIALERS.md).
+Imported DNS proxy/interface overrides remain forbidden; internally routing
+the generated defaults does not admit arbitrary custom dialers or weaken
+certificate checks. A hostname-based proxy still requires reachable encrypted
+bootstrap DNS. If bootstrap cannot connect, resolution fails rather than using
+plaintext or the system resolver. Protocol and custom-dialer auditing is
+documented in [DIALERS.md](DIALERS.md).
 
 ## Host verification
 
@@ -82,6 +94,13 @@ UDP/TCP/DoH/DoQ protection refusal, packet-socket refusal, pending-query drain,
 DNS-init rollback and the post-stop dial gate. Fixtures alone supply fixed
 answers; production uses the pinned Mihomo DNS module. Fake-IP rejection and
 upstream security-policy/FD-rollback tests run before semantic parsing.
+
+The default-routing regression uses local CONNECT peers and a trusted TLS DoH
+fixture to verify real TUN queries, selector changes, independent proxy-host
+bootstrap, and direct provider initialization before the tunnel is ready.
+Android diagnostics use the `ProximaDNS` logcat tag and emit each fixed stage
+or error class at most once per worker process. They omit query names, URLs,
+credentials, and raw error text.
 
 `bash build.sh test` at the repository root covers all seven native modules;
 `bash build.sh android` covers all four ABIs. Neither gate establishes Android

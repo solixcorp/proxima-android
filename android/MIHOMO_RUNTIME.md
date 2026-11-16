@@ -71,6 +71,24 @@ Subscription and rule-set bodies have an 8 MiB size limit, a 10-second idle
 timeout and a 30-second body deadline. Redirect bodies are cancelled instead of
 drained. Local YAML provider/health-check URLs are never inferred as subscription
 sources; only explicit subscription metadata or legacy source markers are used.
+User-entered subscription URLs accept HTTP and HTTPS, including IP hosts and
+custom ports. Subscription redirects accept those schemes with the existing
+redirect limit, but cannot downgrade HTTPS to HTTP; credentials in URL authority
+and non-HTTP schemes are rejected.
+Android cleartext networking is enabled for these user-selected HTTP hosts.
+The HTTPS certificate checks and the HTTPS-only provider/rule-set policy are
+unchanged.
+For Hysteria2 proxies, an explicitly specified YAML `skip-cert-verify` boolean
+is preserved. Omission retains certificate verification. This option does not
+change the HTTPS subscription client's certificate checks or provider policy.
+
+When a profile omits DNS upstream/routing choices, generated DoH defaults follow
+the app's routing policy, including the selected GLOBAL proxy. Proxy-server,
+provider and direct management bootstrap use separate protected-direct encrypted
+resolvers. Explicit profile upstream choices retain their admitted direct policy.
+No plaintext fallback or certificate bypass is introduced. Bounded `ProximaDNS`
+logcat diagnostics identify DNS path stages and error classes without query names,
+URLs, credentials or raw error text; see `native/mihomo-engine/DNS.md`.
 
 Public IP diagnostics use the app's current network path to issue an
 unauthenticated HTTPS GET to `https://get.geojs.io/v1/ip.json`. The JSON `ip`

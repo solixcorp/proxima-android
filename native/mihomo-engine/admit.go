@@ -38,6 +38,7 @@ func admit(source []byte, raw *config.RawConfig) error {
 	if err := yaml.NewDecoder(bytes.NewReader(source)).Decode(&node); err != nil {
 		return err
 	}
+	tunKeys := make(map[string]bool)
 	for i := 0; i < len(node.Content[0].Content); i += 2 {
 		key := node.Content[0].Content[i].Value
 		if !topLevel[key] {
@@ -51,6 +52,9 @@ func admit(source []byte, raw *config.RawConfig) error {
 			explicitStack := false
 			for j := 0; j < len(value.Content); j += 2 {
 				child := value.Content[j].Value
+				if key == "tun" {
+					tunKeys[child] = true
+				}
 				if !allowed[child] {
 					return fmt.Errorf("engine capability not implemented: %s.%s", key, child)
 				}
@@ -73,6 +77,19 @@ func admit(source []byte, raw *config.RawConfig) error {
 		return err
 	}
 	defaults := config.DefaultRawConfig()
+	// Upstream enables system routing and supplies a TUN address by default.
+	// They are not requests from the app when omitted, and must not reach the
+	// semantic parser: VpnService already owns the interface and its routes.
+	// Explicit values still go through the strict capability check below.
+	if !tunKeys["auto-route"] && raw.Tun.AutoRoute == defaults.Tun.AutoRoute {
+		raw.Tun.AutoRoute = false
+	}
+	if !tunKeys["auto-detect-interface"] && raw.Tun.AutoDetectInterface == defaults.Tun.AutoDetectInterface {
+		raw.Tun.AutoDetectInterface = false
+	}
+	if !tunKeys["inet6-address"] && reflect.DeepEqual(raw.Tun.Inet6Address, defaults.Tun.Inet6Address) {
+		raw.Tun.Inet6Address = nil
+	}
 	if raw.Profile.StoreFakeIP || raw.Profile.StoreSelected {
 		return fmt.Errorf("profile persistence not implemented")
 	}
