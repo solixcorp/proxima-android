@@ -26,6 +26,8 @@ jobs:
         with:
           distribution: zulu
           java-version: '17'
+      - name: Cache Gradle dependencies
+        uses: gradle/actions/setup-gradle@v4
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -46,6 +48,8 @@ jobs:
         run: flutter pub get
       - name: Analyze
         run: flutter analyze
+      - name: Test release certificate verification
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
       - name: Test Flutter
         run: flutter test
       - name: Test Mihomo worker boundary

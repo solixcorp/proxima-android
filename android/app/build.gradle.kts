@@ -12,6 +12,7 @@ abstract class MihomoBuildLock : BuildService<BuildServiceParameters.None>, Auto
 val mihomoNativeDir = rootProject.layout.projectDirectory.dir("../native")
 val mihomoEngineDir = mihomoNativeDir.dir("mihomo-engine")
 val allMihomoAbis = listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+val packagedMihomoAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
 val mihomoBuildLock = gradle.sharedServices.registerIfAbsent("mihomoBuildLock", MihomoBuildLock::class) {
     maxParallelUsages.set(1)
 }
@@ -69,7 +70,7 @@ androidComponents {
                     "MIHOMO_DEBUG_ABIS must be a comma-separated, nonempty list of: $allMihomoAbis"
                 }
             }
-        } else allMihomoAbis
+        } else if (variant.buildType == "release") packagedMihomoAbis else allMihomoAbis
         val outputDir = layout.buildDirectory.dir("generated/mihomoJniLibs/${variant.name}")
         val buildMihomo = tasks.register("build${title}Mihomo") {
             usesService(mihomoBuildLock)
@@ -85,6 +86,7 @@ androidComponents {
             doLast {
                 exec {
                     workingDir(mihomoEngineDir)
+                    environment("MIHOMO_ANDROID_ABIS", abis.joinToString(","))
                     commandLine("bash", "build.sh", "android")
                 }
                 sync {

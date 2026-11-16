@@ -7,8 +7,8 @@ if [[ "$(go env GOVERSION)" != go1.27.1 ]]; then
     exit 1
 fi
 export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/cert.pem}"
-export GOMODCACHE="$PWD/build/go-mod"
-export GOCACHE="$PWD/build/go-cache"
+export GOMODCACHE="${GOMODCACHE:-$PWD/build/go-mod}"
+export GOCACHE="${GOCACHE:-$PWD/build/go-cache}"
 go mod download
 go mod verify
 go vet -mod=readonly ./...
