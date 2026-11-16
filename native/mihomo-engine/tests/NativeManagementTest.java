@@ -32,12 +32,19 @@ public final class NativeManagementTest {
     }
 
     private static InetAddress hostAddress() throws Exception {
+        InetAddress linkLocal = null;
         for (NetworkInterface network : Collections.list(NetworkInterface.getNetworkInterfaces())) {
+            // VPN point-to-point addresses may bind successfully yet discard
+            // packets sent to themselves; mipstack also rejects loopback IPs.
+            if (!network.isUp() || network.isLoopback() || network.isPointToPoint()) continue;
             for (InetAddress ip : Collections.list(network.getInetAddresses())) {
-                if (ip instanceof Inet4Address && !ip.isLoopbackAddress()) return ip;
+                if (!(ip instanceof Inet4Address) || ip.isLoopbackAddress()) continue;
+                if (!ip.isLinkLocalAddress()) return ip;
+                if (linkLocal == null) linkLocal = ip;
             }
         }
-        throw new AssertionError("host round trip requires non-loopback IPv4");
+        if (linkLocal != null) return linkLocal;
+        throw new AssertionError("host round trip requires non-point-to-point IPv4");
     }
 
     public static void main(String[] args) throws Exception {

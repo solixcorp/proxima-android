@@ -1,5 +1,36 @@
 # Phase 2b Android integration verification on November 13, 2026
 
+## November 16, 2026: REALITY and Hysteria2 loopback interoperability
+
+`interop_test.go` adds actual authenticated peer exchanges using the pinned
+outbound implementations and local servers. These tests execute inside the
+existing engine `bash build.sh test` vet/race/JNI gate.
+
+- `TestInteropVLESSReality`: both empty flow and `xtls-rprx-vision` perform a
+  REALITY handshake and VLESS-authenticated TCP payload round trip. An incorrect
+  UUID is rejected and observed as an unknown user by the server. The
+  camouflage TLS 1.3 listener and its dial callback are loopback-only, with
+  session tickets disabled to make the synthetic target's record sizes
+  compatible with the pinned REALITY server.
+- `TestInteropHysteria2`: plain and Salamander configurations authenticate and
+  perform both TCP and application UDP payload round trips over QUIC. A wrong
+  password is rejected. The fixture creates a local certificate and trusts its
+  CA for the test; certificate verification remains enabled. Test CA state is
+  reset during cleanup.
+- Both fixtures verify that the real outbound invokes the protection callback.
+  They use bounded operation deadlines and close their sockets, adapters,
+  services and session resources.
+- The Java UDP fixture now excludes inactive, loopback and point-to-point
+  interfaces when choosing a host address. A VPN `utun` address can bind but
+  fail to receive same-host UDP, which caused a management JNI test timeout.
+  No timeout was increased and no test was skipped.
+
+The final engine `bash build.sh test` completed with Go vet/race, upstream
+regressions and both JVM/JNI suites passing. This establishes host-side
+interoperability for the configurations above. Actual Android TUN routing,
+external deployment interoperability and physical-device network changes
+remain device checks; the historical device requirements below still apply.
+
 ## Phase 4 host parity coverage
 
 `TestDartAdmissionKeyParity` parses the actual Dart `proxyOptions` and

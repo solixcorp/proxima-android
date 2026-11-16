@@ -24,6 +24,20 @@ class ShareLinkParsers {
     caseSensitive: false,
   );
 
+  /// Decode a subscription envelope without filtering out any protocol.
+  static String decodeSubscription(String input) {
+    if (input.length > maxInputLength || input.contains('://')) return input;
+    try {
+      final compact = input.replaceAll(RegExp(r'\s'), '');
+      final decoded = utf8.decode(
+        base64Url.decode(base64Url.normalize(compact)),
+      );
+      return decoded.length <= maxInputLength ? decoded : input;
+    } on FormatException {
+      return input;
+    }
+  }
+
   /// Names are unique even when an existing label already ends in a suffix.
   /// Reserved Mihomo names are also suffixed, starting with ` 2`.
   static ShareLinkResult parseMany(String input) {
@@ -85,10 +99,25 @@ class ShareLinkParsers {
       throw FormatException('지원하지 않는 링크: $scheme');
     }
     final q = _query(uri);
+    // Uri.hasPort treats an explicit :0 as absent for unknown schemes.
+    // Inspect the original authority so it cannot become the default port.
+    final authority = link
+        .substring(link.indexOf('://') + 3)
+        .split(RegExp(r'[/#?]'))
+        .first
+        .split('@')
+        .last;
+    final explicitPort = RegExp(r'^(?:\[[^\]]+\]|[^:]+):(.*)$')
+        .firstMatch(authority);
+    final port = type == 'hysteria2' && explicitPort != null
+        ? int.tryParse(explicitPort.group(1)!) ?? 0
+        : uri.hasPort
+        ? uri.port
+        : (type == 'hysteria2' ? 443 : 0);
     final proxy = _base(
       type,
       uri.host,
-      uri.hasPort ? uri.port : 0,
+      port,
       Uri.decodeComponent(uri.fragment),
     );
     final user = Uri.decodeComponent(uri.userInfo);

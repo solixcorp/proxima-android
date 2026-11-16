@@ -198,6 +198,32 @@ void main() {
     );
   });
 
+  test('mixed imports survive save reload selection and method-channel upload', () async {
+    const reality =
+        'vless://12345678-1234-1234-1234-123456789abc@edge.example:443?security=reality&sni=cdn.example&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&sid=1a2b#Reality';
+    const hy2 =
+        'hy2://user%3Apass%40word@hy.example/?sni=hy.example&obfs=salamander&obfs-password=ob%2Bfs#HY2';
+    const mixed = '$reality\n$hy2';
+    for (final source in [mixed, base64Encode(utf8.encode(mixed))]) {
+      await controller.saveProfile(id: _id, name: 'Mixed', content: source);
+      expect(content, source);
+      await controller.reloadProfiles();
+      expect(controller.profiles.single.admissionSummary!.validProxyCount, 2);
+      selections['GLOBAL'] = 'HY2';
+      await controller.toggleVpn();
+      final config = jsonDecode(utf8.decode(uploaded)) as Map;
+      expect(config['proxy-groups'].last['proxies'], ['HY2', 'Reality']);
+      final proxies = config['proxies'] as List;
+      expect(proxies.first['reality-opts']['short-id'], '1a2b');
+      expect(proxies.first['servername'], 'cdn.example');
+      expect(proxies.last['type'], 'hysteria2');
+      expect(proxies.last['port'], 443);
+      expect(proxies.last['password'], 'user:pass@word');
+      expect(proxies.last['obfs-password'], 'ob+fs');
+      expect(calls.any((call) => call.method == 'startVpn'), isTrue);
+    }
+  });
+
   test('connect final assembly passes all nodes and rules before platform start every time', () async {
     controller.settings = controller.settings.copyWith(mode: OutboundMode.rule);
     selections['GLOBAL'] = 'second';

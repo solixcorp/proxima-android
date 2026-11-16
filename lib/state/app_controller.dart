@@ -11,7 +11,9 @@ import '../core/proxima_user_agent.dart';
 import '../core/clash_subscription.dart';
 import '../core/mihomo_config_assembly.dart';
 import '../core/mihomo_proxy_admission.dart';
+import '../core/share_link_parsers.dart';
 import '../core/vless_reality_profile.dart';
+import '../models/node_details.dart';
 import '../models/vpn_models.dart';
 import 'bounded_http_body.dart';
 
@@ -356,7 +358,13 @@ class AppController extends ChangeNotifier {
         ClashSubscriptionParser.admit(content) == null &&
         sourceUrl?.isNotEmpty != true) {
       try {
-        if (VlessRealityProfile.parseMany(content).length == 1) {
+        final decoded = ShareLinkParsers.decodeSubscription(content);
+        final schemes = RegExp(r'[a-zA-Z][a-zA-Z0-9+.-]*://')
+            .allMatches(decoded)
+            .toList();
+        if (schemes.length == 1 &&
+            schemes.single.group(0)!.toLowerCase() == 'vless://' &&
+            VlessRealityProfile.parseMany(content).length == 1) {
           stored = VlessRealityProfile.storedConfigFromInput(
             content,
             profileName: name.trim().isEmpty ? 'VLESS' : name.trim(),
@@ -702,17 +710,6 @@ class AppController extends ChangeNotifier {
       }
       final preview = MihomoConfigAssembly.preview(decoded);
       if (preview.proxies.isEmpty) return null;
-      if (decoded.trimLeft().toLowerCase().startsWith('vless://')) {
-        try {
-          final normalized = VlessRealityProfile.normalizeLinkInput(candidate);
-          if (MihomoConfigAssembly.preview(normalized).proxies.length ==
-              preview.proxies.length) {
-            return normalized;
-          }
-        } on FormatException {
-          // Other admitted formats remain intact.
-        }
-      }
       return decoded;
     }
 
@@ -822,12 +819,12 @@ class AppController extends ChangeNotifier {
     }
     if (fallback != null) return fallback;
     if (receivedResponse) {
-      throw const FormatException('구독에서 지원되는 VLESS 링크나 Clash YAML을 찾지 못했습니다.');
+      throw const FormatException('구독에서 지원되는 프록시 링크나 Clash YAML을 찾지 못했습니다.');
     }
     if (firstRequestError != null) {
       Error.throwWithStackTrace(firstRequestError, firstRequestStack!);
     }
-    throw const FormatException('구독에서 지원되는 VLESS 링크나 Clash YAML을 찾지 못했습니다.');
+    throw const FormatException('구독에서 지원되는 프록시 링크나 Clash YAML을 찾지 못했습니다.');
   }
 
   Future<SubscriptionFetchResult> _fetchSubscriptionWithUserAgent(
@@ -965,18 +962,18 @@ class AppController extends ChangeNotifier {
     }
   });
 
-  Future<Map<String, VlessRealityProfile>> readNodeDetails() async {
+  Future<Map<String, NodeDetails>> readNodeDetails() async {
     final profile = activeProfile;
     if (profile == null) return const {};
     final content = await bridge.readProfile(profile.id);
-    final names = VlessRealityProfile.nodeNamesFromStoredConfig(
+    final preview = MihomoConfigAssembly.preview(
       content,
       profileName: profile.name,
     );
-    final links = VlessRealityProfile.linksFromStoredConfig(content);
     return {
-      for (var i = 0; i < names.length; i++)
-        names[i]: VlessRealityProfile.parse(links[i]),
+      for (final proxy in preview.proxies)
+        if (proxy['name'] is String)
+          proxy['name'] as String: NodeDetails.fromProxy(proxy),
     };
   }
 

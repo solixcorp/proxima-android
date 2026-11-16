@@ -39,6 +39,11 @@ sidecars, Builder mismatch, worker/native errors also refuse start, without an
 engine fallback. A ready capability is removed from MainActivity before launch and
 the service destroys the file on consumption, including failure. Each Flutter
 start, profile refresh/reselection and mode change builds a fresh document.
+VLESS REALITY and Hysteria2 share-link lists, including Base64 subscriptions,
+retain both protocols through import, save/reload, selection and assembly.
+Single-link legacy VLESS conversion applies only when the entire input contains
+one VLESS link. Hysteria2 (`hysteria2://` / `hy2://`) defaults to port 443 when
+the port is omitted; an explicit invalid port is rejected.
 Connected node selection first uses `changeProxy` → `MihomoVpnSession.select`
 → native `PROXY` selector; if that call fails, Dart reassembles and restarts.
 Native `updateConfig` cannot trigger an old Kotlin rebuild.
@@ -72,6 +77,12 @@ unauthenticated HTTPS GET to `https://get.geojs.io/v1/ip.json`. The JSON `ip`
 must be a valid IPv4/IPv6 address. The request has a 10-second overall deadline
 and a 16 KiB body limit; results from an obsolete VPN session are discarded.
 This endpoint provides an IP address, without location or organization data.
+
+Offline node details are extracted from the same admitted preview used for
+assembly, for both raw YAML and share links. The details model retains public
+connection metadata only. Protocol, transport, security, server, port and SNI
+reflect the actual node; UUIDs, passwords and private keys are not retained in
+the details model or rendered by the details screen.
 
 ## Engine boundary
 

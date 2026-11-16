@@ -104,6 +104,7 @@ void main() {
       'ss://${b64('aes-128-gcm:pw')}@example.com:443?plugin=v2ray-plugin',
       'hysteria2://pw@example.com:443?ports=443-500',
       'hysteria2://pw@example.com:443?insecure=1',
+      'hy2://pw@example.com:443,444',
       'hysteria://example.com:443?protocol=faketcp',
       'vmess://not-base64!',
       'tuic://bad@example.com:443',
@@ -115,6 +116,23 @@ void main() {
         reason: link,
       );
     }
+  });
+
+  test('Hysteria2 URI default port and percent-encoded credentials', () {
+    for (final scheme in ['hy2', 'hysteria2']) {
+      final proxy = ShareLinkParsers.parse(
+        '$scheme://user%3Ap%40ss%2Fword@example.com/?sni=tls.example&obfs=salamander&obfs-password=a%2Bb%26c#My%20node',
+      );
+      expect(proxy['port'], 443);
+      expect(proxy['password'], 'user:p@ss/word');
+      expect(proxy['name'], 'My node');
+      expect(proxy['sni'], 'tls.example');
+      expect(proxy['obfs-password'], 'a+b&c');
+    }
+    expect(
+      () => ShareLinkParsers.parse('hy2://pw@example.com:0'),
+      throwsFormatException,
+    );
   });
 
   test('mixed links return individual errors and collision-free names', () {

@@ -112,4 +112,49 @@ rules: ['RULE-SET,domains,group']
       expect(result['proxies'][0]['type'], 'vless');
     }
   });
+
+  test('mixed and Hysteria2-only base64 subscriptions preserve all nodes', () {
+    const reality =
+        'vless://12345678-1234-1234-1234-123456789abc@edge.example:443?security=reality&sni=cdn.example&fp=chrome&pbk=abcdefghijklmnopqrstuvwxzy0123456789ABCD&sid=1a2b#Reality';
+    const hy2 =
+        'hy2://user%3Apass%40word@hy.example/?sni=hy.example&obfs=salamander&obfs-password=ob%2Bfs#HY2';
+    for (final text in ['$reality\n$hy2', hy2]) {
+      for (final source in [text, base64Encode(utf8.encode(text))]) {
+        final preview = MihomoConfigAssembly.preview(source);
+        expect(preview.proxies.length, text == hy2 ? 1 : 2);
+        final result = jsonDecode(
+          MihomoConfigAssembly.build(
+            source: source,
+            mode: 'global',
+            mtu: 1400,
+            ipv6: true,
+            selectedNode: 'HY2',
+          ),
+        ) as Map;
+        expect(result['proxy-groups'].last['proxies'].first, 'HY2');
+        final hy = (result['proxies'] as List).last;
+        expect(hy['type'], 'hysteria2');
+        expect(hy['port'], 443);
+        expect(hy['password'], 'user:pass@word');
+        expect(hy['obfs-password'], 'ob+fs');
+        if (text != hy2) {
+          expect(result['proxies'].first['reality-opts']['short-id'], '1a2b');
+          expect(result['proxies'].first['servername'], 'cdn.example');
+          final realitySelected = jsonDecode(
+            MihomoConfigAssembly.build(
+              source: source,
+              mode: 'global',
+              mtu: 1400,
+              ipv6: true,
+              selectedNode: 'Reality',
+            ),
+          ) as Map;
+          expect(realitySelected['proxy-groups'].last['proxies'], [
+            'Reality',
+            'HY2',
+          ]);
+        }
+      }
+    }
+  });
 }

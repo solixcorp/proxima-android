@@ -117,7 +117,7 @@ class ProfilesScreen extends StatelessWidget {
                 leading: const Icon(Icons.vpn_key_outlined),
                 title: const Text('공유 링크 · YAML'),
                 subtitle: const Text(
-                  'VLESS, VMess, SS, Trojan 등 공유 링크나 Clash YAML을 붙여넣습니다.',
+                  'VLESS REALITY, Hysteria2 등 공유 링크나 Clash YAML을 붙여넣습니다.',
                 ),
                 onTap: () {
                   Navigator.pop(sheetContext);
@@ -531,7 +531,7 @@ class _ProfileEditorState extends State<_ProfileEditor> {
                   decoration: InputDecoration(
                     labelText: '공유 링크 또는 Clash YAML',
                     helperText:
-                        'VLESS · VMess · SS/SSR · Trojan · Hysteria/2 · TUIC · WireGuard · SOCKS5 · HTTP',
+                        'VLESS REALITY/TLS · Hysteria2(hy2) · VMess · SS/SSR · Trojan · Hysteria · TUIC · WireGuard · SOCKS5 · HTTP',
                     helperMaxLines: 3,
                     hintText:
                         '지원되는 공유 링크 또는 Clash YAML을 입력하세요.\n'

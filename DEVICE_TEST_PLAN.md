@@ -42,6 +42,15 @@ JDK 17로 `cd android && ./gradlew :app:assembleDebug` 후 테스트 기기에�
 - 최종 `:app:assembleDebug :app:assembleRelease --max-workers=2` 통과. Debug APK 403,205,667 bytes, 무서명 release APK 220,681,880 bytes. 두 APK 모두 Mihomo ABI `arm64-v8a`, `armeabi-v7a`, `x86_64`를 포함하며 release는 400 MiB 제한 이내. Debug APK의 v2 서명 검증 통과. 실제 배포 keystore로 서명한 최종 변경본은 아직 GitHub에서 빌드하지 않음.
 - `adb devices -l` 결과 연결 기기 없음. 기존 AVD 데이터와 스냅샷을 사용하지 않는 격리 Pixel_10_Pro(arm64-v8a, Android 37.1 이미지)를 시작했으나 5분 넘게 `offline`이어서 설치·실행은 BLOCKED. 실행한 에뮬레이터만 종료함. 위 16개 기기 시나리오는 여전히 미실행이며 호스트 결과로 통과 처리하지 않음.
 
+## 2026-11-16 REALITY·Hysteria2 호스트 검증
+
+- VLESS REALITY와 Hysteria2 혼합 평문·Base64 구독의 가져오기, 원문 저장·재조회, QR 해석, 노드 선택 및 MethodChannel 최종 설정 전달을 검증했다. 두 노드와 각 인증·보안 설정이 보존된다.
+- UI에서 REALITY 단독, Hysteria2 단독, 두 링크 동시 입력을 저장하고 각 노드의 공개 연결 정보를 확인했다. 노드 상세는 UUID·비밀번호·개인 키와 전송 경로의 쿼리·프래그먼트를 숨긴다.
+- Flutter 전체 테스트 348개 통과, 기존 4개 스킵 및 전체 정적 분석 통과. 이후 전송 경로의 쿼리 숨김 회귀 테스트를 추가한 노드 상세 테스트 5개와 해당 파일 정적 분석도 통과했다.
+- 실제 루프백 피어로 REALITY 기본 flow·`xtls-rprx-vision`의 TCP 인증·페이로드 왕복과 잘못된 UUID 거부를 확인했다. Hysteria2 일반·Salamander 양쪽에서 TCP 및 애플리케이션 UDP 왕복과 잘못된 비밀번호 거부를 확인했다. TLS 인증서 검증과 보호 소켓 콜백을 유지한 결과다.
+- `native/mihomo-engine`에서 `bash build.sh test`의 Go vet/race, upstream 회귀 및 JVM/JNI 테스트가 통과했다. JNI UDP fixture는 VPN point-to-point 주소 대신 실제 통신 가능한 호스트 IPv4를 선택하도록 수정했으며 timeout이나 검증 조건을 완화하지 않았다.
+- 위 결과는 호스트 검증이다. 실제 Android TUN·외부 운영 서버·물리 기기 네트워크 전환은 여전히 별도 검증 대상이다.
+
 ## 릴리즈 서명
 
 CI는 `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`를 사용하고 APK 서명자가 지정 keystore 인증서와 일치하는지 발행 전에 확인한다. 로컬에서 서명 정보 없이 만드는 release APK는 무서명이다. 로컬 서명 시 `KEYSTORE_PATH`로 keystore 경로를 지정할 수 있다.

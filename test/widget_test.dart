@@ -536,10 +536,16 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  const realityLink =
+      'vless://12345678-1234-1234-1234-123456789abc@reality.example:443?security=reality&type=tcp&sni=cover.example&fp=chrome&pbk=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8&sid=01020304#Reality';
+  const hysteria2Link =
+      'hy2://secret@hy2.example?sni=hy2-sni.example&obfs=salamander&obfs-password=obfs-secret#HY2';
   for (final entry in {
     'Trojan': 'trojan://secret@example.com:443#node',
-    'Clash YAML':
-        'proxies:\n  - {name: node, type: socks5, server: example.com, port: 1080}\n',
+    'Clash YAML': 'proxies:\n  - {name: node, type: socks5, server: example.com, port: 1080}\n',
+    'VLESS REALITY': realityLink,
+    'Hysteria2': hysteria2Link,
+    'REALITY + Hysteria2': '$realityLink\n$hysteria2Link',
   }.entries) {
     testWidgets('adds ${entry.key} through the shared profile editor', (
       tester,
@@ -556,14 +562,41 @@ void main() {
       expect(find.text('VLESS 링크'), findsNothing);
       await tester.tap(find.text('공유 링크 · YAML'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField).first, entry.key);
+      await tester.enterText(find.byType(TextField).first, 'Test ${entry.key}');
       await tester.enterText(find.byType(TextField).last, entry.value);
       await tester.ensureVisible(find.text('검증 후 저장'));
       await tester.tap(find.text('검증 후 저장'));
       await tester.pumpAndSettle();
 
-      expect(bridge.profileContent, entry.value);
-      expect(controller.profiles.single.name, entry.key);
+      if (entry.key == 'VLESS REALITY') {
+        expect(
+          VlessRealityProfile.linksFromStoredConfig(bridge.profileContent),
+          [realityLink],
+        );
+      } else {
+        expect(bridge.profileContent, entry.value);
+      }
+      final proxies = MihomoConfigAssembly.preview(bridge.profileContent).proxies;
+      if (entry.key.contains('REALITY')) {
+        expect(
+          proxies.firstWhere((node) => node['type'] == 'vless')['reality-opts'],
+          {
+            'public-key': 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
+            'short-id': '01020304',
+          },
+        );
+      }
+      if (entry.key.contains('Hysteria2')) {
+        final node = proxies.firstWhere((node) => node['type'] == 'hysteria2');
+        expect(node['port'], 443);
+        expect(node['password'], 'secret');
+        expect(node['obfs'], 'salamander');
+        expect(node['obfs-password'], 'obfs-secret');
+      }
+      if (entry.key == 'REALITY + Hysteria2') {
+        expect(proxies.map((node) => node['type']), ['vless', 'hysteria2']);
+      }
+      expect(controller.profiles.single.name, 'Test ${entry.key}');
       expect(find.byType(BottomSheet), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
@@ -1783,6 +1816,24 @@ rules:
       expect(result.content, entry.value);
       expect(result.sourceUrl, isNull);
     }
+  });
+
+  test('mixed QR payloads preserve every protocol including rejected links', () async {
+    const vless =
+        'vless://12345678-1234-1234-1234-123456789abc@example.com:443?security=tls#node';
+    const hy2 = 'hy2://secret@example.com#hy2';
+    const unsafe = 'hy2://secret@example.com?insecure=1#unsafe';
+    final controller = AppController(_FakeBridge());
+    for (final text in ['$vless\n$hy2', '$vless\n$unsafe']) {
+      for (final payload in [text, base64UrlEncode(utf8.encode(text))]) {
+        final result = await controller.resolveQrPayload(
+          payload,
+          subscriptionFetcher: (_) => throw StateError('must not fetch'),
+        );
+        expect(result.content, text);
+      }
+    }
+    controller.dispose();
   });
 
   test('rejects invalid QR profiles and empty subscriptions', () async {

@@ -17,14 +17,9 @@ class MihomoConfigAssembly {
       final clash = ClashSubscriptionParser.admit(source);
       if (clash != null) return clash;
     }
-    var links = legacy.isEmpty ? source : legacy.join('\n');
-    if (!links.contains('://')) {
-      try {
-        links = VlessRealityProfile.linksFromSubscription(source).join('\n');
-      } on FormatException {
-        // Other share-link formats are handled by the generic parser below.
-      }
-    }
+    final links = legacy.isEmpty
+        ? ShareLinkParsers.decodeSubscription(source)
+        : legacy.join('\n');
     final parsed = ShareLinkParsers.parseMany(links);
     final skipped = parsed.errors
         .map((e) => ClashSkippedItem('link', '', e.message))

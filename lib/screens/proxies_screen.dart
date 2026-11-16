@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../core/vless_reality_profile.dart';
+import '../models/node_details.dart';
 import '../models/vpn_models.dart';
 import '../state/app_controller.dart';
 import '../widgets/app_page.dart';
@@ -544,7 +544,7 @@ class _NodeInformation extends StatefulWidget {
 }
 
 class _NodeInformationState extends State<_NodeInformation> {
-  late Future<Map<String, VlessRealityProfile>> _nodes;
+  late Future<Map<String, NodeDetails>> _nodes;
 
   @override
   void initState() {
@@ -562,7 +562,7 @@ class _NodeInformationState extends State<_NodeInformation> {
         alignment: Alignment.topCenter,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 760),
-          child: FutureBuilder<Map<String, VlessRealityProfile>>(
+          child: FutureBuilder<Map<String, NodeDetails>>(
             future: _nodes,
             builder: (context, snapshot) {
               if (snapshot.connectionState != ConnectionState.done) {
@@ -607,7 +607,14 @@ class _NodeInformationState extends State<_NodeInformation> {
                       ListTile(
                         title: Text(displayProxyName(entry.key)),
                         subtitle: Text(
-                          'VLESS · ${entry.value.network.toUpperCase()} · ${entry.value.security.toUpperCase()}',
+                          [
+                                entry.value.protocol,
+                                entry.value.network,
+                                entry.value.security,
+                              ]
+                              .where((value) => value.isNotEmpty)
+                              .map((value) => value.toUpperCase())
+                              .join(' · '),
                         ),
                         trailing: const Icon(Icons.chevron_right_rounded),
                         onTap: () => Navigator.of(context).push(
@@ -632,22 +639,23 @@ class _NodeInformationState extends State<_NodeInformation> {
               }
               final fields = <String, String>{
                 '노드 이름': displayProxyName(name),
-                '프로토콜': 'VLESS',
-                '서버 주소': node.server,
-                '포트': '${node.port}',
-                '전송 방식': node.network.toUpperCase(),
-                '보안': node.security == 'none'
-                    ? '없음 (암호화되지 않음)'
-                    : node.security.toUpperCase(),
-                if (node.security != 'none') '서버 이름 (SNI)': node.serverName,
-                if (node.security != 'none') 'TLS 지문': node.fingerprint,
-                if (node.flow.isNotEmpty) 'Flow': node.flow,
+                '프로토콜': node.protocol.toUpperCase(),
+                if (node.server != null) '서버 주소': node.server!,
+                if (node.port != null) '포트': '${node.port}',
+                if (node.network.isNotEmpty)
+                  '전송 방식': node.network.toUpperCase(),
+                if (node.security.isNotEmpty)
+                  '보안': node.security == 'none'
+                      ? '없음 (암호화되지 않음)'
+                      : node.security.toUpperCase(),
+                if (node.serverName != null) '서버 이름 (SNI)': node.serverName!,
+                if (node.fingerprint != null) 'TLS 지문': node.fingerprint!,
+                if (node.flow != null) 'Flow': node.flow!,
                 if (node.host != null) 'Host': node.host!,
                 if (node.path != null) '경로': node.path!,
                 if (node.serviceName != null) 'gRPC 서비스': node.serviceName!,
-                if (node.security == 'reality') 'REALITY 공개 키': node.publicKey,
-                if (node.security == 'reality' && node.shortId.isNotEmpty)
-                  'Short ID': node.shortId,
+                if (node.publicKey != null) 'REALITY 공개 키': node.publicKey!,
+                if (node.shortId != null) 'Short ID': node.shortId!,
               };
               return ListView(
                 padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
@@ -671,7 +679,7 @@ class _NodeInformationState extends State<_NodeInformation> {
                       ),
                     ),
                   const Divider(),
-                  const Text('저장된 프로필 정보입니다.\nUUID·접속 링크는 숨깁니다.'),
+                  const Text('저장된 프로필 정보입니다.\n인증 정보와 접속 링크는 숨깁니다.'),
                 ],
               );
             },
