@@ -42,6 +42,16 @@ func TestDNSAdmissionAndSafeDefaults(t *testing.T) {
 			len(raw.Tun.DNSHijack) != 1 || raw.Tun.DNSHijack[0] != "172.19.0.2:53" {
 			t.Fatalf("unsafe defaults: %+v", raw.DNS)
 		}
+		explicit := strings.Contains(extra, "nameserver:")
+		if raw.DNS.RespectRules == explicit {
+			t.Fatalf("default routing policy inconsistent with explicit upstream: %+v", raw.DNS)
+		}
+		if !explicit && (len(raw.DNS.ProxyServerNameserver) == 0 || strings.Join(raw.DNS.ProxyServerNameserver, ",") != strings.Join(raw.DNS.DefaultNameserver, ",")) {
+			t.Fatal("default proxy bootstrap is not independently configured", raw.DNS.ProxyServerNameserver)
+		}
+		if !explicit && strings.Join(raw.DNS.DirectNameServer, ",") != strings.Join(raw.DNS.DefaultNameserver, ",") {
+			t.Fatal("default direct bootstrap is not independently configured", raw.DNS.DirectNameServer)
+		}
 		for _, server := range raw.DNS.DefaultNameserver {
 			if !strings.HasPrefix(server, "https://") {
 				t.Fatal("plaintext default bootstrap", server)
@@ -114,7 +124,7 @@ func TestEngineDNSProcess(t *testing.T) {
 		engineDNSScenario(t, scenario)
 		return
 	}
-	for _, scenario := range []string{"udp", "aaaa", "tcp-upstream", "tcp-tun", "doh", "doh-redirect", "udp-refused", "tcp-refused", "doh-refused", "quic-refused", "pending", "dns-init", "wildcard"} {
+	for _, scenario := range []string{"udp", "aaaa", "tcp-upstream", "tcp-tun", "doh", "doh-android-subnet", "doh-redirect", "udp-refused", "tcp-refused", "doh-refused", "quic-refused", "pending", "dns-init", "wildcard"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
@@ -223,6 +233,11 @@ func engineDNSScenario(t *testing.T, scenario string) {
 	fd, peer := pair(t)
 	p := &dnsProtector{reject: strings.HasSuffix(scenario, "refused"), t: t}
 	config := minimal + fmt.Sprintf("dns: {enable: true, enhanced-mode: redir-host, nameserver: ['%s']}\n", upstream)
+	if scenario == "doh-android-subnet" {
+		// App-generated TUN fields omit upstream desktop defaults; use the
+		// VpnService's actual source and DNS addresses on the same /30.
+		config = strings.Replace(config, "mtu: 1500, auto-route: false, auto-detect-interface: false, dns-hijack: [], inet6-address: []", "mtu: 1400", 1)
+	}
 	if scenario == "aaaa" {
 		config = minimal + fmt.Sprintf("ipv6: true\ndns: {ipv6: true, nameserver: ['%s']}\n", upstream)
 	}
@@ -261,6 +276,21 @@ func engineDNSScenario(t *testing.T, scenario string) {
 		tcpDNSRoundTrip(t, peer, query, payload)
 	} else {
 		packet := dnsUDP(payload)
+		if scenario == "doh-android-subnet" {
+			copy(packet[12:16], net.IPv4(172, 19, 0, 1).To4())
+			packet[10], packet[11] = 0, 0
+			binary.BigEndian.PutUint16(packet[10:12], dnsChecksum(packet[:20]))
+			pseudo := make([]byte, 12+len(packet)-20)
+			copy(pseudo, packet[12:20])
+			pseudo[9] = 17
+			binary.BigEndian.PutUint16(pseudo[10:12], uint16(len(packet)-20))
+			copy(pseudo[12:], packet[20:])
+			checksum := dnsChecksum(pseudo)
+			if checksum == 0 {
+				checksum = 0xffff
+			}
+			binary.BigEndian.PutUint16(packet[26:28], checksum)
+		}
 		if scenario == "wildcard" {
 			copy(packet[16:20], net.IPv4(192, 0, 2, 53).To4())
 			packet[10], packet[11] = 0, 0

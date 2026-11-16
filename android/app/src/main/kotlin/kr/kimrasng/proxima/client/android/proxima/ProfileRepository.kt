@@ -229,7 +229,11 @@ class ProfileRepository(context: Context) {
                 val padded = encoded.padEnd((encoded.length + 3) / 4 * 4, '=')
                 String(Base64.getUrlDecoder().decode(padded), Charsets.UTF_8)
             }.getOrNull()
-            return decoded?.takeIf { it.startsWith("https://") }
+            return decoded?.takeIf {
+                val uri = runCatching { java.net.URI(it) }.getOrNull()
+                uri?.scheme?.lowercase() in setOf("http", "https") &&
+                    !uri?.host.isNullOrEmpty() && uri?.rawUserInfo == null
+            }
         }
 
         private const val PREFERENCES = "proxima_profiles"

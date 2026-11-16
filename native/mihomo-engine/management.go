@@ -11,6 +11,7 @@ import (
 
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
+	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/tunnel/statistic"
 	"proxima.local/mihomo/providerpolicy"
@@ -54,6 +55,11 @@ func (s *Session) Select(groupName, proxyName string) error {
 	}
 	if err := selector.Set(proxyName); err != nil {
 		return fmt.Errorf("selector %q: %w: %q", groupName, err, proxyName)
+	}
+	// DoH transports pool connections. Drop idle DNS transports after a
+	// selector change so new queries use the newly selected route.
+	if s.dnsFollowRules && resolver.DefaultResolver != nil {
+		resolver.DefaultResolver.ResetConnection()
 	}
 	return nil
 }

@@ -26,7 +26,11 @@ void main() {
       if (type == 'ssh') proxy['host-key'] = ['pinned'];
       expect(MihomoProxyAdmission.proxyError(proxy), isNull, reason: type);
       proxy['skip-cert-verify'] = true;
-      expect(MihomoProxyAdmission.proxyError(proxy), isNotNull, reason: type);
+      if (type == 'hysteria2') {
+        expect(MihomoProxyAdmission.proxyError(proxy), isNull, reason: type);
+      } else {
+        expect(MihomoProxyAdmission.proxyError(proxy), isNotNull, reason: type);
+      }
     }
   });
   test('dangerous audited option branches are rejected', () {

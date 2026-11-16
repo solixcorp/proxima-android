@@ -94,7 +94,7 @@ var patches = []patch{
 		path: "component/http/http.go",
 		hash: "908b28230f08850d37816a0d1e2920ba5b3ed1d19f32cdc1892ca3078b359a1d",
 		edits: []edit{
-			{"\t\"context\"\n", "\t\"context\"\n\t\"errors\"\n\t\"sync\"\n"},
+			{"\t\"context\"\n", "\t\"context\"\n\t\"errors\"\n\t\"sync\"\n\t\"github.com/metacubex/mihomo/component/resolver\"\n"},
 			{"method = strings.ToUpper(method)", `if opt.urlPolicy != nil {
 		if err := opt.urlPolicy(url); err != nil { return nil, err }
 	}

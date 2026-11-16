@@ -157,4 +157,35 @@ rules: ['RULE-SET,domains,group']
       }
     }
   });
+
+  test('YAML Hysteria2 certificate choice survives preview and assembly', () {
+    const source = '''
+proxies:
+  - {name: default, type: hysteria2, server: hy.example, port: 443, password: pw}
+  - {name: verified, type: hysteria2, server: hy.example, port: 443, password: pw, skip-cert-verify: false}
+  - {name: explicit-insecure, type: hysteria2, server: hy.example, port: 443, password: pw, skip-cert-verify: true}
+  - {name: invalid, type: hysteria2, server: hy.example, port: 443, password: pw, skip-cert-verify: 'true'}
+  - {name: reality, type: vless, server: reality.example, port: 443, uuid: 12345678-1234-1234-1234-123456789abc, network: tcp, tls: true, reality-opts: {public-key: key}}
+''';
+    final preview = MihomoConfigAssembly.preview(source);
+    expect(preview.proxies.map((p) => p['name']), [
+      'default',
+      'verified',
+      'explicit-insecure',
+      'reality',
+    ]);
+    final result = jsonDecode(
+      MihomoConfigAssembly.build(
+        source: source,
+        mode: 'global',
+        mtu: 1400,
+        ipv6: false,
+      ),
+    ) as Map<String, dynamic>;
+    final proxies = result['proxies'] as List;
+    expect(proxies[0].containsKey('skip-cert-verify'), isFalse);
+    expect(proxies[1]['skip-cert-verify'], isFalse);
+    expect(proxies[2]['skip-cert-verify'], isTrue);
+    expect(proxies[3]['type'], 'vless');
+  });
 }

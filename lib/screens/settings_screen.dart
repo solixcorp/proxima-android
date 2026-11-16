@@ -135,7 +135,7 @@ class SettingsScreen extends StatelessWidget {
           child: ListTile(
             leading: Icon(Icons.cloud_sync_outlined),
             title: Text('Mihomo 구독'),
-            subtitle: Text('노드와 HTTPS 구독은 프로필 탭에서 추가·업데이트합니다.'),
+            subtitle: Text('노드와 HTTP·HTTPS 구독은 프로필 탭에서 추가·업데이트합니다.'),
           ),
         ),
         const SectionHeader('터널'),

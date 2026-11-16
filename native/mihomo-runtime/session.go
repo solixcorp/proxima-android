@@ -22,6 +22,7 @@ import (
 	N "github.com/metacubex/sing/common/network"
 	"golang.org/x/sys/unix"
 	mihomodns "proxima.local/mihomo-dns"
+	"proxima.local/mihomo-dns/diagnostic"
 )
 
 // Options describes the already-established raw-IP device. MTU must match the
@@ -219,7 +220,11 @@ func (h *flowHandler) NewConnection(ctx context.Context, conn net.Conn, metadata
 		h.calls.Done()
 	}()
 	if h.dns != nil {
+		if h.dns.Matches(metadata.Destination.AddrPort()) {
+			diagnostic.Event("tcp-received")
+		}
 		if handled, err := h.dns.HandleTCP(ctx, conn, metadata.Destination.AddrPort()); handled {
+			diagnostic.Failure("tcp-relay", err)
 			return err
 		}
 	}
@@ -237,10 +242,19 @@ func (h *flowHandler) NewPacket(ctx context.Context, key netip.AddrPort, buffer 
 	h.mu.Unlock()
 	defer h.calls.Done()
 	if h.dns != nil && h.dns.Matches(metadata.Destination.AddrPort()) {
+		diagnostic.Event("udp-received")
 		writer := init(nil)
 		// Own this dispatcher before dropping the callback's admission count.
 		h.calls.Add(1)
-		go func() { defer h.calls.Done(); _, _ = h.dns.HandleUDP(ctx, buffer, metadata.Destination, writer) }()
+		go func() {
+			defer h.calls.Done()
+			_, err := h.dns.HandleUDP(ctx, buffer, metadata.Destination, writer)
+			if err != nil {
+				diagnostic.Failure("udp-relay", err)
+			} else {
+				diagnostic.Event("udp-replied")
+			}
+		}()
 		return
 	}
 	h.ListenerHandler.NewPacket(ctx, key, buffer, metadata, init)

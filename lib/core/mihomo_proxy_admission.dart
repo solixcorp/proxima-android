@@ -19,7 +19,7 @@ class MihomoProxyAdmission {
     'trojan': 'server port password udp network alpn sni client-fingerprint ws-opts grpc-opts reality-opts',
     'snell': 'server port psk udp version obfs-opts',
     'hysteria': 'server port up down up-speed down-speed auth auth-str obfs sni alpn protocol recv-window-conn recv-window disable-mtu-discovery fast-open',
-    'hysteria2': 'server port password up down obfs obfs-password obfs-min-packet-size obfs-max-packet-size sni alpn cwnd bbr-profile udp-mtu handshake-timeout initial-stream-receive-window max-stream-receive-window initial-connection-receive-window max-connection-receive-window',
+    'hysteria2': 'server port password up down obfs obfs-password obfs-min-packet-size obfs-max-packet-size sni alpn skip-cert-verify cwnd bbr-profile udp-mtu handshake-timeout initial-stream-receive-window max-stream-receive-window initial-connection-receive-window max-connection-receive-window',
     'tuic': 'server port token uuid password ip heartbeat-interval alpn reduce-rtt request-timeout udp-relay-mode congestion-controller max-udp-relay-packet-size fast-open max-open-streams cwnd bbr-profile recv-window-conn recv-window disable-mtu-discovery max-datagram-frame-size sni udp-over-stream udp-over-stream-version',
     'wireguard': 'server port ip ipv6 private-key public-key pre-shared-key reserved mtu udp workers persistent-keepalive ip-stack',
     'ssh': 'server port username password private-key private-key-passphrase host-key host-key-algorithms',
@@ -85,6 +85,11 @@ class MihomoProxyAdmission {
     if (allowed == null) return '지원하지 않거나 안전성 검증이 완료되지 않은 프록시 유형: $kind';
     final unknown = _unknown(proxy, 'name type ip-version tfo $allowed');
     if (unknown != null) return unknown;
+    if (kind == 'hysteria2' &&
+        proxy.containsKey('skip-cert-verify') &&
+        proxy['skip-cert-verify'] is! bool) {
+      return 'skip-cert-verify는 불리언이어야 합니다.';
+    }
     for (final entry in nestedOptions.entries) {
       if (!proxy.containsKey(entry.key)) continue;
       final value = proxy[entry.key];

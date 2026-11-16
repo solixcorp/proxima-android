@@ -22,7 +22,7 @@ var protocolKeys = map[string]string{
 	"trojan":    "server port password udp network alpn sni client-fingerprint ws-opts grpc-opts reality-opts",
 	"snell":     "server port psk udp version obfs-opts",
 	"hysteria":  "server port up down up-speed down-speed auth auth-str obfs sni alpn protocol recv-window-conn recv-window disable-mtu-discovery fast-open",
-	"hysteria2": "server port password up down obfs obfs-password obfs-min-packet-size obfs-max-packet-size sni alpn cwnd bbr-profile udp-mtu handshake-timeout initial-stream-receive-window max-stream-receive-window initial-connection-receive-window max-connection-receive-window",
+	"hysteria2": "server port password up down obfs obfs-password obfs-min-packet-size obfs-max-packet-size sni alpn skip-cert-verify cwnd bbr-profile udp-mtu handshake-timeout initial-stream-receive-window max-stream-receive-window initial-connection-receive-window max-connection-receive-window",
 	"tuic":      "server port token uuid password ip heartbeat-interval alpn reduce-rtt request-timeout udp-relay-mode congestion-controller max-udp-relay-packet-size fast-open max-open-streams cwnd bbr-profile recv-window-conn recv-window disable-mtu-discovery max-datagram-frame-size sni udp-over-stream udp-over-stream-version",
 	"wireguard": "server port ip ipv6 private-key public-key pre-shared-key reserved mtu udp workers persistent-keepalive ip-stack",
 	"ssh":       "server port username password private-key private-key-passphrase host-key host-key-algorithms",
@@ -62,6 +62,11 @@ func admitProxy(mapping map[string]any) error {
 	}
 	if err := onlyKeys(mapping, "name type ip-version tfo "+keys, "proxy "+kind); err != nil {
 		return err
+	}
+	if value, exists := mapping["skip-cert-verify"]; kind == "hysteria2" && exists {
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("hysteria2 skip-cert-verify must be a boolean")
+		}
 	}
 	for key, allowed := range transportKeys {
 		if v, exists := mapping[key]; exists {
