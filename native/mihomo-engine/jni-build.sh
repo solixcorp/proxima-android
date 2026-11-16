@@ -6,8 +6,20 @@ if [[ "$mode" == android ]]; then
     grep -q '^Pkg.Revision = 28.2.13676358$' "$ndk/source.properties" || { echo 'Pinned NDK required' >&2; exit 1; }
     case "$(uname -s)" in Darwin) host=darwin-x86_64 ;; Linux) host=linux-x86_64 ;; *) exit 2 ;; esac
     bin="$ndk/toolchains/llvm/prebuilt/$host/bin"
+    # Default to all ABIs for standalone callers. Gradle can request exactly
+    # the ABIs it packages, avoiding an unused cross-compilation.
+    abis="${MIHOMO_ANDROID_ABIS-arm64-v8a,armeabi-v7a,x86,x86_64}"
+    [[ -n "$abis" && "$abis" != ,* && "$abis" != *, && "$abis" != *,,* ]] || { echo 'Invalid MIHOMO_ANDROID_ABIS' >&2; exit 2; }
+    IFS=, read -r -a requested_abis <<< "$abis"
+    seen=,
+    for abi in "${requested_abis[@]}"; do
+        case "$abi" in arm64-v8a|armeabi-v7a|x86|x86_64) ;; *) echo "Invalid Android ABI: $abi" >&2; exit 2 ;; esac
+        [[ "$seen" != *",$abi,"* ]] || { echo "Duplicate Android ABI: $abi" >&2; exit 2; }
+        seen="$seen$abi,"
+    done
     for spec in arm64-v8a:arm64:aarch64-linux-android armeabi-v7a:arm:armv7a-linux-androideabi x86:386:i686-linux-android x86_64:amd64:x86_64-linux-android; do
         IFS=: read -r abi arch target <<< "$spec"
+        [[ "$seen" == *",$abi,"* ]] || continue
         mkdir -p "build/android/$abi"
         GOOS=android GOARCH="$arch" GOARM=7 CC="$bin/${target}23-clang" \
             CGO_CFLAGS="-Werror=incompatible-pointer-types" \

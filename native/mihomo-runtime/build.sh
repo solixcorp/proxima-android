@@ -13,8 +13,8 @@ if [[ "$(go env GOVERSION)" != go1.27.1 ]]; then
 fi
 # Use an existing caller trust override, otherwise the verified system bundle.
 export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/cert.pem}"
-export GOCACHE="$PWD/build/go-cache"
-export GOMODCACHE="$PWD/build/go-mod"
+export GOCACHE="${GOCACHE:-$PWD/build/go-cache}"
+export GOMODCACHE="${GOMODCACHE:-$PWD/build/go-mod}"
 mkdir -p build/overlay
 go mod download github.com/metacubex/mihomo github.com/metacubex/sing-tun
 go mod verify

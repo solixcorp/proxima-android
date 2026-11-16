@@ -53,6 +53,10 @@ JDK 17로 `cd android && ./gradlew :app:assembleDebug` 후 테스트 기기에�
 
 ## 릴리즈 서명
 
-CI는 `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`를 사용하고 APK 서명자가 지정 keystore 인증서와 일치하는지 발행 전에 확인한다. 로컬에서 서명 정보 없이 만드는 release APK는 무서명이다. 로컬 서명 시 `KEYSTORE_PATH`로 keystore 경로를 지정할 수 있다.
+CI는 `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`를 사용하고 APK 서명자가 지정 keystore 인증서와 일치하는지 발행 전에 확인한다. Build Tools 36.0.0을 고정하고, 검증기는 36의 `Signer #1` 형식과 37의 `V2 Signer` 등 서명 방식별 형식을 모두 처리한다. 빈 결과·다른 인증서·복수 서명자·서명 방식 간 인증서 불일치는 거부한다. 로컬에서 실제 APK를 임시 키로 서명하여 두 도구 버전에서 정상 인증서 통과, 다른 키 및 무서명 APK 거부를 검증했다.
+
+릴리즈의 전체 검증과 APK 빌드는 별도 러너에서 병렬 실행하고, 두 작업이 모두 성공해야 발행한다. 테스트는 생략하지 않는다. 네이티브 스크립트는 CI의 공유 Go 캐시를 사용하며, Gradle 의존성 캐시도 복구한다. 릴리즈 APK에 포함되는 세 ABI(`arm64-v8a`, `armeabi-v7a`, `x86_64`)만 엔진으로 빌드한다. debug 및 standalone native 빌드는 기본 네 ABI를 유지하고 각각 `MIHOMO_DEBUG_ABIS`, `MIHOMO_ANDROID_ABIS`로 명시적 선택이 가능하다. 실패 시에도 APK는 진단용 Actions 아티팩트로 7일 보존하며 keystore는 보존하지 않는다.
+
+로컬에서 서명 정보 없이 만드는 release APK는 무서명이다. 로컬 서명 시 `KEYSTORE_PATH`로 keystore 경로를 지정할 수 있다.
 
 기존 workflow는 debug 키로 릴리즈에 서명했다. 새 릴리즈 키가 기존 설치 APK의 키와 다르면 Android에서 덮어쓰기 업데이트를 거부한다. 기존 설치본을 배포 키로 변환할 수는 없으므로 배포 전 기존 인증서를 확인하고 설치 이전 절차를 결정해야 한다. 앱 삭제는 로컬 프로필도 지우므로 필요한 프로필을 먼저 내보낸다.

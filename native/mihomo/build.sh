@@ -26,8 +26,8 @@ if [[ "$actual_go" != "$expected_go" ]]; then
 fi
 
 mkdir -p build
-export GOCACHE="$PWD/build/go-cache"
-export GOMODCACHE="$PWD/build/go-mod"
+export GOCACHE="${GOCACHE:-$PWD/build/go-cache}"
+export GOMODCACHE="${GOMODCACHE:-$PWD/build/go-mod}"
 export CGO_ENABLED=1
 
 if [[ "$mode" == android ]]; then

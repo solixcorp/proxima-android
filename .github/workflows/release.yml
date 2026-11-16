@@ -6,21 +6,24 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
-    name: Build & Release
+  validate:
+    name: Validate
     runs-on: ubuntu-latest
-    environment: env
+    timeout-minutes: 30
     permissions:
-      contents: write
+      contents: read
     env:
       SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Test release certificate verification
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
 
       # Job env cannot use the runner context; set Go caches on the runner here
       # so setup-go's caching key matches these paths.
@@ -42,10 +45,99 @@ jobs:
           cache: true
           cache-dependency-path: native/**/go.sum
 
-      - name: Install pinned Android NDK
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Test Mihomo worker boundary
         run: |
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'ndk;28.2.13676358'
+          curl --fail --location --retry 3 \
+            https://github.com/JetBrains/kotlin/releases/download/v2.2.20/kotlin-compiler-2.2.20.zip \
+            --output "$RUNNER_TEMP/kotlin-compiler.zip"
+          unzip -q "$RUNNER_TEMP/kotlin-compiler.zip" -d "$RUNNER_TEMP/kotlin-2.2.20"
+          export KOTLINC="$RUNNER_TEMP/kotlin-2.2.20/kotlinc/bin/kotlinc"
+          python3 -m unittest discover -s android/app/src/test -v
+
+      - name: Test all native modules
+        run: time bash build.sh test
+
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: env
+    permissions:
+      contents: read
+    outputs:
+      build_name: ${{ steps.release_version.outputs.BUILD_NAME }}
+    env:
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate release credentials
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64"
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+
+      - name: Configure Go caches
+        run: |
+          echo "GOMODCACHE=$RUNNER_TEMP/go/pkg/mod" >> "$GITHUB_ENV"
+          echo "GOCACHE=$RUNNER_TEMP/go-build" >> "$GITHUB_ENV"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Decode and validate release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
+          keytool -exportcert -keystore android/app/upload-keystore.jks \
+            -storepass:env KEYSTORE_PASSWORD -alias "$KEY_ALIAS" > /dev/null
+
+      - name: Cache Gradle dependencies
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: true
+          cache-dependency-path: native/**/go.sum
+
+      - name: Install pinned Android tools
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            'ndk;28.2.13676358' 'build-tools;36.0.0'
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          echo "RELEASE_BUILD_TOOLS=$ANDROID_HOME/build-tools/36.0.0" >> "$GITHUB_ENV"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -57,6 +149,10 @@ jobs:
       - name: Prepare release version
         id: release_version
         run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?(\+[0-9]+)?$ ]]; then
+            echo "Tag must look like v1.2.3 or v1.2.3+4. Got: ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           BUILD_NAME="${TAG_VERSION%%+*}"
 
@@ -87,46 +183,8 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Analyze
-        run: flutter analyze
-
-      - name: Test
-        run: flutter test
-
-      - name: Test Mihomo worker boundary
-        run: |
-          curl --fail --location --retry 3 \
-            https://github.com/JetBrains/kotlin/releases/download/v2.2.20/kotlin-compiler-2.2.20.zip \
-            --output "$RUNNER_TEMP/kotlin-compiler.zip"
-          unzip -q "$RUNNER_TEMP/kotlin-compiler.zip" -d "$RUNNER_TEMP/kotlin-2.2.20"
-          export KOTLINC="$RUNNER_TEMP/kotlin-2.2.20/kotlinc/bin/kotlinc"
-          python3 -m unittest discover -s android/app/src/test -v
-
-      - name: Test all native modules
-        run: time bash build.sh test
-
-      # Run in this job, sequentially: standalone and Gradle builds share staging.
-      - name: Build Mihomo engine (four ABIs)
-        working-directory: android
-        run: ./gradlew :app:buildReleaseMihomo
-
-      - name: Validate release credentials
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          test -n "$KEYSTORE_BASE64"
-          test -n "$KEYSTORE_PASSWORD"
-          test -n "$KEY_ALIAS"
-          test -n "$KEY_PASSWORD"
-
-      - name: Decode Keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        run: printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
-
+      # Gradle builds and verifies exactly the three packaged engine ABIs.
+      # Native tests run on a separate runner with isolated staging paths.
       - name: Build APK
         run: |
           flutter build apk --release \
@@ -138,6 +196,15 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Retain APK for release diagnostics
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxima-android-${{ github.ref_name }}
+          path: build/app/outputs/flutter-apk/${{ github.event.repository.name }}-v${{ steps.release_version.outputs.BUILD_NAME }}.apk
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Verify APK engine ABIs and size
         env:
@@ -171,23 +238,34 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          set -euo pipefail
-          BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-          "$BUILD_TOOLS/zipalign" -c -P 16 4 "$APK"
-          EXPECTED=$(keytool -exportcert -keystore android/app/upload-keystore.jks \
-            -storepass:env KEYSTORE_PASSWORD -alias "$KEY_ALIAS" | sha256sum | cut -d' ' -f1)
-          ACTUAL=$("$BUILD_TOOLS/apksigner" verify --print-certs "$APK" |
-            sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr '[:upper:]' '[:lower:]')
-          if [[ -z "$ACTUAL" || "$EXPECTED" != "$ACTUAL" ]]; then
-            echo 'APK signer does not match the configured release keystore' >&2
-            exit 1
-          fi
-          echo 'APK alignment and release signer verified'
+          echo 'Verifying APK with pinned Android Build Tools 36.0.0'
+          python3 .github/scripts/verify_release_apk.py \
+            --apk "$APK" --keystore android/app/upload-keystore.jks \
+            --build-tools "$RELEASE_BUILD_TOOLS"
+
+      - name: Remove release keystore
+        if: ${{ always() }}
+        run: rm -f android/app/upload-keystore.jks
+
+  publish:
+    name: Publish release
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Download release APK
+        uses: actions/download-artifact@v4
+        with:
+          name: proxima-android-${{ github.ref_name }}
+          path: release
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: build/app/outputs/flutter-apk/${{ github.event.repository.name }}-v${{ steps.release_version.outputs.BUILD_NAME }}.apk
+          files: release/${{ github.event.repository.name }}-v${{ needs.build.outputs.build_name }}.apk
+          fail_on_unmatched_files: true
           name: Release ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           draft: false

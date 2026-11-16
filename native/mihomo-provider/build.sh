@@ -10,8 +10,8 @@ mkdir -p build
 if [[ ! -f build/go.mod ]]; then
     (cd build && go mod init proxima.local/mihomo-provider-build)
 fi
-export GOCACHE="$PWD/build/go-cache"
-export GOMODCACHE="$PWD/build/go-mod"
+export GOCACHE="${GOCACHE:-$PWD/build/go-cache}"
+export GOMODCACHE="${GOMODCACHE:-$PWD/build/go-mod}"
 go mod download github.com/metacubex/mihomo
 source="$(go list -m -f '{{.Dir}}' github.com/metacubex/mihomo)"
 if [[ "$(go list -m -f '{{.Sum}}' github.com/metacubex/mihomo)" != 'h1:hwqYMItk3Jaeq8Sw2PBAtyHQh157ccUtWS7rXrBOMCU=' ]]; then
